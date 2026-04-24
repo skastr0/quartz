@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { Effect } from "effect"
+import { createTypeAnalyzer } from "@type-level-tools/core"
 import { createFixtureAnalyzer, fixturesPath } from "./helpers/analyzer"
 
 describe("type analyzer core", () => {
@@ -23,6 +24,13 @@ describe("type analyzer core", () => {
     expect(names).toContain("UserInput")
     expect(names).not.toContain("InternalConfig")
     expect(result.truncated).toBe(false)
+  })
+
+  it("normalizes relative roots before comparing source paths", async () => {
+    const analyzer = createTypeAnalyzer("test/fixtures")
+    const result = await Effect.runPromise(analyzer.listSymbols({ pattern: "^User", limit: 50 }))
+
+    expect(result.symbols.map((symbol) => symbol.name)).toContain("User")
   })
 
   it("returns type info and expanded properties for interfaces", async () => {

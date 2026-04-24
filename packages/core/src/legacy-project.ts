@@ -9,7 +9,7 @@ import {
   type FunctionDeclaration,
   type ParameterDeclaration,
 } from "ts-morph";
-import { isAbsolute, join, relative, dirname } from "path";
+import { isAbsolute, join, relative, dirname, resolve } from "path";
 import { Effect } from "effect";
 
 import { discoverPackages, type PackageInfo } from "./discovery";
@@ -258,7 +258,7 @@ export class ProjectManager {
   private dirty = false;
 
   constructor(directory: string) {
-    this.rootDirectory = directory;
+    this.rootDirectory = resolve(directory);
   }
 
   /**

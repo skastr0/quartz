@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs"
-import { isAbsolute, join, relative } from "node:path"
+import { isAbsolute, join, relative, resolve } from "node:path"
 import {
   Node,
   Project,
@@ -176,7 +176,8 @@ interface CachedProject {
 }
 
 export const createTypeAnalyzer = (rootDirectory: string): TypeAnalyzer => {
-  const projectManager = new ProjectManager(rootDirectory)
+  const absoluteRootDirectory = resolve(rootDirectory)
+  const projectManager = new ProjectManager(absoluteRootDirectory)
   const fromPromise = <A>(try_: () => Promise<A>): Effect.Effect<A, TypeLevelToolsError> =>
     Effect.tryPromise({
       try: try_,
@@ -193,7 +194,7 @@ export const createTypeAnalyzer = (rootDirectory: string): TypeAnalyzer => {
   const getPackages = (): Effect.Effect<readonly PackageInfo[], TypeLevelToolsError> =>
     Effect.gen(function* () {
       if (packages === null) {
-        packages = yield* discoverPackages(rootDirectory)
+        packages = yield* discoverPackages(absoluteRootDirectory)
       }
       return packages
     })
@@ -241,7 +242,7 @@ export const createTypeAnalyzer = (rootDirectory: string): TypeAnalyzer => {
 
       for (const sourceFile of project.getSourceFiles()) {
         if (sourceFile.isFromExternalLibrary()) continue
-        const file = relative(rootDirectory, sourceFile.getFilePath())
+        const file = relative(absoluteRootDirectory, sourceFile.getFilePath())
         if (options.file !== undefined && !file.includes(options.file)) continue
 
         for (const declaration of getExportedDeclarations(sourceFile)) {
