@@ -1,0 +1,13 @@
+{
+  "name": "@type-level-tools/core",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "effect": "^3.21.0",
+    "ts-morph": "^27.0.2"
+  }
+}

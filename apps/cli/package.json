@@ -1,0 +1,15 @@
+{
+  "name": "@type-level-tools/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "type-level-tools": "./dist/main.js"
+  },
+  "scripts": {
+    "build": "bun build ./src/main.ts --outdir ./dist --target bun --format esm"
+  },
+  "dependencies": {
+    "@type-level-tools/core": "workspace:*"
+  }
+}
