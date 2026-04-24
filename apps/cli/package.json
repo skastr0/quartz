@@ -7,7 +7,8 @@
     "type-level-tools": "./dist/main.js"
   },
   "scripts": {
-    "build": "bun build ./src/main.ts --outdir ./dist --target bun --format esm"
+    "build": "bun build ./src/main.ts --outdir ./dist --target bun --format esm",
+    "install:local": "bun run build && bun link"
   },
   "dependencies": {
     "@type-level-tools/core": "workspace:*"
