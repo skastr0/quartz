@@ -28,9 +28,23 @@ const limitOption = Options.integer("limit").pipe(
   Options.withDescription("Maximum number of results"),
 )
 const queryOption = Options.text("query").pipe(Options.withDescription("Search query"))
+const expressionOption = Options.text("expression").pipe(Options.withDescription("TypeScript type expression"))
+const codeOption = Options.text("code").pipe(Options.withDescription("TypeScript code snippet or error code"))
+const fromOption = Options.text("from").pipe(Options.withDefault(""), Options.withDescription("Source type"))
+const toOption = Options.text("to").pipe(Options.withDefault(""), Options.withDescription("Target type"))
+const includePrivateOption = Options.boolean("include-private").pipe(
+  Options.withDescription("Include non-exported declarations"),
+)
+const explainOption = Options.boolean("explain").pipe(Options.withDescription("Include diagnostic explanations"))
 
 const normalizePackage = (packageName: string): string | undefined => (packageName === "" ? undefined : packageName)
 const normalizeText = (value: string): string | undefined => (value === "" ? undefined : value)
+const packageField = (packageName: string): { readonly packageName: string } | {} => {
+  const normalized = normalizePackage(packageName)
+  return normalized === undefined ? {} : { packageName: normalized }
+}
+const optionalField = <K extends string, T>(key: K, value: T | undefined): { readonly [P in K]: T } | {} =>
+  value === undefined ? {} : { [key]: value } as { readonly [P in K]: T }
 
 const printJson = (value: unknown) => Console.log(JSON.stringify(value, null, 2))
 type Mutable<T> = { -readonly [K in keyof T]: T[K] }
@@ -89,9 +103,14 @@ const search = Command.make(
 
 const diagnostics = Command.make(
   "diagnostics",
-  { root: rootOption, packageName: packageOption },
-  ({ root, packageName }) =>
-    createTypeAnalyzer(root).getDiagnostics(normalizePackage(packageName)).pipe(Effect.flatMap(printJson)),
+  { root: rootOption, packageName: packageOption, explain: explainOption },
+  ({ root, packageName, explain }) =>
+    createTypeAnalyzer(root)
+      .getDiagnostics({
+        ...packageField(packageName),
+        explain,
+      })
+      .pipe(Effect.flatMap(printJson)),
 ).pipe(Command.withDescription("Show TypeScript diagnostics"))
 
 const atPosition = Command.make(
@@ -109,16 +128,128 @@ const atPosition = Command.make(
       .pipe(Effect.flatMap(printJson)),
 ).pipe(Command.withDescription("Show the type at a source position"))
 
-const unported = (name: string) =>
-  Command.make(name, {}, () =>
-    Console.log(
-      JSON.stringify({
-        status: "not_ported",
-        command: name,
-        message: "This command is reserved in the CLI shape but still needs a core implementation port.",
-      }),
-    ),
-  )
+const related = Command.make(
+  "related",
+  { root: rootOption, packageName: packageOption, symbol: symbolOption },
+  ({ root, packageName, symbol }) =>
+    createTypeAnalyzer(root).findRelated(symbol, normalizePackage(packageName)).pipe(Effect.flatMap(printJson)),
+).pipe(Command.withDescription("Find types that reference or are referenced by a symbol"))
+
+const evalType = Command.make(
+  "eval",
+  { root: rootOption, packageName: packageOption, expression: expressionOption },
+  ({ root, packageName, expression }) =>
+    createTypeAnalyzer(root).evalType(expression, normalizePackage(packageName)).pipe(Effect.flatMap(printJson)),
+).pipe(Command.withDescription("Evaluate a TypeScript type expression"))
+
+const checkSnippet = Command.make(
+  "check-snippet",
+  { root: rootOption, packageName: packageOption, code: codeOption },
+  ({ root, packageName, code }) =>
+    createTypeAnalyzer(root).checkSnippet(code, normalizePackage(packageName)).pipe(Effect.flatMap(printJson)),
+).pipe(Command.withDescription("Type-check a code snippet without writing to disk"))
+
+const file = Command.make(
+  "file",
+  {
+    root: rootOption,
+    packageName: packageOption,
+    file: fileOption,
+    symbol: patternOption,
+    includePrivate: includePrivateOption,
+  },
+  ({ root, packageName, file, symbol, includePrivate }) =>
+    createTypeAnalyzer(root)
+      .getFileDeclarations(file, {
+        ...packageField(packageName),
+        ...optionalField("symbol", normalizeText(symbol)),
+        includePrivate,
+      })
+      .pipe(Effect.flatMap(printJson)),
+).pipe(Command.withDescription("Inspect declarations in a TypeScript file"))
+
+const compatible = Command.make(
+  "compatible",
+  { root: rootOption, packageName: packageOption, from: fromOption, to: toOption },
+  ({ root, packageName, from, to }) =>
+    createTypeAnalyzer(root).checkCompatibility(from, to, normalizePackage(packageName)).pipe(Effect.flatMap(printJson)),
+).pipe(Command.withDescription("Check whether one type is assignable to another"))
+
+const graph = Command.make(
+  "graph",
+  {
+    root: rootOption,
+    packageName: packageOption,
+    symbol: symbolOption,
+    depth: Options.integer("depth").pipe(Options.withDefault(2)),
+    format: Options.text("format").pipe(Options.withDefault("mermaid")),
+  },
+  ({ root, packageName, symbol, depth, format }) =>
+    createTypeAnalyzer(root)
+      .generateGraph(symbol, {
+        ...packageField(packageName),
+        depth,
+        format: format === "dot" ? "dot" : "mermaid",
+      })
+      .pipe(Effect.flatMap(printJson)),
+).pipe(Command.withDescription("Generate a type dependency graph"))
+
+const refactorPreview = Command.make(
+  "refactor-preview",
+  { root: rootOption, packageName: packageOption, symbol: symbolOption, to: toOption },
+  ({ root, packageName, symbol, to }) =>
+    createTypeAnalyzer(root)
+      .previewRefactor({
+        action: "rename",
+        symbol,
+        to,
+        ...packageField(packageName),
+      })
+      .pipe(Effect.flatMap(printJson)),
+).pipe(Command.withDescription("Preview a rename refactor without applying it"))
+
+const whyError = Command.make(
+  "why-error",
+  {
+    root: rootOption,
+    packageName: packageOption,
+    code: Options.integer("code").pipe(Options.withDefault(0)),
+    message: Options.text("message").pipe(Options.withDefault("")),
+    file: Options.text("file").pipe(Options.withDefault("")),
+    line: Options.integer("line").pipe(Options.withDefault(0)),
+  },
+  ({ root, packageName, code, message, file, line }) =>
+    createTypeAnalyzer(root)
+      .explainError({
+        ...(code === 0 ? {} : { code }),
+        ...(message === "" ? {} : { message }),
+        ...(file === "" ? {} : { file }),
+        ...(line === 0 ? {} : { line }),
+        ...packageField(packageName),
+      })
+      .pipe(Effect.flatMap(printJson)),
+).pipe(Command.withDescription("Explain a TypeScript diagnostic"))
+
+const explain = Command.make(
+  "explain",
+  { root: rootOption, packageName: packageOption, expression: expressionOption },
+  ({ root, packageName, expression }) =>
+    createTypeAnalyzer(root).explainType(expression, normalizePackage(packageName)).pipe(Effect.flatMap(printJson)),
+).pipe(Command.withDescription("Explain the resolution of a TypeScript type expression"))
+
+const transformSearch = Command.make(
+  "transform-search",
+  { root: rootOption, packageName: packageOption, from: fromOption, to: toOption, limit: limitOption },
+  ({ root, packageName, from, to, limit }) =>
+    createTypeAnalyzer(root)
+      .transformSearch({
+        ...(normalizeText(from) === undefined ? {} : { from }),
+        ...(normalizeText(to) === undefined ? {} : { to }),
+        ...packageField(packageName),
+        limit,
+      })
+      .pipe(Effect.flatMap(Console.log)),
+).pipe(Command.withDescription("Search functions by structural input/output type"))
 
 const command = Command.make("type-level-tools").pipe(
   Command.withSubcommands([
@@ -129,11 +260,16 @@ const command = Command.make("type-level-tools").pipe(
     search,
     diagnostics,
     atPosition,
-    unported("related"),
-    unported("eval"),
-    unported("transform-search"),
-    unported("why-error"),
-    unported("explain"),
+    related,
+    evalType,
+    checkSnippet,
+    file,
+    compatible,
+    graph,
+    refactorPreview,
+    whyError,
+    explain,
+    transformSearch,
   ]),
 )
 

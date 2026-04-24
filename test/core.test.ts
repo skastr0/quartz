@@ -55,6 +55,61 @@ describe("type analyzer core", () => {
     expect(results.map((result) => result.name)).toContain("Role")
   })
 
+  it("finds related symbols", async () => {
+    const analyzer = createFixtureAnalyzer()
+    const related = await Effect.runPromise(analyzer.findRelated("User"))
+
+    expect(related?.symbol).toBe("User")
+    expect(related?.referencedBy.length).toBeGreaterThan(0)
+  })
+
+  it("evaluates and explains type expressions", async () => {
+    const analyzer = createFixtureAnalyzer()
+    const evaluated = await Effect.runPromise(analyzer.evalType('Pick<User, "id" | "name">'))
+    const explained = await Effect.runPromise(analyzer.explainType('Pick<User, "id" | "name">'))
+
+    expect(JSON.stringify(evaluated)).toContain("id")
+    expect(explained.final).toContain("id")
+    expect(explained.steps.length).toBeGreaterThan(0)
+  })
+
+  it("checks compatibility and snippets", async () => {
+    const analyzer = createFixtureAnalyzer()
+    const compatible = await Effect.runPromise(analyzer.checkCompatibility("ExtendedUser", "User"))
+    const invalidSnippet = await Effect.runPromise(analyzer.checkSnippet("const x: string = 42;"))
+
+    expect(compatible.compatible).toBe(true)
+    expect(invalidSnippet.valid).toBe(false)
+    expect(invalidSnippet.errors?.length).toBeGreaterThan(0)
+  })
+
+  it("inspects files, graphs relationships, and previews refactors", async () => {
+    const analyzer = createFixtureAnalyzer()
+    const file = await Effect.runPromise(analyzer.getFileDeclarations("types/basic.ts"))
+    const graph = await Effect.runPromise(analyzer.generateGraph("ExtendedUser"))
+    const refactor = await Effect.runPromise(
+      analyzer.previewRefactor({ action: "rename", symbol: "RefactorUser", to: "RenamedUser" }),
+    )
+
+    expect(file?.declarations.map((declaration) => declaration.name)).toContain("User")
+    expect(graph?.graph).toContain("graph TD")
+    expect(refactor.totalLocations).toBeGreaterThan(0)
+  })
+
+  it("explains diagnostics and searches transforms", async () => {
+    const analyzer = createFixtureAnalyzer()
+    const explanation = await Effect.runPromise(
+      analyzer.explainError({
+        code: 2322,
+        message: "Type 'UserInput' is not assignable to type 'User'. Property 'id' is missing in type 'UserInput' but required in type 'User'.",
+      }),
+    )
+    const transforms = await Effect.runPromise(analyzer.transformSearch({ from: "User", to: "UserDTO", limit: 5 }))
+
+    expect(explanation?.explanation).toContain("compatible")
+    expect(transforms).toContain("toDTO")
+  })
+
   it("returns the type at a source position", async () => {
     const analyzer = createFixtureAnalyzer()
     const result = await Effect.runPromise(analyzer.getTypeAtPosition("types/basic.ts", 9, 3))
@@ -63,4 +118,3 @@ describe("type analyzer core", () => {
     expect(result?.type).toBe("string")
   })
 })
-

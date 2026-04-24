@@ -20,11 +20,22 @@ describe("OpenCode plugin wrapper", () => {
         type_symbols: expect.any(Object),
         type_info: expect.any(Object),
         type_expand: expect.any(Object),
+        type_related: expect.any(Object),
+        type_search: expect.any(Object),
+        type_eval: expect.any(Object),
         type_diagnostics: expect.any(Object),
+        type_check_snippet: expect.any(Object),
         type_at_position: expect.any(Object),
+        type_file: expect.any(Object),
+        type_refresh: expect.any(Object),
+        type_compatible: expect.any(Object),
+        type_graph: expect.any(Object),
+        type_refactor_preview: expect.any(Object),
+        type_why_error: expect.any(Object),
+        type_explain: expect.any(Object),
+        type_transform_search: expect.any(Object),
       }),
     )
     expect(plugin.event).toEqual(expect.any(Function))
   })
 })
-
