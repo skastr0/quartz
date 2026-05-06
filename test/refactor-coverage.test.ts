@@ -6,7 +6,14 @@ import { Project } from "ts-morph"
 import { describe, expect, it } from "vitest"
 import { createFixtureAnalyzer, fixturesPath } from "./helpers/analyzer"
 import { createTypeAnalyzer } from "@type-level-tools/core"
-import { enumerateCallables, extractTokensFromTypeNode, TransformSearchEngine } from "../packages/core/src/transform-search"
+import {
+  buildCallableIndex,
+  enumerateCallables,
+  extractTokensFromTypeNode,
+  selectCandidates,
+  TransformSearchEngine,
+  type CallableEntry,
+} from "../packages/core/src/transform-search"
 
 function createFixtureProject(): Project {
   const project = new Project({
@@ -17,6 +24,32 @@ function createFixtureProject(): Project {
 }
 
 describe("refactor coverage", () => {
+  const callable = (
+    id: number,
+    overrides: Partial<CallableEntry> = {},
+  ): CallableEntry => ({
+    id,
+    kind: "Function",
+    qualifiedName: `fn${id}`,
+    exportState: "exported",
+    filePath: "src/index.ts",
+    pos: id,
+    end: id + 1,
+    minArity: 1,
+    maxArity: 1,
+    hasRest: false,
+    isAsyncSyntax: false,
+    hasTypeAnnotations: true,
+    syntacticOverloadCount: 0,
+    paramTokens: [],
+    returnTokens: [],
+    paramPropKeys: [],
+    returnPropKeys: [],
+    jsDocTags: [],
+    isDeprecated: false,
+    ...overrides,
+  })
+
   it("enumerates callable families with stable stats and export states", () => {
     const project = createFixtureProject()
     const result = enumerateCallables(project.getSourceFiles(), fixturesPath)
@@ -41,6 +74,25 @@ describe("refactor coverage", () => {
     expect(byName.get("internalTransform")).toMatchObject({ kind: "Function", exportState: "internal" })
   })
 
+  it("applies every cheap candidate constraint before enforcing the budget", () => {
+    const entries = [
+      callable(0, { paramTokens: ["A"], returnTokens: ["B"], paramPropKeys: ["keep"] }),
+      callable(1, { paramTokens: ["A"], returnTokens: ["B"], paramPropKeys: ["drop"] }),
+      callable(2, { paramTokens: ["A"], returnTokens: ["C"], paramPropKeys: ["keep"] }),
+    ]
+    const index = buildCallableIndex(entries)
+
+    const candidates = selectCandidates(index, {
+      fromTokens: ["A"],
+      toTokens: ["B"],
+      fromPropKeys: ["keep"],
+      budget: 2,
+      exportedOnly: true,
+    })
+
+    expect(candidates).toEqual([0])
+  })
+
   it("preserves transform-search verification branches and response stats", async () => {
     const project = createFixtureProject()
     const sourceFiles = project.getSourceFiles().filter((sourceFile) => !sourceFile.isInNodeModules())
@@ -58,7 +110,8 @@ describe("refactor coverage", () => {
     expect(complete.stats.timing.totalMs).toBeGreaterThanOrEqual(0)
     expect(complete.results.some((result) => result.verification.status === "verified")).toBe(true)
     expect(complete.results.every((result) => result.verification.reason !== "synthetic_check_failed")).toBe(true)
-    expect(complete.results[0]?.explanation).toMatchObject({
+    const explained = complete.results.find((result) => result.explanation.summary.includes("accepts User"))
+    expect(explained?.explanation).toMatchObject({
       summary: expect.stringContaining("accepts User"),
       details: {
         fromMatch: expect.objectContaining({
@@ -185,7 +238,7 @@ describe("refactor coverage", () => {
     expect(transforms?.declarations[0]?.signature).toContain("(from: User) => UserDTO")
   })
 
-  it("truncates very large file declaration type text", async () => {
+  it("preserves very large file declaration type text in the core analyzer", async () => {
     const root = mkdtempSync(join(tmpdir(), "tlt-large-file-"))
     mkdirSync(join(root, "src"))
     writeFileSync(join(root, "tsconfig.json"), JSON.stringify({ include: ["src/**/*.ts"] }), "utf8")
@@ -196,8 +249,8 @@ describe("refactor coverage", () => {
     const file = await Effect.runPromise(analyzer.getFileDeclarations("src/large.ts"))
 
     const typeText = file?.declarations[0]?.type
-    expect(typeText).toContain("[truncated")
-    expect(typeText?.length).toBeLessThan(340)
+    expect(typeText).toContain("p159: string")
+    expect(typeText?.length).toBeGreaterThan(1_500)
   })
 
   it("preserves analyzer package-scoped diagnostics and refresh helpers", async () => {

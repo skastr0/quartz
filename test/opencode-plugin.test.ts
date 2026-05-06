@@ -62,7 +62,15 @@ describe("OpenCode plugin wrapper", () => {
     const compatible = parse(await toolExecute(plugin, "type_compatible", { from: "ExtendedUser", to: "User" }))
     const file = parse(await toolExecute(plugin, "type_file", { file: "types/basic.ts", symbol: "^User$", includePrivate: false }))
     const explainedType = parse(await toolExecute(plugin, "type_explain", { expression: 'Pick<User, "id">' }))
-    const transformSearch = parse(await toolExecute(plugin, "type_transform_search", { from: "User", to: "UserDTO", limit: 1 }))
+    const transformSearch = parse(await toolExecute(plugin, "type_transform_search", {
+      from: "User",
+      to: "UserDTO",
+      paramPosition: "any",
+      unwrapReturn: true,
+      exportedOnly: false,
+      allowTypeErasure: true,
+      limit: 1,
+    }))
     const whyError = parse(await toolExecute(plugin, "type_why_error", {
       code: 2322,
       message: "Type UserInput is not assignable to type User",

@@ -196,7 +196,6 @@ function intersectConstraintsByRarity(
   for (const constraint of remaining) {
     if (candidates.size === 0) break;
     candidates = setIntersection(candidates, constraint.set);
-    if (candidates.size <= budget) break;
   }
 
   return candidates;

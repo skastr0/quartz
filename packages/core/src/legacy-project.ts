@@ -15,8 +15,6 @@ import { Effect } from "effect";
 import { discoverPackages, type PackageInfo } from "./discovery";
 import { getDisplayPropertySymbols } from "./display-properties";
 
-const FILE_DECLARATION_TYPE_TEXT_LIMIT = 240;
-
 export interface SymbolInfo {
   name: string;
   kind: string;
@@ -219,6 +217,11 @@ export interface TypeExplanationResult {
   steps: TypeExplanationStep[];
   final: string;
 }
+
+type TypeExpressionComponent =
+  | { type: "keyof"; target: string }
+  | { type: "utility"; utility: string; args: string[] }
+  | { type: "base"; name: string };
 
 interface CachedProject {
   project: Project;
@@ -1304,8 +1307,8 @@ export class ProjectManager {
     const project = this.getProject(pkg);
     const sourceFiles = this.getSourceFiles(project, pkg);
 
-    // Create temp file path inside package directory for proper module resolution
-    const tempFileName = join(pkg.path, `__snippet_check_${Date.now()}__.ts`);
+    // Keep the virtual snippet under rootDir when tsconfig constrains source files.
+    const tempFileName = join(this.getSnippetTempDirectory(project, pkg), `__snippet_check_${Date.now()}__.ts`);
     const tempDir = dirname(tempFileName);
     const importPlan = this.createSnippetImportPlan(project, sourceFiles, tempDir, code);
 
@@ -1477,6 +1480,11 @@ export class ProjectManager {
     return { message, line, column, severity };
   }
 
+  private getSnippetTempDirectory(project: Project, pkg: PackageInfo): string {
+    const rootDir = project.getCompilerOptions().rootDir;
+    return typeof rootDir === "string" && rootDir.length > 0 ? rootDir : pkg.path;
+  }
+
   private removeTempSourceFile(project: Project, tempFileName: string): void {
     try {
       const tempFile = project.getSourceFile(tempFileName);
@@ -1640,7 +1648,7 @@ export class ProjectManager {
 
     const type = node.getType();
     if (kind !== "class" && kind !== "interface" && kind !== "enum") {
-      info.type = this.truncateFileDeclarationType(type.getText(node));
+      info.type = type.getText(node);
     }
 
     const signature = this.getFileDeclarationSignature(node, name, kind, type);
@@ -1691,12 +1699,6 @@ export class ProjectManager {
       if (!a.isDefaultExport && b.isDefaultExport) return 1;
       return a.name.localeCompare(b.name);
     });
-  }
-
-  private truncateFileDeclarationType(typeText: string): string {
-    if (typeText.length <= FILE_DECLARATION_TYPE_TEXT_LIMIT) return typeText;
-    const truncatedChars = typeText.length - FILE_DECLARATION_TYPE_TEXT_LIMIT;
-    return `${typeText.slice(0, FILE_DECLARATION_TYPE_TEXT_LIMIT)}... [truncated ${truncatedChars} chars]`;
   }
 
   async checkCompatibility(
@@ -2803,102 +2805,9 @@ export class ProjectManager {
   async explainType(expression: string, packageName?: string): Promise<TypeExplanationResult> {
     const _pkg = await this.resolvePackage(packageName);
     this.getProject(_pkg); // Ensure project is loaded for evalType
-    const steps: TypeExplanationStep[] = [];
-
-    // First, get the final result
-    const evalResult = await this.evalType(expression, packageName);
-    const finalResult = "error" in evalResult ? `Error: ${evalResult.error}` : evalResult.expanded;
-
-    // Parse the expression to identify components
+    const finalResult = await this.evaluateTypeExplanationFinal(expression, packageName);
     const components = this.parseTypeExpression(expression);
-
-    if (components.length === 0) {
-      // Simple type, just show the expansion
-      steps.push({
-        step: 1,
-        description: `Expand ${expression}`,
-        expression: expression,
-        result: finalResult,
-      });
-    } else {
-      // Complex type with nested components
-      let stepNum = 1;
-
-      for (const component of components) {
-        if (component.type === "keyof") {
-          // Evaluate keyof
-          const keyofResult = await this.evalType(`keyof ${component.target}`, packageName);
-          const result =
-            "error" in keyofResult ? `Error: ${keyofResult.error}` : keyofResult.expanded;
-          steps.push({
-            step: stepNum++,
-            description: `Resolve keyof ${component.target}`,
-            expression: `keyof ${component.target}`,
-            result,
-          });
-        } else if (component.type === "utility") {
-          // Evaluate the utility type with its resolved arguments
-          const utilityExpr = `${component.utility}<${component.args.join(", ")}>`;
-          const utilityResult = await this.evalType(utilityExpr, packageName);
-          const result =
-            "error" in utilityResult ? `Error: ${utilityResult.error}` : utilityResult.expanded;
-
-          let description = `Apply ${component.utility}`;
-          if (component.utility === "Pick") {
-            description = `Pick properties ${component.args[1]} from ${component.args[0]}`;
-          } else if (component.utility === "Omit") {
-            description = `Omit properties ${component.args[1]} from ${component.args[0]}`;
-          } else if (component.utility === "Partial") {
-            description = `Make all properties of ${component.args[0]} optional`;
-          } else if (component.utility === "Required") {
-            description = `Make all properties of ${component.args[0]} required`;
-          } else if (component.utility === "Readonly") {
-            description = `Make all properties of ${component.args[0]} readonly`;
-          } else if (component.utility === "ReturnType") {
-            description = `Get return type of ${component.args[0]}`;
-          } else if (component.utility === "Parameters") {
-            description = `Get parameter types of ${component.args[0]}`;
-          }
-
-          steps.push({
-            step: stepNum++,
-            description,
-            expression: utilityExpr,
-            result,
-          });
-        } else if (component.type === "base") {
-          // Resolve base type
-          const baseResult = await this.evalType(component.name, packageName);
-          const result = "error" in baseResult ? `Error: ${baseResult.error}` : baseResult.expanded;
-          steps.push({
-            step: stepNum++,
-            description: `Resolve ${component.name}`,
-            expression: component.name,
-            result,
-          });
-        }
-      }
-
-      // Add final step if we have intermediate steps
-      if (steps.length > 0 && steps[steps.length - 1]!.result !== finalResult) {
-        steps.push({
-          step: stepNum,
-          description: "Final result",
-          expression,
-          result: finalResult,
-        });
-      }
-    }
-
-    // If no steps were generated, at least show the final result
-    if (steps.length === 0) {
-      steps.push({
-        step: 1,
-        description: "Evaluate expression",
-        expression,
-        result: finalResult,
-      });
-    }
+    const steps = await this.buildTypeExplanationSteps(expression, components, finalResult, packageName);
 
     return {
       expression,
@@ -2907,22 +2816,98 @@ export class ProjectManager {
     };
   }
 
+  private async evaluateTypeExplanationFinal(expression: string, packageName?: string): Promise<string> {
+    const evalResult = await this.evalType(expression, packageName);
+    return "error" in evalResult ? `Error: ${evalResult.error}` : evalResult.expanded;
+  }
+
+  private async buildTypeExplanationSteps(
+    expression: string,
+    components: TypeExpressionComponent[],
+    finalResult: string,
+    packageName?: string,
+  ): Promise<TypeExplanationStep[]> {
+    if (components.length === 0) {
+      return [{ step: 1, description: `Expand ${expression}`, expression, result: finalResult }];
+    }
+
+    const steps: TypeExplanationStep[] = [];
+    for (const component of components) {
+      steps.push(await this.explainTypeComponent(component, steps.length + 1, packageName));
+    }
+
+    if (steps.length > 0 && steps[steps.length - 1]!.result !== finalResult) {
+      steps.push({ step: steps.length + 1, description: "Final result", expression, result: finalResult });
+    }
+
+    return steps.length === 0
+      ? [{ step: 1, description: "Evaluate expression", expression, result: finalResult }]
+      : steps;
+  }
+
+  private async explainTypeComponent(
+    component: TypeExpressionComponent,
+    step: number,
+    packageName?: string,
+  ): Promise<TypeExplanationStep> {
+    if (component.type === "keyof") {
+      const expression = `keyof ${component.target}`;
+      return {
+        step,
+        description: `Resolve ${expression}`,
+        expression,
+        result: await this.evaluateTypeExplanationFinal(expression, packageName),
+      };
+    }
+
+    if (component.type === "utility") {
+      const expression = `${component.utility}<${component.args.join(", ")}>`;
+      return {
+        step,
+        description: this.describeUtilityType(component.utility, component.args),
+        expression,
+        result: await this.evaluateTypeExplanationFinal(expression, packageName),
+      };
+    }
+
+    return {
+      step,
+      description: `Resolve ${component.name}`,
+      expression: component.name,
+      result: await this.evaluateTypeExplanationFinal(component.name, packageName),
+    };
+  }
+
+  private describeUtilityType(utility: string, args: string[]): string {
+    const [target, keys] = args;
+    switch (utility) {
+      case "Pick":
+        return `Pick properties ${keys} from ${target}`;
+      case "Omit":
+        return `Omit properties ${keys} from ${target}`;
+      case "Partial":
+        return `Make all properties of ${target} optional`;
+      case "Required":
+        return `Make all properties of ${target} required`;
+      case "Readonly":
+        return `Make all properties of ${target} readonly`;
+      case "ReturnType":
+        return `Get return type of ${target}`;
+      case "Parameters":
+        return `Get parameter types of ${target}`;
+      default:
+        return `Apply ${utility}`;
+    }
+  }
+
   /**
    * Parse a type expression to identify its components for step-by-step explanation.
    * Returns an ordered list of components from innermost to outermost.
    */
   private parseTypeExpression(
     expression: string,
-  ): Array<
-    | { type: "keyof"; target: string }
-    | { type: "utility"; utility: string; args: string[] }
-    | { type: "base"; name: string }
-  > {
-    const components: Array<
-      | { type: "keyof"; target: string }
-      | { type: "utility"; utility: string; args: string[] }
-      | { type: "base"; name: string }
-    > = [];
+  ): TypeExpressionComponent[] {
+    const components: TypeExpressionComponent[] = [];
 
     const trimmed = expression.trim();
 

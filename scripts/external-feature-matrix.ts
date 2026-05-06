@@ -32,13 +32,17 @@ const externalRoots = [
   "/Users/guilhermecastro/Projects/typefully-cli",
   "/Users/guilhermecastro/Projects/agentpkg",
   "/Users/guilhermecastro/Projects/probe-cli",
+  "/Users/guilhermecastro/Projects/firecrawl-cli",
+  "/Users/guilhermecastro/Projects/opencode-plugin-template",
 ];
 const commandTimeoutMs = 8_000;
 
 const globalCommands = [
   { command: "capabilities", payload: undefined },
   { command: "schema list", payload: undefined },
+  { command: "schema show", payload: "file" },
   { command: "examples list", payload: undefined },
+  { command: "examples show", payload: "file" },
 ];
 
 const artifactEligibleCommands = new Set([
@@ -55,7 +59,7 @@ const artifactEligibleCommands = new Set([
 const runCli = (command: string, payload?: unknown): MatrixCommandResult => {
   const args = ["run", cliEntry, ...command.split(" ")];
   if (payload !== undefined) {
-    args.push(JSON.stringify(payload));
+    args.push(command === "schema show" || command === "examples show" ? String(payload) : JSON.stringify(payload));
   }
   const flags = artifactEligibleCommands.has(command) ? ["--output", "auto"] : [];
   args.push(...flags);
@@ -78,9 +82,15 @@ const runCli = (command: string, payload?: unknown): MatrixCommandResult => {
     status: result.status,
     elapsedMs,
     ok: result.status === 0,
-    timedOut: result.error?.name === "Error" && /timed out/i.test(result.error.message),
+    timedOut: isSpawnTimeout(result.error),
     summary: summarizeOutput(parsed, output, result.error?.message),
   };
+};
+
+const isSpawnTimeout = (error: unknown): boolean => {
+  if (!error || typeof error !== "object") return false;
+  const record = error as Record<string, unknown>;
+  return record.code === "ETIMEDOUT" || /timed out|ETIMEDOUT/i.test(String(record.message ?? ""));
 };
 
 const parseJson = (text: string): unknown => {
@@ -123,10 +133,8 @@ const summarizeEnvelope = (envelope: Record<string, unknown>): string => {
   return "ok";
 };
 
-const unwrapData = (result: MatrixCommandResult): unknown => {
-  const args = ["run", cliEntry, result.command, JSON.stringify(result.payload)];
-  void args;
-  return undefined;
+const hasSemanticFailure = (result: MatrixCommandResult): boolean => {
+  return /^ok valid=false\b/.test(result.summary);
 };
 
 const parseEnvelopeData = (command: string, payload?: unknown): unknown => {
@@ -180,7 +188,7 @@ const repoCommands = (root: string, symbol: NonNullable<MatrixRepoResult["select
     ...(file ? [{ command: "at-position", payload: { root, file, line: symbol.line ?? 1, column: 1 } }] : []),
     { command: "related", payload: { root, symbol: symbol.name } },
     { command: "eval", payload: { root, expression: `Partial<${symbol.name}>` } },
-    { command: "check-snippet", payload: { root, code: `const value: ${symbol.name} | null = null;` } },
+    { command: "check-snippet", payload: { root, code: "const value = 1 satisfies number;" } },
     ...(file ? [{ command: "file", payload: { root, file, includePrivate: false } }] : []),
     { command: "compatible", payload: { root, from: symbol.name, to: symbol.name } },
     { command: "graph", payload: { root, symbol: symbol.name, depth: 1, format: "mermaid" } },
@@ -190,7 +198,19 @@ const repoCommands = (root: string, symbol: NonNullable<MatrixRepoResult["select
       payload: { root, code: 2322, message: `Type '${symbol.name}' is not assignable to type '${symbol.name}'.` },
     },
     { command: "explain", payload: { root, expression: `Partial<${symbol.name}>` } },
-    { command: "transform-search", payload: { root, from: symbol.name, limit: 5 } },
+    {
+      command: "transform-search",
+      payload: {
+        root,
+        from: symbol.name,
+        to: symbol.name,
+        paramPosition: "any",
+        unwrapReturn: true,
+        exportedOnly: false,
+        allowTypeErasure: true,
+        limit: 5,
+      },
+    },
     { command: "doctor", payload: { root } },
   ];
 };
@@ -205,6 +225,16 @@ const results = {
 for (const root of externalRoots) {
   const repoResult: MatrixRepoResult = { root, exists: existsSync(root), results: [] };
   if (!repoResult.exists) {
+    repoResult.results = [{
+      command: "repo-exists",
+      payload: { root },
+      flags: [],
+      status: 1,
+      elapsedMs: 0,
+      ok: false,
+      timedOut: false,
+      summary: "External matrix root does not exist",
+    }];
     results.repositories.push(repoResult);
     continue;
   }
@@ -223,8 +253,8 @@ mkdirSync(dirname(outputPath), { recursive: true });
 writeFileSync(outputPath, JSON.stringify(results, null, 2) + "\n", "utf8");
 
 const failures = [
-  ...results.global.filter((result) => !result.ok),
-  ...results.repositories.flatMap((repo) => repo.results.filter((result) => !result.ok)),
+  ...results.global.filter((result) => !result.ok || hasSemanticFailure(result)),
+  ...results.repositories.flatMap((repo) => repo.results.filter((result) => !result.ok || hasSemanticFailure(result))),
 ];
 
 console.log(JSON.stringify({
