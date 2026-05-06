@@ -107,4 +107,17 @@ describe("refactor coverage", () => {
     expect(generic?.issues[0]).toMatchObject({ kind: "other" })
     expect(generic?.suggestions).toContain("Review the types involved using type_expand")
   })
+
+  it("resolves file-scoped private symbols and dotted members", async () => {
+    const analyzer = createFixtureAnalyzer()
+    const internalHelper = await Effect.runPromise(
+      analyzer.getTypeInfo("@file:types/basic.ts:internalHelper"),
+    )
+    const userName = await Effect.runPromise(analyzer.getTypeInfo("@file:types/basic.ts:User.name"))
+
+    expect(internalHelper).toMatchObject({ name: "internalHelper", kind: "variable" })
+    expect(internalHelper?.type).toContain("number")
+    expect(userName).toMatchObject({ name: "name", kind: "PropertySignature" })
+    expect(userName?.type).toBe("string")
+  })
 })

@@ -624,133 +624,81 @@ export class ProjectManager {
     project: Project,
     pkg: PackageInfo,
   ): { node: Node; symbol: Symbol } | null {
-    // Normalize the file path
-    const targetPath = isAbsolute(filePath) ? filePath : join(this.rootDirectory, filePath);
-
-    // Find the source file
-    let sourceFile = project.getSourceFile(targetPath);
-    if (!sourceFile) {
-      // Try finding by partial match
-      const allFiles = this.getSourceFiles(project, pkg);
-      const matchingFile = allFiles.find((sf) => {
-        const sfPath = sf.getFilePath();
-        return sfPath.endsWith(filePath) || sfPath.includes(filePath);
-      });
-
-      if (!matchingFile) {
-        return null;
-      }
-
-      sourceFile = matchingFile;
-    }
-
+    const sourceFile = this.resolveSourceFileForLookup(filePath, project, pkg);
+    if (!sourceFile) return null;
     const parts = symbolName.split(".");
     const rootName = parts[0]!;
+    const root = this.findRootSymbolInSourceFile(sourceFile, rootName);
 
-    // Helper to navigate to members
-    const navigateToMembers = (
-      startNode: Node,
-      startSymbol: Symbol,
-    ): { node: Node; symbol: Symbol } | null => {
-      let node = startNode;
-      let symbol: Symbol | undefined = startSymbol;
+    return root ? this.navigateSymbolMembers(root.node, root.symbol, parts) : null;
+  }
 
-      for (let i = 1; i < parts.length && symbol; i++) {
-        const memberName = parts[i]!;
-        const type = node.getType();
-        const property = type.getProperty(memberName);
+  private resolveSourceFileForLookup(
+    filePath: string,
+    project: Project,
+    pkg: PackageInfo,
+  ): SourceFile | null {
+    const targetPath = isAbsolute(filePath) ? filePath : join(this.rootDirectory, filePath);
+    const sourceFile = project.getSourceFile(targetPath);
+    if (sourceFile) return sourceFile;
 
-        if (property) {
-          const propDecl = property.getDeclarations()[0];
-          if (propDecl) {
-            node = propDecl;
-            symbol = property;
-          } else {
-            return null;
-          }
-        } else {
-          return null;
-        }
-      }
+    return this.getSourceFiles(project, pkg).find((sf) => {
+      const sfPath = sf.getFilePath();
+      return sfPath.endsWith(filePath) || sfPath.includes(filePath);
+    }) ?? null;
+  }
 
-      return symbol ? { node, symbol } : null;
-    };
+  private findRootSymbolInSourceFile(
+    sourceFile: SourceFile,
+    rootName: string,
+  ): { node: Node; symbol: Symbol } | null {
+    return (
+      this.findNamedNodeSymbol(sourceFile.getClasses(), rootName) ??
+      this.findNamedNodeSymbol(sourceFile.getInterfaces(), rootName) ??
+      this.findNamedNodeSymbol(sourceFile.getTypeAliases(), rootName) ??
+      this.findNamedNodeSymbol(sourceFile.getFunctions(), rootName) ??
+      this.findNamedNodeSymbol(sourceFile.getEnums(), rootName) ??
+      this.findVariableDeclarationSymbol(sourceFile, rootName) ??
+      this.findExportedRootSymbol(sourceFile, rootName)
+    );
+  }
 
-    // Search all declaration types in the file
-    // 1. Classes
-    for (const classDecl of sourceFile.getClasses()) {
-      const name = classDecl.getName();
-      if (name === rootName) {
-        const symbol = classDecl.getSymbol();
-        if (symbol) {
-          return navigateToMembers(classDecl, symbol);
-        }
-      }
+  private findNamedNodeSymbol(nodes: Node[], rootName: string): { node: Node; symbol: Symbol } | null {
+    for (const node of nodes) {
+      const actualName = this.getDeclarationName(node);
+      if (actualName !== rootName) continue;
+      const symbol = node.getSymbol();
+      if (symbol) return { node, symbol };
     }
+    return null;
+  }
 
-    // 2. Interfaces
-    for (const interfaceDecl of sourceFile.getInterfaces()) {
-      if (interfaceDecl.getName() === rootName) {
-        const symbol = interfaceDecl.getSymbol();
-        if (symbol) {
-          return navigateToMembers(interfaceDecl, symbol);
-        }
-      }
-    }
-
-    // 3. Type aliases
-    for (const typeAlias of sourceFile.getTypeAliases()) {
-      if (typeAlias.getName() === rootName) {
-        const symbol = typeAlias.getSymbol();
-        if (symbol) {
-          return navigateToMembers(typeAlias, symbol);
-        }
-      }
-    }
-
-    // 4. Functions
-    for (const funcDecl of sourceFile.getFunctions()) {
-      const name = funcDecl.getName();
-      if (name === rootName) {
-        const symbol = funcDecl.getSymbol();
-        if (symbol) {
-          return navigateToMembers(funcDecl, symbol);
-        }
-      }
-    }
-
-    // 5. Enums
-    for (const enumDecl of sourceFile.getEnums()) {
-      if (enumDecl.getName() === rootName) {
-        const symbol = enumDecl.getSymbol();
-        if (symbol) {
-          return navigateToMembers(enumDecl, symbol);
-        }
-      }
-    }
-
-    // 6. Variables
+  private findVariableDeclarationSymbol(
+    sourceFile: SourceFile,
+    rootName: string,
+  ): { node: Node; symbol: Symbol } | null {
     for (const varStatement of sourceFile.getVariableStatements()) {
       for (const varDecl of varStatement.getDeclarations()) {
-        if (varDecl.getName() === rootName) {
-          const symbol = varDecl.getSymbol();
-          if (symbol) {
-            return navigateToMembers(varDecl, symbol);
-          }
-        }
+        if (varDecl.getName() !== rootName) continue;
+        const symbol = varDecl.getSymbol();
+        if (symbol) return { node: varDecl, symbol };
       }
     }
+    return null;
+  }
 
-    // 7. Check exports (including default)
-    const exports = sourceFile.getExportedDeclarations();
-    for (const [exportName, declarations] of exports) {
+  private findExportedRootSymbol(
+    sourceFile: SourceFile,
+    rootName: string,
+  ): { node: Node; symbol: Symbol } | null {
+    for (const [exportName, declarations] of sourceFile.getExportedDeclarations()) {
       if (exportName === rootName || exportName === "default") {
         for (const decl of declarations) {
           const actualName = exportName === "default" ? this.getDeclarationName(decl) : exportName;
           if (actualName === rootName) {
             const symbol = decl.getSymbol();
             if (symbol) {
-              return navigateToMembers(decl, symbol);
+              return { node: decl, symbol };
             }
           }
         }
@@ -758,6 +706,26 @@ export class ProjectManager {
     }
 
     return null;
+  }
+
+  private navigateSymbolMembers(
+    startNode: Node,
+    startSymbol: Symbol,
+    parts: string[],
+  ): { node: Node; symbol: Symbol } | null {
+    let node = startNode;
+    let symbol: Symbol | undefined = startSymbol;
+
+    for (let i = 1; i < parts.length && symbol; i++) {
+      const memberName = parts[i]!;
+      const property = node.getType().getProperty(memberName);
+      const propDecl = property?.getDeclarations()[0];
+      if (!property || !propDecl) return null;
+      node = propDecl;
+      symbol = property;
+    }
+
+    return symbol ? { node, symbol } : null;
   }
 
   private findSymbol(
