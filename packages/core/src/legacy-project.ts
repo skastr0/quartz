@@ -1011,93 +1011,130 @@ export class ProjectManager {
       references: [],
     };
 
+    result.referencedBy.push(...this.findIncomingReferences(project, node, symbol));
+    result.references.push(...this.findOutgoingTypeReferences(node));
+
+    return result;
+  }
+
+  private findIncomingReferences(
+    project: Project,
+    node: Node,
+    symbol: Symbol,
+  ): RelatedInfo["referencedBy"] {
     try {
-      const languageService = project.getLanguageService();
-      const referencedSymbols = languageService.findReferences(node);
-      const seenRefs = new Set<string>();
-
-      for (const refSymbol of referencedSymbols) {
-        for (const ref of refSymbol.getReferences().slice(0, 100)) {
-          const refNode = ref.getNode();
-          const refSourceFile = refNode.getSourceFile();
-          if (refSourceFile.isInNodeModules()) continue;
-
-          const parent = refNode.getParent();
-          if (!parent) continue;
-
-          let context = "usage";
-          const parentKind = parent.getKind();
-
-          if (parentKind === SyntaxKind.HeritageClause) {
-            context = "extends";
-          } else if (parentKind === SyntaxKind.TypeReference) {
-            context = "type reference";
-          } else if (parentKind === SyntaxKind.PropertyAccessExpression) {
-            context = "property access";
-          } else if (parentKind === SyntaxKind.CallExpression) {
-            context = "call";
-          }
-
-          let containingSymbol = "anonymous";
-          let current: Node | undefined = parent;
-          while (current) {
-            const currentSymbol = current.getSymbol();
-            if (currentSymbol && currentSymbol !== symbol) {
-              containingSymbol = currentSymbol.getName();
-              break;
-            }
-            current = current.getParent();
-          }
-
-          const key = `${containingSymbol}:${context}:${refNode.getStartLineNumber()}`;
-          if (!seenRefs.has(key) && containingSymbol !== symbol.getName()) {
-            seenRefs.add(key);
-            result.referencedBy.push({
-              symbol: containingSymbol,
-              context,
-              file: this.relativePath(refSourceFile.getFilePath()),
-              line: refNode.getStartLineNumber(),
-            });
-          }
-        }
-      }
+      return this.collectIncomingReferences(project, node, symbol);
     } catch {
-      // Ignore reference finding errors
+      return [];
     }
+  }
 
-    const type = node.getType();
-    const typeProperties = type.getProperties();
+  private collectIncomingReferences(
+    project: Project,
+    node: Node,
+    symbol: Symbol,
+  ): RelatedInfo["referencedBy"] {
+    const referencedBy: RelatedInfo["referencedBy"] = [];
+    const seenRefs = new Set<string>();
 
-    for (const prop of typeProperties.slice(0, 50)) {
-      const propDecl = prop.getDeclarations()[0];
-      if (propDecl) {
-        const propType = propDecl.getType();
-        const propTypeText = propType.getText(propDecl);
+    for (const refSymbol of project.getLanguageService().findReferences(node)) {
+      for (const ref of refSymbol.getReferences().slice(0, 100)) {
+        const refNode = ref.getNode();
+        const refInfo = this.toIncomingReference(refNode, symbol);
+        if (!refInfo) continue;
 
-        if (propTypeText !== "string" && propTypeText !== "number" && propTypeText !== "boolean") {
-          const typeSymbol = propType.getSymbol() || propType.getAliasSymbol();
-          if (typeSymbol) {
-            result.references.push({
-              symbol: typeSymbol.getName(),
-              context: `property "${prop.getName()}"`,
-            });
-          }
-        }
+        const key = `${refInfo.symbol}:${refInfo.context}:${refInfo.line}`;
+        if (seenRefs.has(key)) continue;
+        seenRefs.add(key);
+        referencedBy.push(refInfo);
       }
     }
 
-    const baseTypes = type.getBaseTypes();
-    for (const baseType of baseTypes) {
-      const baseSymbol = baseType.getSymbol();
-      if (baseSymbol) {
-        result.references.push({
-          symbol: baseSymbol.getName(),
-          context: "extends",
+    return referencedBy;
+  }
+
+  private toIncomingReference(refNode: Node, symbol: Symbol): RelatedInfo["referencedBy"][number] | null {
+    const refSourceFile = refNode.getSourceFile();
+    if (refSourceFile.isInNodeModules()) return null;
+
+    const parent = refNode.getParent();
+    if (!parent) return null;
+
+    const context = this.classifyReferenceContext(parent);
+    const containingSymbol = this.findContainingSymbolName(parent, symbol);
+    if (containingSymbol === symbol.getName()) return null;
+
+    return {
+      symbol: containingSymbol,
+      context,
+      file: this.relativePath(refSourceFile.getFilePath()),
+      line: refNode.getStartLineNumber(),
+    };
+  }
+
+  private classifyReferenceContext(parent: Node): string {
+    const parentKind = parent.getKind();
+    if (parentKind === SyntaxKind.HeritageClause) return "extends";
+    if (parentKind === SyntaxKind.TypeReference) return "type reference";
+    if (parentKind === SyntaxKind.PropertyAccessExpression) return "property access";
+    if (parentKind === SyntaxKind.CallExpression) return "call";
+    return "usage";
+  }
+
+  private findContainingSymbolName(parent: Node, symbol: Symbol): string {
+    let current: Node | undefined = parent;
+    while (current) {
+      const currentSymbol = current.getSymbol();
+      if (currentSymbol && currentSymbol !== symbol) {
+        return currentSymbol.getName();
+      }
+      current = current.getParent();
+    }
+    return "anonymous";
+  }
+
+  private findOutgoingTypeReferences(node: Node): RelatedInfo["references"] {
+    const type = node.getType();
+    return [
+      ...this.findPropertyTypeReferences(type),
+      ...this.findBaseTypeReferences(type),
+    ];
+  }
+
+  private findPropertyTypeReferences(type: import("ts-morph").Type): RelatedInfo["references"] {
+    const references: RelatedInfo["references"] = [];
+
+    for (const prop of type.getProperties().slice(0, 50)) {
+      const propDecl = prop.getDeclarations()[0];
+      if (!propDecl) continue;
+
+      const propType = propDecl.getType();
+      const propTypeText = propType.getText(propDecl);
+      if (this.isPrimitiveRelatedType(propTypeText)) continue;
+
+      const typeSymbol = propType.getSymbol() || propType.getAliasSymbol();
+      if (typeSymbol) {
+        references.push({
+          symbol: typeSymbol.getName(),
+          context: `property "${prop.getName()}"`,
         });
       }
     }
 
-    return result;
+    return references;
+  }
+
+  private findBaseTypeReferences(type: import("ts-morph").Type): RelatedInfo["references"] {
+    return type
+      .getBaseTypes()
+      .flatMap((baseType) => {
+        const baseSymbol = baseType.getSymbol();
+        return baseSymbol ? [{ symbol: baseSymbol.getName(), context: "extends" }] : [];
+      });
+  }
+
+  private isPrimitiveRelatedType(typeText: string): boolean {
+    return typeText === "string" || typeText === "number" || typeText === "boolean";
   }
 
   async searchTypes(
