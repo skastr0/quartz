@@ -234,6 +234,16 @@ interface ParsedCommand {
   readonly options: ExecutionOptions
 }
 
+interface ResolvedCommandTokens {
+  readonly command: string
+  readonly rest: readonly string[]
+}
+
+interface ParsedExecutionInput {
+  readonly options: ExecutionOptions
+  readonly positionals: readonly string[]
+}
+
 interface CommandResult {
   readonly data: unknown
   readonly exitCode: number
@@ -686,56 +696,50 @@ const takeOptionValue = (argv: readonly string[], index: number, option: string)
   return [next, index + 1]
 }
 
-const parseArgv = (argv: readonly string[]): ParsedCommand => {
-  if (argv.length === 0 || argv[0] === "help" || argv[0] === "--help" || argv[0] === "-h") {
-    return {
-      command: "capabilities",
-      options: defaultExecutionOptions(),
-    }
-  }
-
+const resolveCommandTokens = (argv: readonly string[]): ResolvedCommandTokens => {
   const first = argv[0]
-  if (first === undefined) {
-    return {
-      command: "capabilities",
-      options: defaultExecutionOptions(),
-    }
+  if (first === undefined || first === "help" || first === "--help" || first === "-h") {
+    return { command: "capabilities", rest: [] }
   }
 
-  let command = first
-  let rest = argv.slice(1)
-  if (first === "schema" || first === "examples") {
-    const subcommand = rest[0]
-    if (subcommand !== "list" && subcommand !== "show") {
-      throw new CommandInputError({
-        message: `${first} requires subcommand list or show`,
-        details: {
-          expected: [`${first} list`, `${first} show <name>`],
-          received: argv.join(" "),
-          retryable: false,
-        },
-      })
-    }
-    command = `${first} ${subcommand}`
-    rest = rest.slice(1)
+  if (first !== "schema" && first !== "examples") {
+    return { command: first, rest: argv.slice(1) }
   }
 
-  if (!isKnownCommand(command)) {
+  const rest = argv.slice(1)
+  const subcommand = rest[0]
+  if (subcommand !== "list" && subcommand !== "show") {
     throw new CommandInputError({
-      message: `Unknown command: ${command}`,
+      message: `${first} requires subcommand list or show`,
       details: {
-        expected: [...commandNames, "capabilities", "schema list", "schema show", "examples list", "examples show"],
-        received: command,
+        expected: [`${first} list`, `${first} show <name>`],
+        received: argv.join(" "),
         retryable: false,
       },
     })
   }
 
+  return { command: `${first} ${subcommand}`, rest: rest.slice(1) }
+}
+
+const assertKnownCommand = (command: string): void => {
+  if (isKnownCommand(command)) return
+  throw new CommandInputError({
+    message: `Unknown command: ${command}`,
+    details: {
+      expected: [...commandNames, "capabilities", "schema list", "schema show", "examples list", "examples show"],
+      received: command,
+      retryable: false,
+    },
+  })
+}
+
+const parseExecutionInput = (tokens: readonly string[]): ParsedExecutionInput => {
   const options: Mutable<ExecutionOptions> = defaultExecutionOptions()
   const positionals: string[] = []
 
-  for (let i = 0; i < rest.length; i += 1) {
-    const token = rest[i]
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i]
     if (token === undefined) continue
 
     if (token === "--json") {
@@ -747,31 +751,31 @@ const parseArgv = (argv: readonly string[]): ParsedCommand => {
       continue
     }
     if (token.startsWith("--output")) {
-      const [value, nextIndex] = takeOptionValue(rest, i, "--output")
+      const [value, nextIndex] = takeOptionValue(tokens, i, "--output")
       options.output = parseChoice("--output", value, ["inline", "artifact", "auto"] as const)
       i = nextIndex
       continue
     }
     if (token.startsWith("--format")) {
-      const [value, nextIndex] = takeOptionValue(rest, i, "--format")
+      const [value, nextIndex] = takeOptionValue(tokens, i, "--format")
       options.format = parseChoice("--format", value, ["json", "pretty"] as const)
       i = nextIndex
       continue
     }
     if (token.startsWith("--concurrency")) {
-      const [value, nextIndex] = takeOptionValue(rest, i, "--concurrency")
+      const [value, nextIndex] = takeOptionValue(tokens, i, "--concurrency")
       options.concurrency = parsePositiveInteger("--concurrency", value)
       i = nextIndex
       continue
     }
     if (token.startsWith("--timeout")) {
-      const [value, nextIndex] = takeOptionValue(rest, i, "--timeout")
+      const [value, nextIndex] = takeOptionValue(tokens, i, "--timeout")
       options.timeoutMs = parsePositiveInteger("--timeout", value)
       i = nextIndex
       continue
     }
     if (token.startsWith("--artifact-dir")) {
-      const [value, nextIndex] = takeOptionValue(rest, i, "--artifact-dir")
+      const [value, nextIndex] = takeOptionValue(tokens, i, "--artifact-dir")
       options.artifactDir = value
       i = nextIndex
       continue
@@ -790,6 +794,14 @@ const parseArgv = (argv: readonly string[]): ParsedCommand => {
     positionals.push(token)
   }
 
+  return { options, positionals }
+}
+
+const finalizeParsedCommand = (
+  command: string,
+  positionals: readonly string[],
+  options: ExecutionOptions,
+): ParsedCommand => {
   if (command === "schema show" || command === "examples show") {
     if (positionals.length !== 1) {
       throw new CommandInputError({
@@ -824,6 +836,13 @@ const parseArgv = (argv: readonly string[]): ParsedCommand => {
 
   const payloadSource = positionals[0]
   return payloadSource === undefined ? { command, options } : { command, payloadSource, options }
+}
+
+const parseArgv = (argv: readonly string[]): ParsedCommand => {
+  const { command, rest } = resolveCommandTokens(argv)
+  assertKnownCommand(command)
+  const { options, positionals } = parseExecutionInput(rest)
+  return finalizeParsedCommand(command, positionals, options)
 }
 
 const defaultExecutionOptions = (): ExecutionOptions => ({
