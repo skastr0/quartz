@@ -60,6 +60,10 @@ export interface UserRecord {
   [userId: string]: User;
 }
 
+export interface DuplicateSnippetType {
+  source: "basic";
+}
+
 // === Readonly ===
 
 export interface ReadonlyUser {

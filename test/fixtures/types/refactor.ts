@@ -75,6 +75,10 @@ export interface RefactorUserProfile {
   };
 }
 
+export interface DuplicateSnippetType {
+  source: "refactor";
+}
+
 // === Re-export for testing cross-file references ===
 
 export type { RefactorUser as RefactorableUser };

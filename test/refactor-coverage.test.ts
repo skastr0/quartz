@@ -20,17 +20,8 @@ describe("refactor coverage", () => {
     const byName = new Map(result.entries.map((entry) => [entry.qualifiedName, entry]))
 
     expect(result.entries.map((entry) => entry.id)).toEqual(result.entries.map((_, index) => index))
-    expect(result.stats).toMatchObject({
-      functions: expect.any(Number),
-      variableCallables: expect.any(Number),
-      classMethods: expect.any(Number),
-      staticMethods: expect.any(Number),
-      constructors: expect.any(Number),
-      objectMethods: expect.any(Number),
-      interfaceMethods: expect.any(Number),
-      callableProperties: expect.any(Number),
-      total: result.entries.length,
-    })
+    expect(Object.values(result.stats).every((value) => typeof value === "number")).toBe(true)
+    expect(result.stats.total).toBe(result.entries.length)
     expect(result.stats.functions).toBeGreaterThan(0)
     expect(result.stats.variableCallables).toBeGreaterThan(0)
     expect(result.stats.classMethods).toBeGreaterThan(0)
@@ -114,10 +105,61 @@ describe("refactor coverage", () => {
       analyzer.getTypeInfo("@file:types/basic.ts:internalHelper"),
     )
     const userName = await Effect.runPromise(analyzer.getTypeInfo("@file:types/basic.ts:User.name"))
+    const defaultClass = await Effect.runPromise(analyzer.getTypeInfo("@file:basic.ts:DefaultExportedClass"))
+    const aliasedUser = await Effect.runPromise(analyzer.getTypeInfo("@file:refactor.ts:RefactorableUser"))
 
     expect(internalHelper).toMatchObject({ name: "internalHelper", kind: "variable" })
     expect(internalHelper?.type).toContain("number")
     expect(userName).toMatchObject({ name: "name", kind: "PropertySignature" })
     expect(userName?.type).toBe("string")
+    expect(defaultClass).toMatchObject({ name: "default", kind: "class" })
+    expect(aliasedUser).toMatchObject({ name: "RefactorUser", kind: "interface" })
+  })
+
+  it("checks snippets with injected imports, duplicate aliases, and line offsets", async () => {
+    const analyzer = createFixtureAnalyzer()
+    const missingImportedProperty = await Effect.runPromise(
+      analyzer.checkSnippet("const user: User = { name: 'Ada', email: 'ada@example.com' };"),
+    )
+    const duplicateAliases = await Effect.runPromise(
+      analyzer.checkSnippet(
+        "const fromBasic: DuplicateSnippetType_0 = { source: 'basic' };\nconst fromRefactor: DuplicateSnippetType_1 = { source: 'refactor' };",
+      ),
+    )
+
+    expect(missingImportedProperty.valid).toBe(false)
+    expect(missingImportedProperty.errors?.[0]).toMatchObject({
+      line: 1,
+      severity: "error",
+    })
+    expect(missingImportedProperty.errors?.[0]?.message).toContain("Property 'id' is missing")
+    expect(duplicateAliases).toEqual({ valid: true })
+  })
+
+  it("inspects files with export metadata, signatures, private declarations, and ordering", async () => {
+    const analyzer = createFixtureAnalyzer()
+    const basic = await Effect.runPromise(
+      analyzer.getFileDeclarations("types/basic.ts", { includePrivate: true }),
+    )
+    const refactorAlias = await Effect.runPromise(
+      analyzer.getFileDeclarations("types/refactor.ts", { symbol: "^RefactorUser$" }),
+    )
+    const transforms = await Effect.runPromise(
+      analyzer.getFileDeclarations("types/transforms.ts", { symbol: "^toDTO$" }),
+    )
+
+    expect(basic?.declarations[0]).toMatchObject({
+      name: "DefaultExportedClass",
+      kind: "class",
+      isDefaultExport: true,
+    })
+    expect(basic?.declarations.find((declaration) => declaration.name === "InternalConfig")).toMatchObject({
+      exported: false,
+    })
+    expect(refactorAlias?.declarations[0]).toMatchObject({
+      name: "RefactorUser",
+      exportedAs: "RefactorableUser",
+    })
+    expect(transforms?.declarations[0]?.signature).toContain("(from: User) => UserDTO")
   })
 })
