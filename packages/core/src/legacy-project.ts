@@ -2445,7 +2445,6 @@ export class ProjectManager {
     if (extracted.types.length < 2) return;
 
     const [fromType, toType] = extracted.types;
-    result.types = {};
     await this.expandResultTypes(result, [fromType!, toType!], project, pkg);
 
     const compat = await this.checkCompatibility(fromType!, toType!, packageName);
@@ -2467,7 +2466,6 @@ export class ProjectManager {
 
     const [targetType] = extracted.types;
     const [missingProp] = extracted.properties;
-    result.types = {};
     await this.expandTargetType(result, targetType!, project, pkg);
 
     result.issues.push({
@@ -2491,7 +2489,6 @@ export class ProjectManager {
 
     const [fromType, toType] = extracted.types;
     const [missingProp] = extracted.properties;
-    result.types = {};
     await this.expandResultTypes(result, [fromType!, toType!], project, pkg);
 
     result.issues.push({
@@ -2514,7 +2511,6 @@ export class ProjectManager {
 
     const [targetType] = extracted.types;
     const [wrongProp, suggestedProp] = extracted.properties;
-    result.types = {};
     await this.expandTargetType(result, targetType!, project, pkg);
 
     result.issues.push({
@@ -2534,7 +2530,6 @@ export class ProjectManager {
     pkg: PackageInfo,
   ): Promise<void> {
     if (extracted.types.length > 0) {
-      result.types = {};
       await this.expandResultTypes(result, extracted.types.slice(0, 2), project, pkg);
     }
     result.explanation = errorMessage;
@@ -2553,10 +2548,11 @@ export class ProjectManager {
       const typeName = typeNames[i]!;
       const expanded = await this.safeExpandType(typeName, project, pkg);
       if (!expanded) continue;
+      result.types ??= {};
       if (i === 0) {
-        result.types!.from = { name: typeName, expanded };
+        result.types.from = { name: typeName, expanded };
       } else {
-        result.types!.to = { name: typeName, expanded };
+        result.types.to = { name: typeName, expanded };
       }
     }
   }
@@ -2569,7 +2565,8 @@ export class ProjectManager {
   ): Promise<void> {
     const expanded = await this.safeExpandType(typeName, project, pkg);
     if (expanded) {
-      result.types!.target = { name: typeName, expanded };
+      result.types ??= {};
+      result.types.target = { name: typeName, expanded };
     }
   }
 

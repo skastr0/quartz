@@ -232,6 +232,7 @@ export function parseUserOrError(json: string): User | Error {
 export interface UserFactory {
   (input: UserInput): User;
   fromDTO(dto: UserDTO): User;
+  serialize: (user: User) => string;
 }
 
 // === Primitive type transforms (for testing built-in type support) ===

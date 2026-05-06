@@ -290,7 +290,7 @@ export class TransformSearchEngine {
     }
 
     results.sort((a, b) => b.score - a.score);
-    return results.slice(0, query.limit);
+    return results;
   }
 
   private createSearchResult(
@@ -350,8 +350,9 @@ export class TransformSearchEngine {
     results: TransformSearchResult[],
     timing: SearchTiming,
   ): TransformSearchResponse {
+    const limitedResults = results.slice(0, query.limit);
     return {
-      results,
+      results: limitedResults,
       query: {
         from: options.from ?? null,
         to: options.to ?? null,
@@ -365,7 +366,7 @@ export class TransformSearchEngine {
         totalCandidates: candidateIds.length,
         assignableMatches: assignableResults.length,
         verifiedMatches: results.length,
-        returned: results.length,
+        returned: limitedResults.length,
         timing,
       },
     };
