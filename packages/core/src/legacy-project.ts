@@ -87,6 +87,14 @@ interface FileExportMetadata {
   exportAliases: Map<string, string>;
 }
 
+interface SymbolMatch {
+  node: Node;
+  symbol: Symbol;
+  file: string;
+  line: number;
+  isDefault: boolean;
+}
+
 export interface CompatibilityResult {
   compatible: boolean;
   from: string;
@@ -733,91 +741,99 @@ export class ProjectManager {
     project: Project,
     pkg: PackageInfo,
   ): { node: Node; symbol: Symbol } | null {
-    // Check for @file: syntax first - explicit file-scoped lookup
     const fileRef = this.parseFileReference(symbolName);
     if (fileRef) {
-      if (fileRef.symbol === "*") {
-        // Caller wants all symbols, not a specific one - return null to signal this
-        return null;
-      }
+      if (fileRef.symbol === "*") return null;
       return this.findSymbolInFile(fileRef.filePath, fileRef.symbol, project, pkg);
     }
 
     const parts = symbolName.split(".");
     const rootName = parts[0]!;
-    const sourceFiles = this.getSourceFiles(project, pkg);
+    const matches = this.findExportedSymbolMatches(rootName, project, pkg);
+    const match = this.resolveSingleSymbolMatch(rootName, matches);
+    return match ? this.navigateExportedSymbolMembers(match.node, match.symbol, parts) : null;
+  }
 
-    // Collect ALL matches to detect ambiguity
-    const matches: Array<{
-      node: Node;
-      symbol: Symbol;
-      file: string;
-      line: number;
-      isDefault: boolean;
-    }> = [];
+  private findExportedSymbolMatches(
+    rootName: string,
+    project: Project,
+    pkg: PackageInfo,
+  ): SymbolMatch[] {
+    const matches: SymbolMatch[] = [];
 
-    // First pass: collect direct named export matches
-    for (const sourceFile of sourceFiles) {
+    for (const sourceFile of this.getSourceFiles(project, pkg)) {
       const exports = sourceFile.getExportedDeclarations();
-      const declarations = exports.get(rootName);
+      this.addNamedExportMatch(matches, sourceFile, exports.get(rootName));
+      this.addDefaultExportMatches(matches, sourceFile, rootName, exports.get("default"));
+    }
 
-      if (declarations && declarations.length > 0) {
-        const node = declarations[0]!;
-        const symbol = node.getSymbol();
-        if (symbol) {
-          matches.push({
-            node,
-            symbol,
-            file: this.relativePath(sourceFile.getFilePath()),
-            line: node.getStartLineNumber(),
-            isDefault: false,
-          });
-        }
+    return matches;
+  }
+
+  private addNamedExportMatch(
+    matches: SymbolMatch[],
+    sourceFile: SourceFile,
+    declarations: Node[] | undefined,
+  ): void {
+    const node = declarations?.[0];
+    const symbol = node?.getSymbol();
+    if (node && symbol) {
+      matches.push(this.toSymbolMatch(node, symbol, sourceFile, false));
+    }
+  }
+
+  private addDefaultExportMatches(
+    matches: SymbolMatch[],
+    sourceFile: SourceFile,
+    rootName: string,
+    declarations: Node[] | undefined,
+  ): void {
+    for (const decl of declarations ?? []) {
+      if (this.getDeclarationName(decl) !== rootName) continue;
+      const symbol = decl.getSymbol();
+      if (symbol) {
+        matches.push(this.toSymbolMatch(decl, symbol, sourceFile, true));
       }
     }
+  }
 
-    // Second pass: check default exports whose actual name matches rootName
-    for (const sourceFile of sourceFiles) {
-      const exports = sourceFile.getExportedDeclarations();
-      const defaultDeclarations = exports.get("default");
+  private toSymbolMatch(
+    node: Node,
+    symbol: Symbol,
+    sourceFile: SourceFile,
+    isDefault: boolean,
+  ): SymbolMatch {
+    return {
+      node,
+      symbol,
+      file: this.relativePath(sourceFile.getFilePath()),
+      line: node.getStartLineNumber(),
+      isDefault,
+    };
+  }
 
-      if (defaultDeclarations && defaultDeclarations.length > 0) {
-        for (const decl of defaultDeclarations) {
-          const actualName = this.getDeclarationName(decl);
-          if (actualName === rootName) {
-            const symbol = decl.getSymbol();
-            if (symbol) {
-              matches.push({
-                node: decl,
-                symbol,
-                file: this.relativePath(sourceFile.getFilePath()),
-                line: decl.getStartLineNumber(),
-                isDefault: true,
-              });
-            }
-          }
-        }
-      }
-    }
-
-    // Handle match results
-    if (matches.length === 0) {
-      return null;
-    }
-
+  private resolveSingleSymbolMatch(rootName: string, matches: SymbolMatch[]): SymbolMatch | null {
+    if (matches.length === 0) return null;
     if (matches.length > 1) {
-      const locations = matches
-        .map((m) => `  - ${m.file}:${m.line}${m.isDefault ? " (default export)" : ""}`)
-        .join("\n");
-      throw new Error(
-        `Ambiguous symbol "${rootName}". Found in multiple files:\n${locations}\nUse @file:path/to/file.ts:${rootName} to specify.`,
-      );
+      throw new Error(this.formatAmbiguousSymbolError(rootName, matches));
     }
+    return matches[0]!;
+  }
 
-    // Single match - navigate to members if needed
-    const match = matches[0]!;
-    let node: Node = match.node;
-    let symbol: Symbol | undefined = match.symbol;
+  private formatAmbiguousSymbolError(rootName: string, matches: SymbolMatch[]): string {
+    const locations = matches
+      .map((match) => `  - ${match.file}:${match.line}${match.isDefault ? " (default export)" : ""}`)
+      .join("\n");
+    return `Ambiguous symbol "${rootName}". Found in multiple files:\n${locations}\nUse @file:path/to/file.ts:${rootName} to specify.`;
+  }
+
+  private navigateExportedSymbolMembers(
+    startNode: Node,
+    startSymbol: Symbol,
+    parts: string[],
+  ): { node: Node; symbol: Symbol } | null {
+    let node: Node = startNode;
+    let symbol: Symbol | undefined = startSymbol;
 
     for (let i = 1; i < parts.length && symbol; i++) {
       const memberName = parts[i]!;
