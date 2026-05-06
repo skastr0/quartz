@@ -187,6 +187,14 @@ const createAnalysisTools = (analyzer: TypeAnalyzer) => ({
 })
 
 const createRelationshipTools = (analyzer: TypeAnalyzer) => ({
+  ...createCompatibilityTools(analyzer),
+  ...createGraphTools(analyzer),
+  ...createRefactorTools(analyzer),
+  ...createExplanationTools(analyzer),
+  ...createTransformSearchTools(analyzer),
+})
+
+const createCompatibilityTools = (analyzer: TypeAnalyzer) => ({
   type_compatible: tool({
     description: "Check if one type is assignable to another.",
     args: {
@@ -198,6 +206,9 @@ const createRelationshipTools = (analyzer: TypeAnalyzer) => ({
       return json(await run(analyzer.checkCompatibility(args.from, args.to, args.package)))
     },
   }),
+})
+
+const createGraphTools = (analyzer: TypeAnalyzer) => ({
   type_graph: tool({
     description: "Generate a type dependency graph as Mermaid or DOT.",
     args: {
@@ -218,6 +229,9 @@ const createRelationshipTools = (analyzer: TypeAnalyzer) => ({
       )
     },
   }),
+})
+
+const createRefactorTools = (analyzer: TypeAnalyzer) => ({
   type_refactor_preview: tool({
     description: "Preview a rename refactor without applying it.",
     args: {
@@ -238,6 +252,9 @@ const createRelationshipTools = (analyzer: TypeAnalyzer) => ({
       )
     },
   }),
+})
+
+const createExplanationTools = (analyzer: TypeAnalyzer) => ({
   type_why_error: tool({
     description: "Explain a TypeScript diagnostic in human terms.",
     args: {
@@ -271,6 +288,9 @@ const createRelationshipTools = (analyzer: TypeAnalyzer) => ({
       return json(await run(analyzer.explainType(args.expression, args.package)))
     },
   }),
+})
+
+const createTransformSearchTools = (analyzer: TypeAnalyzer) => ({
   type_transform_search: tool({
     description: "Search for functions by structural input/output type compatibility.",
     args: {
