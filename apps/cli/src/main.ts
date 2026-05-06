@@ -3,7 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises"
 import { isAbsolute, join, relative, resolve } from "node:path"
 import { Either, Effect, JSONSchema, ParseResult, Schema } from "effect"
 import { createTypeAnalyzer, TypeLevelToolsError } from "@type-level-tools/core"
-import type { ListSymbolsOptions, SearchTypesOptions } from "@type-level-tools/core"
+import type { ListSymbolsOptions, SearchTypesOptions, TypeAnalyzer } from "@type-level-tools/core"
 
 const VERSION = "0.1.0"
 const DEFAULT_CONCURRENCY = 5
@@ -259,8 +259,18 @@ interface PayloadWithPackage {
 }
 
 const packageNameOf = (payload: PayloadWithPackage): string | undefined => payload.package
-const rootOf = (payload: PayloadWithRoot): string => payload.root ?? process.cwd()
-const analyzerFor = (payload: PayloadWithRoot) => createTypeAnalyzer(rootOf(payload))
+const rootOf = (payload: PayloadWithRoot): string => resolve(payload.root ?? process.cwd())
+const analyzersByRoot = new Map<string, TypeAnalyzer>()
+
+const analyzerFor = (payload: PayloadWithRoot): TypeAnalyzer => {
+  const root = rootOf(payload)
+  const cached = analyzersByRoot.get(root)
+  if (cached !== undefined) return cached
+
+  const analyzer = createTypeAnalyzer(root)
+  analyzersByRoot.set(root, analyzer)
+  return analyzer
+}
 
 const packageField = (payload: PayloadWithPackage): { readonly packageName?: string } => {
   const packageName = packageNameOf(payload)
