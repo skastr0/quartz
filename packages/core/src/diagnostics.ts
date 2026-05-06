@@ -96,6 +96,11 @@ export interface DiagnosticAnalysis {
   suggestedTools: SuggestedToolCall[];
 }
 
+interface SuggestionCollector {
+  add: (tool: string, args: Record<string, unknown>, reason: string) => void;
+  list: SuggestedToolCall[];
+}
+
 // Regex patterns to extract types from TypeScript error messages
 // These patterns are based on TypeScript's actual error message formats
 // Note: More specific patterns (with "Did you mean") must come BEFORE generic ones
@@ -272,160 +277,170 @@ export function extractTypesFromMessage(message: string, code?: number): Extract
  * Uses error codes for smarter, more targeted suggestions.
  */
 export function generateToolSuggestions(info: ExtractedTypeInfo): SuggestedToolCall[] {
-  const suggestions: SuggestedToolCall[] = [];
-  const seenCalls = new Set<string>();
+  const collector = createSuggestionCollector();
 
-  const addSuggestion = (tool: string, args: Record<string, unknown>, reason: string) => {
-    const key = `${tool}:${JSON.stringify(args)}`;
-    if (!seenCalls.has(key)) {
-      seenCalls.add(key);
-      suggestions.push({ tool, args, reason });
-    }
-  };
-
-  // Error-code specific suggestions (most targeted)
   if (info.code !== undefined) {
-    switch (info.code) {
-      // TS2322: Type 'X' is not assignable to type 'Y'
-      // TS2345: Argument of type 'X' is not assignable to parameter of type 'Y'
-      case 2322:
-      case 2345:
-        if (info.types.length >= 2) {
-          addSuggestion(
-            "type_compatible",
-            { from: info.types[0], to: info.types[1] },
-            `Check why ${info.types[0]} cannot be assigned to ${info.types[1]}`,
-          );
-          // Expand both types to see their structures
-          addSuggestion(
-            "type_expand",
-            { symbol: info.types[0] },
-            `See structure of ${info.types[0]}`,
-          );
-          addSuggestion(
-            "type_expand",
-            { symbol: info.types[1] },
-            `See structure of ${info.types[1]}`,
-          );
-        }
-        break;
-
-      // TS2339: Property 'X' does not exist on type 'Y'
-      case 2339:
-        if (info.types.length > 0) {
-          addSuggestion(
-            "type_expand",
-            { symbol: info.types[0] },
-            `See what properties ${info.types[0]} actually has`,
-          );
-        }
-        if (info.properties.length > 0) {
-          addSuggestion(
-            "type_search",
-            { hasProperty: info.properties[0] },
-            `Find types that have '${info.properties[0]}'`,
-          );
-        }
-        break;
-
-      // TS2741: Property 'X' is missing in type 'Y' but required in type 'Z'
-      case 2741:
-        if (info.types.length >= 2) {
-          addSuggestion(
-            "type_expand",
-            { symbol: info.types[1] },
-            `See required properties of ${info.types[1]}`,
-          );
-          addSuggestion(
-            "type_compatible",
-            { from: info.types[0], to: info.types[1] },
-            `Check all missing properties`,
-          );
-        }
-        break;
-
-      // TS2551: Property 'X' does not exist on type 'Y'. Did you mean 'Z'?
-      case 2551:
-        if (info.types.length > 0) {
-          addSuggestion(
-            "type_expand",
-            { symbol: info.types[0] },
-            `See available properties on ${info.types[0]}`,
-          );
-        }
-        break;
-
-      // TS2352: Conversion of type 'X' to type 'Y' may be a mistake
-      case 2352:
-        if (info.types.length >= 2) {
-          addSuggestion(
-            "type_compatible",
-            { from: info.types[0], to: info.types[1] },
-            `Check if types have any overlap`,
-          );
-        }
-        break;
-
-      // TS2559: Type 'X' has no properties in common with type 'Y'
-      case 2559:
-        if (info.types.length >= 2) {
-          addSuggestion(
-            "type_expand",
-            { symbol: info.types[0] },
-            `See structure of ${info.types[0]}`,
-          );
-          addSuggestion(
-            "type_expand",
-            { symbol: info.types[1] },
-            `See structure of ${info.types[1]}`,
-          );
-        }
-        break;
-
-      // TS2304: Cannot find name 'X'
-      case 2304:
-        if (info.types.length > 0) {
-          addSuggestion(
-            "type_search",
-            { pattern: info.types[0] },
-            `Search for types matching '${info.types[0]}'`,
-          );
-        }
-        break;
-
-      default:
-        // Fall through to generic handling
-        break;
-    }
+    addCodeSpecificSuggestions(info, collector);
   }
 
-  // If no code-specific suggestions were added, use generic category-based suggestions
-  if (suggestions.length === 0) {
-    // For each extracted type, suggest type_expand to see its structure
-    for (const typeName of info.types) {
-      addSuggestion("type_expand", { symbol: typeName }, `See full structure of ${typeName}`);
-    }
-
-    // For assignability errors with two types, suggest type_compatible
-    if (info.category === "assignability" && info.types.length >= 2) {
-      addSuggestion(
-        "type_compatible",
-        { from: info.types[0], to: info.types[1] },
-        `Check why ${info.types[0]} is not assignable to ${info.types[1]}`,
-      );
-    }
-
-    // For property errors, suggest type_search
-    if (info.category === "property" && info.properties.length > 0) {
-      addSuggestion(
-        "type_search",
-        { hasProperty: info.properties[0] },
-        `Find types that have property '${info.properties[0]}'`,
-      );
-    }
+  if (collector.list.length === 0) {
+    addGenericSuggestions(info, collector);
   }
 
-  return suggestions;
+  return collector.list;
+}
+
+function createSuggestionCollector(): SuggestionCollector {
+  const list: SuggestedToolCall[] = [];
+  const seenCalls = new Set<string>();
+  return {
+    list,
+    add: (tool, args, reason) => {
+      const key = `${tool}:${JSON.stringify(args)}`;
+      if (seenCalls.has(key)) return;
+      seenCalls.add(key);
+      list.push({ tool, args, reason });
+    },
+  };
+}
+
+function addCodeSpecificSuggestions(info: ExtractedTypeInfo, collector: SuggestionCollector): void {
+  switch (info.code) {
+    case 2322:
+    case 2345:
+      addAssignabilityCodeSuggestions(info, collector);
+      break;
+    case 2339:
+      addMissingPropertySuggestions(info, collector);
+      break;
+    case 2741:
+      addMissingRequiredPropertySuggestions(info, collector);
+      break;
+    case 2551:
+      addSuggestedPropertySuggestions(info, collector);
+      break;
+    case 2352:
+      addConversionOverlapSuggestions(info, collector);
+      break;
+    case 2559:
+      addNoCommonPropertiesSuggestions(info, collector);
+      break;
+    case 2304:
+      addNameNotFoundSuggestions(info, collector);
+      break;
+    default:
+      break;
+  }
+}
+
+function addAssignabilityCodeSuggestions(
+  info: ExtractedTypeInfo,
+  collector: SuggestionCollector,
+): void {
+  if (info.types.length < 2) return;
+  collector.add(
+    "type_compatible",
+    { from: info.types[0], to: info.types[1] },
+    `Check why ${info.types[0]} cannot be assigned to ${info.types[1]}`,
+  );
+  collector.add("type_expand", { symbol: info.types[0] }, `See structure of ${info.types[0]}`);
+  collector.add("type_expand", { symbol: info.types[1] }, `See structure of ${info.types[1]}`);
+}
+
+function addMissingPropertySuggestions(
+  info: ExtractedTypeInfo,
+  collector: SuggestionCollector,
+): void {
+  if (info.types.length > 0) {
+    collector.add(
+      "type_expand",
+      { symbol: info.types[0] },
+      `See what properties ${info.types[0]} actually has`,
+    );
+  }
+  if (info.properties.length > 0) {
+    collector.add(
+      "type_search",
+      { hasProperty: info.properties[0] },
+      `Find types that have '${info.properties[0]}'`,
+    );
+  }
+}
+
+function addMissingRequiredPropertySuggestions(
+  info: ExtractedTypeInfo,
+  collector: SuggestionCollector,
+): void {
+  if (info.types.length < 2) return;
+  collector.add("type_expand", { symbol: info.types[1] }, `See required properties of ${info.types[1]}`);
+  collector.add(
+    "type_compatible",
+    { from: info.types[0], to: info.types[1] },
+    "Check all missing properties",
+  );
+}
+
+function addSuggestedPropertySuggestions(
+  info: ExtractedTypeInfo,
+  collector: SuggestionCollector,
+): void {
+  if (info.types.length === 0) return;
+  collector.add(
+    "type_expand",
+    { symbol: info.types[0] },
+    `See available properties on ${info.types[0]}`,
+  );
+}
+
+function addConversionOverlapSuggestions(
+  info: ExtractedTypeInfo,
+  collector: SuggestionCollector,
+): void {
+  if (info.types.length < 2) return;
+  collector.add(
+    "type_compatible",
+    { from: info.types[0], to: info.types[1] },
+    "Check if types have any overlap",
+  );
+}
+
+function addNoCommonPropertiesSuggestions(
+  info: ExtractedTypeInfo,
+  collector: SuggestionCollector,
+): void {
+  if (info.types.length < 2) return;
+  collector.add("type_expand", { symbol: info.types[0] }, `See structure of ${info.types[0]}`);
+  collector.add("type_expand", { symbol: info.types[1] }, `See structure of ${info.types[1]}`);
+}
+
+function addNameNotFoundSuggestions(
+  info: ExtractedTypeInfo,
+  collector: SuggestionCollector,
+): void {
+  if (info.types.length === 0) return;
+  collector.add("type_search", { pattern: info.types[0] }, `Search for types matching '${info.types[0]}'`);
+}
+
+function addGenericSuggestions(info: ExtractedTypeInfo, collector: SuggestionCollector): void {
+  for (const typeName of info.types) {
+    collector.add("type_expand", { symbol: typeName }, `See full structure of ${typeName}`);
+  }
+
+  if (info.category === "assignability" && info.types.length >= 2) {
+    collector.add(
+      "type_compatible",
+      { from: info.types[0], to: info.types[1] },
+      `Check why ${info.types[0]} is not assignable to ${info.types[1]}`,
+    );
+  }
+
+  if (info.category === "property" && info.properties.length > 0) {
+    collector.add(
+      "type_search",
+      { hasProperty: info.properties[0] },
+      `Find types that have property '${info.properties[0]}'`,
+    );
+  }
 }
 
 /**
