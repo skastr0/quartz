@@ -53,11 +53,17 @@ describe("OpenCode plugin wrapper", () => {
       client: {},
     } as never)
 
+    const diagnostics = parse(await toolExecute(plugin, "type_diagnostics", { explain: true }))
     const info = parse(await toolExecute(plugin, "type_info", { symbol: "User" }))
     const symbols = parse(await toolExecute(plugin, "type_symbols", { pattern: "^User", kind: "interface", limit: 1 }))
     const graph = parse(await toolExecute(plugin, "type_graph", { symbol: "ExtendedUser", depth: 1, format: "dot" }))
     const file = parse(await toolExecute(plugin, "type_file", { file: "types/basic.ts", symbol: "^User$", includePrivate: false }))
+    const whyError = parse(await toolExecute(plugin, "type_why_error", {
+      code: 2322,
+      message: "Type UserInput is not assignable to type User",
+    }))
 
+    expect(diagnostics).toMatchObject({ totalErrors: 0, explained: 0 })
     expect(info).toMatchObject({ name: "User", kind: "interface" })
     expect(symbols).toMatchObject({
       symbols: [expect.objectContaining({ name: "User", kind: "interface" })],
@@ -66,6 +72,10 @@ describe("OpenCode plugin wrapper", () => {
     expect(graph).toMatchObject({ root: "ExtendedUser", format: "dot", depth: 1 })
     expect(graph.graph).toContain("digraph")
     expect(file.declarations.map((declaration: any) => declaration.name)).toEqual(["User"])
+    expect(whyError).toMatchObject({
+      explanation: expect.stringContaining("UserInput"),
+      issues: [expect.objectContaining({ kind: "missing_property", property: "id" })],
+    })
   })
 
   it("preserves idle logging and dirty-cache hook behavior", async () => {
@@ -85,11 +95,13 @@ describe("OpenCode plugin wrapper", () => {
     writeFileSync(sourcePath, "export interface TempUser { name: string; age: number }\n", "utf8")
     await plugin["tool.execute.after"]({ tool: "write" })
     const after = parse(await toolExecute(plugin, "type_info", { symbol: "TempUser" }))
+    const refresh = await toolExecute(plugin, "type_refresh")
 
     await plugin.event({ event: { type: "session.idle", properties: { sessionID: "session-1" } } })
 
     expect(before.properties.map((property: any) => property.name)).toEqual(["name"])
     expect(after.properties.map((property: any) => property.name)).toEqual(["name", "age"])
+    expect(refresh).toContain("Refreshed all TypeScript projects")
     expect(log).toHaveBeenCalledWith({
       body: expect.objectContaining({
         service: "type-level-tools",

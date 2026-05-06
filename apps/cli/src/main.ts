@@ -1259,7 +1259,7 @@ const writeEnvelope = (
 
 export const runCli = (argv: readonly string[]): Effect.Effect<number, never> =>
   Effect.gen(function* () {
-    const parsedEither = yield* Effect.either(Effect.sync(() => parseArgv(argv)))
+    const parsedEither = yield* Effect.either(Effect.try({ try: () => parseArgv(argv), catch: (error) => error }))
     if (Either.isLeft(parsedEither)) {
       return yield* emitFailure(undefined, parsedEither.left, "json")
     }

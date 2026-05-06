@@ -33,6 +33,21 @@ describe("type analyzer core", () => {
     expect(result.symbols.map((symbol) => symbol.name)).toContain("User")
   })
 
+  it("accepts package path suffix selectors", async () => {
+    const analyzer = createTypeAnalyzer(".")
+    const info = await Effect.runPromise(analyzer.getTypeInfo("User", "fixtures"))
+
+    expect(info).toMatchObject({ name: "User", package: "test/fixtures" })
+  })
+
+  it("preserves the public 100 symbol default", async () => {
+    const analyzer = createFixtureAnalyzer()
+    const result = await Effect.runPromise(analyzer.listSymbols())
+
+    expect(result.symbols).toHaveLength(100)
+    expect(result.truncated).toBe(true)
+  })
+
   it("returns type info and expanded properties for interfaces", async () => {
     const analyzer = createFixtureAnalyzer()
     const info = await Effect.runPromise(analyzer.getTypeInfo("User"))
@@ -131,7 +146,7 @@ describe("type analyzer core", () => {
     const explanation = await Effect.runPromise(
       analyzer.explainError({
         code: 2322,
-        message: "Type UserInput is not assignable to type User",
+        message: "Type UserInput is not assignable to type User. Property 'id' is missing in type 'UserInput' but required in type 'User'.",
       }),
     )
 

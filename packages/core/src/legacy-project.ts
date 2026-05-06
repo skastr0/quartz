@@ -3,7 +3,7 @@ import {
   type SourceFile,
   type Symbol,
   SyntaxKind,
-  type Node,
+  Node,
   TypeFormatFlags,
   type MethodDeclaration,
   type FunctionDeclaration,
@@ -308,7 +308,10 @@ export class ProjectManager {
     }
 
     const pkg = packages.find(
-      (p) => p.name === packageName || p.name === packageName.replace(/^\//, ""),
+      (p) =>
+        p.name === packageName ||
+        p.name === packageName.replace(/^\//, "") ||
+        p.path.endsWith(packageName),
     );
 
     if (!pkg) {
@@ -1325,26 +1328,28 @@ export class ProjectManager {
     }
 
     // Build import statements with aliasing for duplicates
-    const fileExports = new Map<string, string[]>();
+    const fileExports = new Map<string, { type: string[]; value: string[] }>();
 
     for (const [name, sources] of exportSources) {
       if (sources.length === 1) {
         const src = sources[0]!;
-        const existing = fileExports.get(src.absolutePath) || [];
+        const existing = fileExports.get(src.absolutePath) || { type: [], value: [] };
+        const target = this.isTypeOnlyExport(name, project, src.absolutePath) ? existing.type : existing.value;
         if (src.isDefault) {
-          existing.push(`default as ${name}`);
+          target.push(`default as ${name}`);
         } else {
-          existing.push(name);
+          target.push(name);
         }
         fileExports.set(src.absolutePath, existing);
       } else {
         sources.forEach((src, index) => {
           const alias = `${name}_${index}`;
-          const existing = fileExports.get(src.absolutePath) || [];
+          const existing = fileExports.get(src.absolutePath) || { type: [], value: [] };
+          const target = this.isTypeOnlyExport(name, project, src.absolutePath) ? existing.type : existing.value;
           if (src.isDefault) {
-            existing.push(`default as ${alias}`);
+            target.push(`default as ${alias}`);
           } else {
-            existing.push(`${name} as ${alias}`);
+            target.push(`${name} as ${alias}`);
           }
           fileExports.set(src.absolutePath, existing);
         });
@@ -1357,15 +1362,21 @@ export class ProjectManager {
 
     // Generate import statements with relative paths
     const imports: string[] = [];
-    for (const [absolutePath, exportList] of fileExports) {
-      if (exportList.length > 0) {
+    for (const [absolutePath, exportLists] of fileExports) {
+      const exportGroups = [
+        { imports: exportLists.type, prefix: "import type" },
+        { imports: exportLists.value, prefix: "import" },
+      ];
+
+      for (const { imports: exportList, prefix } of exportGroups) {
+        if (exportList.length === 0) continue;
         let modulePath = relative(tempDir, absolutePath);
         if (!modulePath.startsWith(".") && !modulePath.startsWith("/")) {
           modulePath = "./" + modulePath;
         }
         modulePath = modulePath.replace(/\\/g, "/");
         modulePath = modulePath.replace(/\.(ts|tsx)$/, "");
-        imports.push(`import { ${exportList.join(", ")} } from "${modulePath}";`);
+        imports.push(`${prefix} { ${exportList.join(", ")} } from "${modulePath}";`);
       }
     }
 
@@ -2599,14 +2610,14 @@ export class ProjectManager {
     const typePatterns = [
       /Type '([^']+)' is not assignable to type '([^']+)'/,
       /Argument of type '([^']+)' is not assignable to parameter of type '([^']+)'/,
-      /Type ([\w.$]+) is not assignable to type ([\w.$]+)/,
-      /Argument of type ([\w.$]+) is not assignable to parameter of type ([\w.$]+)/,
+      /Type ([\w$]+(?:\.[\w$]+)*) is not assignable to type ([\w$]+(?:\.[\w$]+)*)/,
+      /Argument of type ([\w$]+(?:\.[\w$]+)*) is not assignable to parameter of type ([\w$]+(?:\.[\w$]+)*)/,
       /Property '[^']+' does not exist on type '([^']+)'/,
       /Property '[^']+' is missing in type '([^']+)' but required in type '([^']+)'/,
-      /Property ([\w$]+) is missing in type ([\w.$]+) but required in type ([\w.$]+)/,
+      /Property ([\w$]+) is missing in type ([\w$]+(?:\.[\w$]+)*) but required in type ([\w$]+(?:\.[\w$]+)*)/,
       /Cannot find name '([^']+)'/,
       /Type '([^']+)' has no properties in common with type '([^']+)'/,
-      /Type ([\w.$]+) has no properties in common with type ([\w.$]+)/,
+      /Type ([\w$]+(?:\.[\w$]+)*) has no properties in common with type ([\w$]+(?:\.[\w$]+)*)/,
     ];
 
     // Patterns for extracting properties
@@ -2646,6 +2657,14 @@ export class ProjectManager {
    */
   private isInlineObjectType(typeName: string): boolean {
     return typeName.startsWith("{") && typeName.endsWith("}");
+  }
+
+  private isTypeOnlyExport(name: string, project: Project, absolutePath: string): boolean {
+    const sourceFile = project.getSourceFile(absolutePath);
+    const declarations = sourceFile?.getExportedDeclarations().get(name) ?? [];
+    return declarations.length > 0 && declarations.every((declaration) =>
+      Node.isInterfaceDeclaration(declaration) || Node.isTypeAliasDeclaration(declaration)
+    );
   }
 
   /**

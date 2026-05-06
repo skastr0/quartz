@@ -175,21 +175,23 @@ export const createTypeAnalyzer = (rootDirectory: string): TypeAnalyzer => {
     })
 
   const searchTypes = (options: SearchTypesOptions): Effect.Effect<readonly TypeInfo[], TypeLevelToolsError> =>
-    fromPromise(async () => {
+    Effect.gen(function* () {
       const symbolOptions: Mutable<ListSymbolsOptions> = { limit: options.limit ?? 25 }
       if (options.query !== undefined) symbolOptions.pattern = options.query
       if (options.packageName !== undefined) symbolOptions.packageName = options.packageName
-      const symbols = await projectManager.listSymbols(symbolOptions)
-      const results = await Promise.all(
-        symbols.symbols.map((symbol) => projectManager.getTypeInfo(symbol.name, symbol.package)),
+      const symbols = yield* fromPromise(() => projectManager.listSymbols(symbolOptions))
+      const results = yield* Effect.forEach(
+        symbols.symbols,
+        (symbol) => fromPromise(() => projectManager.getTypeInfo(symbol.name, symbol.package)),
+        { concurrency: 4 },
       )
 
-      return results.filter((item) => item !== null) as TypeInfo[]
+      return results.filter((item): item is NonNullable<typeof item> => item !== null)
     })
 
   return {
     getPackages: () => fromPromise(() => projectManager.getPackages()),
-    listSymbols: (options = {}) => fromPromise(() => projectManager.listSymbols(options)),
+    listSymbols: (options = {}) => fromPromise(() => projectManager.listSymbols({ limit: 100, ...options })),
     getTypeInfo: (symbolName, packageName) => fromPromise(() => projectManager.getTypeInfo(symbolName, packageName)),
     expandType: (symbolName, packageName) =>
       fromPromise(async () => {

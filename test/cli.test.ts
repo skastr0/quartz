@@ -146,7 +146,9 @@ describe("agentic CLI protocol", () => {
 
   it("exposes capabilities, schemas, examples, and doctor discovery", () => {
     const capabilities = runCli(["capabilities"])
+    const schemaList = runCli(["schema", "list"])
     const schemas = runCli(["schema", "show", "graph"])
+    const examplesList = runCli(["examples", "list"])
     const examples = runCli(["examples", "show", "info"])
     const doctor = runCli(["doctor", JSON.stringify({ root: fixturesPath })])
 
@@ -159,6 +161,14 @@ describe("agentic CLI protocol", () => {
     })
 
     expect(schemas.status).toBe(0)
+    expect(schemaList.status).toBe(0)
+    expect(parse(schemaList.stdout)).toMatchObject({
+      ok: true,
+      command: "schema list",
+      data: {
+        schemas: expect.arrayContaining([expect.objectContaining({ name: "graph" })]),
+      },
+    })
     expect(parse(schemas.stdout)).toMatchObject({
       ok: true,
       command: "schema show",
@@ -171,6 +181,14 @@ describe("agentic CLI protocol", () => {
     })
 
     expect(examples.status).toBe(0)
+    expect(examplesList.status).toBe(0)
+    expect(parse(examplesList.stdout)).toMatchObject({
+      ok: true,
+      command: "examples list",
+      data: {
+        examples: expect.arrayContaining([expect.objectContaining({ name: "info" })]),
+      },
+    })
     expect(parse(examples.stdout)).toMatchObject({
       ok: true,
       command: "examples show",
@@ -187,6 +205,44 @@ describe("agentic CLI protocol", () => {
       data: {
         ok: true,
         package_count: 1,
+      },
+    })
+  })
+
+  it("rejects payloads for list discovery commands", () => {
+    const result = runCli(["schema", "list", JSON.stringify({ name: "graph" })])
+
+    expect(result.status).toBe(1)
+    expect(result.stdout).toBe("")
+    expect(parse(result.stderr)).toMatchObject({
+      ok: false,
+      error: {
+        type: "CommandInputError",
+        details: {
+          retryable: false,
+        },
+      },
+    })
+  })
+
+  it("explains unquoted assignability errors through the CLI", () => {
+    const result = runCli([
+      "why-error",
+      JSON.stringify({
+        root: fixturesPath,
+        code: 2322,
+        message: "Type UserInput is not assignable to type User",
+      }),
+    ])
+
+    expect(result.status).toBe(0)
+    const envelope = parse(result.stdout)
+    expect(envelope).toMatchObject({
+      ok: true,
+      command: "why-error",
+      data: {
+        explanation: expect.stringContaining("UserInput"),
+        issues: [expect.objectContaining({ kind: "missing_property", property: "id" })],
       },
     })
   })
