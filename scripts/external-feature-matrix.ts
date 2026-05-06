@@ -27,7 +27,7 @@ interface MatrixRepoResult {
 
 const repoRoot = process.cwd();
 const cliEntry = "apps/cli/src/main.ts";
-const outputPath = join(repoRoot, ".agents/sdlc/reviewing/external-feature-matrix-results.json");
+const outputPath = join(repoRoot, ".type-level-tools/artifacts/external-feature-matrix-results.json");
 const externalRoots = [
   "/Users/guilhermecastro/Projects/typefully-cli",
   "/Users/guilhermecastro/Projects/agentpkg",
