@@ -36,6 +36,17 @@ import type {
   EnumerationStats,
 } from "./types";
 
+interface EnumerationAccumulator {
+  entries: CallableEntry[];
+  stats: EnumerationStats;
+  nextId: number;
+}
+
+interface SourceEnumerationContext {
+  filePath: string;
+  isDeclarationFile: boolean;
+}
+
 /**
  * Enumerate all callables in the given source files.
  *
@@ -47,180 +58,273 @@ export function enumerateCallables(
   sourceFiles: SourceFile[],
   packagePath: string,
 ): EnumerationResult {
-  const entries: CallableEntry[] = [];
-  let nextId = 0;
-
-  const stats: EnumerationStats = {
-    functions: 0,
-    variableCallables: 0,
-    classMethods: 0,
-    staticMethods: 0,
-    constructors: 0,
-    objectMethods: 0,
-    interfaceMethods: 0,
-    typeLiteralMethods: 0,
-    callableProperties: 0,
-    total: 0,
-  };
+  const acc = createEnumerationAccumulator();
 
   for (const sf of sourceFiles) {
-    // Skip node_modules and declaration files from dependencies
     if (sf.isInNodeModules()) continue;
+    enumerateSourceFile(acc, sf, packagePath);
+  }
 
-    const absolutePath = sf.getFilePath();
-    const filePath = relativePath(absolutePath, packagePath);
-    const isDeclarationFile = absolutePath.endsWith(".d");
+  acc.stats.total = acc.entries.length;
 
-    // 1. Function declarations
-    for (const func of sf.getFunctions()) {
-      const entry = createFunctionEntry(nextId++, func, filePath, isDeclarationFile);
-      if (entry) {
-        entries.push(entry);
-        stats.functions++;
-      }
+  return { entries: acc.entries, stats: acc.stats };
+}
+
+function createEnumerationAccumulator(): EnumerationAccumulator {
+  return {
+    entries: [],
+    nextId: 0,
+    stats: {
+      functions: 0,
+      variableCallables: 0,
+      classMethods: 0,
+      staticMethods: 0,
+      constructors: 0,
+      objectMethods: 0,
+      interfaceMethods: 0,
+      typeLiteralMethods: 0,
+      callableProperties: 0,
+      total: 0,
+    },
+  };
+}
+
+function enumerateSourceFile(
+  acc: EnumerationAccumulator,
+  sf: SourceFile,
+  packagePath: string,
+): void {
+  const absolutePath = sf.getFilePath();
+  const context: SourceEnumerationContext = {
+    filePath: relativePath(absolutePath, packagePath),
+    isDeclarationFile: absolutePath.endsWith(".d"),
+  };
+
+  enumerateFunctions(acc, sf, context);
+  enumerateVariableCallables(acc, sf, context);
+  enumerateClassMembers(acc, sf, context);
+  enumerateInterfaceMembers(acc, sf, context);
+  enumerateTypeLiteralMembers(acc, sf, context);
+  enumerateObjectLiteralMethods(acc, sf, context);
+}
+
+function appendEntry(
+  acc: EnumerationAccumulator,
+  entry: CallableEntry | null,
+  stat: keyof Omit<EnumerationStats, "total">,
+): void {
+  if (!entry) return;
+  acc.entries.push(entry);
+  acc.stats[stat]++;
+}
+
+function nextEntryId(acc: EnumerationAccumulator): number {
+  return acc.nextId++;
+}
+
+function enumerateFunctions(
+  acc: EnumerationAccumulator,
+  sf: SourceFile,
+  context: SourceEnumerationContext,
+): void {
+  for (const func of sf.getFunctions()) {
+    appendEntry(
+      acc,
+      createFunctionEntry(nextEntryId(acc), func, context.filePath, context.isDeclarationFile),
+      "functions",
+    );
+  }
+}
+
+function enumerateVariableCallables(
+  acc: EnumerationAccumulator,
+  sf: SourceFile,
+  context: SourceEnumerationContext,
+): void {
+  for (const varStmt of sf.getVariableStatements()) {
+    for (const varDecl of varStmt.getDeclarations()) {
+      if (!isCallableInitializer(varDecl)) continue;
+      appendEntry(
+        acc,
+        createVariableCallableEntry(
+          nextEntryId(acc),
+          varDecl,
+          varStmt,
+          context.filePath,
+          context.isDeclarationFile,
+        ),
+        "variableCallables",
+      );
     }
+  }
+}
 
-    // 2. Variable declarations with callable initializers
-    for (const varStmt of sf.getVariableStatements()) {
-      for (const varDecl of varStmt.getDeclarations()) {
-        if (isCallableInitializer(varDecl)) {
-          const entry = createVariableCallableEntry(
-            nextId++,
-            varDecl,
-            varStmt,
-            filePath,
-            isDeclarationFile,
-          );
-          if (entry) {
-            entries.push(entry);
-            stats.variableCallables++;
-          }
-        }
-      }
+function enumerateClassMembers(
+  acc: EnumerationAccumulator,
+  sf: SourceFile,
+  context: SourceEnumerationContext,
+): void {
+  for (const cls of sf.getClasses()) {
+    const className = cls.getName() ?? "anonymous";
+    enumerateClassMethods(acc, cls, className, context);
+    enumerateClassConstructors(acc, cls, className, context);
+  }
+}
+
+function enumerateClassMethods(
+  acc: EnumerationAccumulator,
+  cls: ClassDeclaration,
+  className: string,
+  context: SourceEnumerationContext,
+): void {
+  for (const method of cls.getMethods()) {
+    const isStatic = method.isStatic();
+    const kind: CallableKind = isStatic ? "StaticMethod" : "ClassMethod";
+    appendEntry(
+      acc,
+      createMethodEntry(nextEntryId(acc), kind, method, className, context.filePath, cls),
+      isStatic ? "staticMethods" : "classMethods",
+    );
+  }
+}
+
+function enumerateClassConstructors(
+  acc: EnumerationAccumulator,
+  cls: ClassDeclaration,
+  className: string,
+  context: SourceEnumerationContext,
+): void {
+  for (const ctor of cls.getConstructors()) {
+    appendEntry(
+      acc,
+      createConstructorEntry(nextEntryId(acc), ctor, className, context.filePath, cls),
+      "constructors",
+    );
+  }
+}
+
+function enumerateInterfaceMembers(
+  acc: EnumerationAccumulator,
+  sf: SourceFile,
+  context: SourceEnumerationContext,
+): void {
+  for (const iface of sf.getInterfaces()) {
+    const ifaceName = iface.getName();
+    enumerateInterfaceMethods(acc, iface, ifaceName, context);
+    enumerateInterfaceCallableProperties(acc, iface, ifaceName, context);
+  }
+}
+
+function enumerateInterfaceMethods(
+  acc: EnumerationAccumulator,
+  iface: InterfaceDeclaration,
+  ifaceName: string,
+  context: SourceEnumerationContext,
+): void {
+  for (const method of iface.getMethods()) {
+    appendEntry(
+      acc,
+      createInterfaceMethodEntry(nextEntryId(acc), method, ifaceName, context.filePath, iface),
+      "interfaceMethods",
+    );
+  }
+}
+
+function enumerateInterfaceCallableProperties(
+  acc: EnumerationAccumulator,
+  iface: InterfaceDeclaration,
+  ifaceName: string,
+  context: SourceEnumerationContext,
+): void {
+  for (const prop of iface.getProperties()) {
+    if (!hasCallableType(prop)) continue;
+    appendEntry(
+      acc,
+      createCallablePropertyEntry(nextEntryId(acc), prop, ifaceName, context.filePath, iface),
+      "callableProperties",
+    );
+  }
+}
+
+function enumerateTypeLiteralMembers(
+  acc: EnumerationAccumulator,
+  sf: SourceFile,
+  context: SourceEnumerationContext,
+): void {
+  for (const typeAlias of sf.getTypeAliases()) {
+    const typeNode = typeAlias.getTypeNode();
+    if (typeNode?.getKind() !== SyntaxKind.TypeLiteral) continue;
+
+    const typeName = typeAlias.getName();
+    for (const member of typeNode.forEachChildAsArray()) {
+      enumerateTypeLiteralMember(acc, member, typeName, typeAlias, context);
     }
+  }
+}
 
-    // 3. Classes: methods, static methods, constructors
-    for (const cls of sf.getClasses()) {
-      const className = cls.getName() ?? "anonymous";
+function enumerateTypeLiteralMember(
+  acc: EnumerationAccumulator,
+  member: Node,
+  typeName: string,
+  typeAlias: TypeAliasDeclaration,
+  context: SourceEnumerationContext,
+): void {
+  if (member.getKind() === SyntaxKind.MethodSignature) {
+    appendEntry(
+      acc,
+      createTypeLiteralMethodEntry(
+        nextEntryId(acc),
+        member as MethodSignature,
+        typeName,
+        context.filePath,
+        typeAlias,
+      ),
+      "typeLiteralMethods",
+    );
+    return;
+  }
 
-      // Instance methods
-      for (const method of cls.getMethods()) {
-        const isStatic = method.isStatic();
-        const kind: CallableKind = isStatic ? "StaticMethod" : "ClassMethod";
-        const entry = createMethodEntry(nextId++, kind, method, className, filePath, cls);
-        if (entry) {
-          entries.push(entry);
-          if (isStatic) {
-            stats.staticMethods++;
-          } else {
-            stats.classMethods++;
-          }
-        }
-      }
+  if (member.getKind() !== SyntaxKind.PropertySignature) return;
 
-      // Constructors
-      for (const ctor of cls.getConstructors()) {
-        const entry = createConstructorEntry(nextId++, ctor, className, filePath, cls);
-        if (entry) {
-          entries.push(entry);
-          stats.constructors++;
-        }
-      }
-    }
+  const propSig = member as PropertySignature;
+  if (!hasCallableType(propSig)) return;
+  appendEntry(
+    acc,
+    createTypeLiteralCallablePropertyEntry(
+      nextEntryId(acc),
+      propSig,
+      typeName,
+      context.filePath,
+      typeAlias,
+    ),
+    "callableProperties",
+  );
+}
 
-    // 4. Interfaces: methods and callable properties
-    for (const iface of sf.getInterfaces()) {
-      const ifaceName = iface.getName();
+function enumerateObjectLiteralMethods(
+  acc: EnumerationAccumulator,
+  sf: SourceFile,
+  context: SourceEnumerationContext,
+): void {
+  for (const varStmt of sf.getVariableStatements()) {
+    if (!isExported(varStmt)) continue;
 
-      // Interface methods
-      for (const method of iface.getMethods()) {
-        const entry = createInterfaceMethodEntry(nextId++, method, ifaceName, filePath, iface);
-        if (entry) {
-          entries.push(entry);
-          stats.interfaceMethods++;
-        }
-      }
+    for (const varDecl of varStmt.getDeclarations()) {
+      const init = varDecl.getInitializer();
+      if (init?.getKind() !== SyntaxKind.ObjectLiteralExpression) continue;
 
-      // Callable properties (fn: (a: A) => B)
-      for (const prop of iface.getProperties()) {
-        if (hasCallableType(prop)) {
-          const entry = createCallablePropertyEntry(nextId++, prop, ifaceName, filePath, iface);
-          if (entry) {
-            entries.push(entry);
-            stats.callableProperties++;
-          }
-        }
-      }
-    }
-
-    // 5. Type aliases with method signatures
-    for (const typeAlias of sf.getTypeAliases()) {
-      const typeNode = typeAlias.getTypeNode();
-      if (typeNode?.getKind() === SyntaxKind.TypeLiteral) {
-        const typeName = typeAlias.getName();
-
-        // Get members from the type literal
-        const members = typeNode.forEachChildAsArray();
-        for (const member of members) {
-          if (member.getKind() === SyntaxKind.MethodSignature) {
-            const entry = createTypeLiteralMethodEntry(
-              nextId++,
-              member as MethodSignature,
-              typeName,
-              filePath,
-              typeAlias,
-            );
-            if (entry) {
-              entries.push(entry);
-              stats.typeLiteralMethods++;
-            }
-          } else if (member.getKind() === SyntaxKind.PropertySignature) {
-            const propSig = member as PropertySignature;
-            if (hasCallableType(propSig)) {
-              const entry = createTypeLiteralCallablePropertyEntry(
-                nextId++,
-                propSig,
-                typeName,
-                filePath,
-                typeAlias,
-              );
-              if (entry) {
-                entries.push(entry);
-                stats.callableProperties++;
-              }
-            }
-          }
-        }
-      }
-    }
-
-    // 6. Object literals with callable members (exported only)
-    for (const varStmt of sf.getVariableStatements()) {
-      if (!isExported(varStmt)) continue;
-
-      for (const varDecl of varStmt.getDeclarations()) {
-        const init = varDecl.getInitializer();
-        if (init?.getKind() === SyntaxKind.ObjectLiteralExpression) {
-          const objLit = init as ObjectLiteralExpression;
-          const objName = varDecl.getName();
-
-          for (const prop of objLit.getProperties()) {
-            if (isCallableProperty(prop)) {
-              const entry = createObjectMethodEntry(nextId++, prop, objName, filePath, varStmt);
-              if (entry) {
-                entries.push(entry);
-                stats.objectMethods++;
-              }
-            }
-          }
-        }
+      const objLit = init as ObjectLiteralExpression;
+      const objName = varDecl.getName();
+      for (const prop of objLit.getProperties()) {
+        if (!isCallableProperty(prop)) continue;
+        appendEntry(
+          acc,
+          createObjectMethodEntry(nextEntryId(acc), prop, objName, context.filePath, varStmt),
+          "objectMethods",
+        );
       }
     }
   }
-
-  stats.total = entries.length;
-
-  return { entries, stats };
 }
 
 // === Helper Functions ===
