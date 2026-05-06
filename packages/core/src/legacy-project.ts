@@ -157,6 +157,17 @@ export interface SnippetCheckResult {
   errors?: SnippetDiagnostic[];
 }
 
+interface SnippetExportSource {
+  filePath: string;
+  absolutePath: string;
+  isDefault: boolean;
+}
+
+interface SnippetImportPlan {
+  fileContent: string;
+  importLineCount: number;
+}
+
 export interface ErrorExplanationIssue {
   kind: "missing_property" | "type_mismatch" | "excess_property" | "not_callable" | "other";
   property?: string;
@@ -1298,96 +1309,13 @@ export class ProjectManager {
     const project = this.getProject(pkg);
     const sourceFiles = this.getSourceFiles(project, pkg);
 
-    // Build imports similar to evalType - import all exports for type resolution
-    const exportSources = new Map<
-      string,
-      Array<{ filePath: string; absolutePath: string; isDefault: boolean }>
-    >();
-
-    for (const sourceFile of sourceFiles) {
-      const filePath = this.relativePath(sourceFile.getFilePath());
-      const absolutePath = sourceFile.getFilePath();
-      const exports = sourceFile.getExportedDeclarations();
-
-      for (const [name, declarations] of exports) {
-        if (name === "default") {
-          for (const decl of declarations) {
-            const actualName = this.getDeclarationName(decl);
-            if (actualName) {
-              const sources = exportSources.get(actualName) || [];
-              sources.push({ filePath, absolutePath, isDefault: true });
-              exportSources.set(actualName, sources);
-            }
-          }
-          continue;
-        }
-        const sources = exportSources.get(name) || [];
-        sources.push({ filePath, absolutePath, isDefault: false });
-        exportSources.set(name, sources);
-      }
-    }
-
-    // Build import statements with aliasing for duplicates
-    const fileExports = new Map<string, { type: string[]; value: string[] }>();
-
-    for (const [name, sources] of exportSources) {
-      if (sources.length === 1) {
-        const src = sources[0]!;
-        const existing = fileExports.get(src.absolutePath) || { type: [], value: [] };
-        const target = this.isTypeOnlyExport(name, project, src.absolutePath) ? existing.type : existing.value;
-        if (src.isDefault) {
-          target.push(`default as ${name}`);
-        } else {
-          target.push(name);
-        }
-        fileExports.set(src.absolutePath, existing);
-      } else {
-        sources.forEach((src, index) => {
-          const alias = `${name}_${index}`;
-          const existing = fileExports.get(src.absolutePath) || { type: [], value: [] };
-          const target = this.isTypeOnlyExport(name, project, src.absolutePath) ? existing.type : existing.value;
-          if (src.isDefault) {
-            target.push(`default as ${alias}`);
-          } else {
-            target.push(`${name} as ${alias}`);
-          }
-          fileExports.set(src.absolutePath, existing);
-        });
-      }
-    }
-
     // Create temp file path inside package directory for proper module resolution
     const tempFileName = join(pkg.path, `__snippet_check_${Date.now()}__.ts`);
     const tempDir = dirname(tempFileName);
-
-    // Generate import statements with relative paths
-    const imports: string[] = [];
-    for (const [absolutePath, exportLists] of fileExports) {
-      const exportGroups = [
-        { imports: exportLists.type, prefix: "import type" },
-        { imports: exportLists.value, prefix: "import" },
-      ];
-
-      for (const { imports: exportList, prefix } of exportGroups) {
-        if (exportList.length === 0) continue;
-        let modulePath = relative(tempDir, absolutePath);
-        if (!modulePath.startsWith(".") && !modulePath.startsWith("/")) {
-          modulePath = "./" + modulePath;
-        }
-        modulePath = modulePath.replace(/\\/g, "/");
-        modulePath = modulePath.replace(/\.(ts|tsx)$/, "");
-        imports.push(`${prefix} { ${exportList.join(", ")} } from "${modulePath}";`);
-      }
-    }
-
-    // Combine imports with the user's code snippet
-    // Add a marker comment so we can calculate the correct line offset
-    const importBlock = imports.join("\n");
-    const importLineCount = imports.length > 0 ? imports.length : 0;
-    const fileContent = imports.length > 0 ? `${importBlock}\n${code}` : code;
+    const importPlan = this.createSnippetImportPlan(project, sourceFiles, tempDir, code);
 
     try {
-      const tempFile = project.createSourceFile(tempFileName, fileContent, { overwrite: true });
+      const tempFile = project.createSourceFile(tempFileName, importPlan.fileContent, { overwrite: true });
 
       // Get pre-emit diagnostics (type errors, syntax errors, etc.)
       const diagnostics = tempFile.getPreEmitDiagnostics();
@@ -1397,44 +1325,14 @@ export class ProjectManager {
         return { valid: true };
       }
 
-      const errors: SnippetDiagnostic[] = diagnostics.map((d) => {
-        const start = d.getStart();
-        const sourceFile = d.getSourceFile();
-        let line = 1;
-        let column = 1;
-
-        if (start !== undefined && sourceFile) {
-          const pos = sourceFile.getLineAndColumnAtPos(start);
-          // Adjust line number to account for injected imports
-          line = Math.max(1, pos.line - importLineCount);
-          column = pos.column;
-        }
-
-        const messageText = d.getMessageText();
-        const message =
-          typeof messageText === "string" ? messageText : messageText.getMessageText();
-
-        // Map TypeScript diagnostic category to our severity
-        const category = d.getCategory();
-        // DiagnosticCategory: 0 = Warning, 1 = Error, 2 = Suggestion, 3 = Message
-        const severity: "error" | "warning" = category === 1 ? "error" : "warning";
-
-        return { message, line, column, severity };
-      });
+      const errors = diagnostics.map((diagnostic) =>
+        this.toSnippetDiagnostic(diagnostic, importPlan.importLineCount),
+      );
 
       project.removeSourceFile(tempFile);
       return { valid: false, errors };
     } catch (error) {
-      // Clean up on error
-      try {
-        const tempFile = project.getSourceFile(tempFileName);
-        if (tempFile) {
-          project.removeSourceFile(tempFile);
-        }
-      } catch {
-        // Ignore cleanup errors
-      }
-
+      this.removeTempSourceFile(project, tempFileName);
       return {
         valid: false,
         errors: [
@@ -1446,6 +1344,152 @@ export class ProjectManager {
           },
         ],
       };
+    }
+  }
+
+  private createSnippetImportPlan(
+    project: Project,
+    sourceFiles: SourceFile[],
+    tempDir: string,
+    code: string,
+  ): SnippetImportPlan {
+    const exportSources = this.collectSnippetExportSources(sourceFiles);
+    const fileExports = this.groupSnippetImportsByFile(exportSources, project);
+    const imports = this.createSnippetImportStatements(fileExports, tempDir);
+    const importBlock = imports.join("\n");
+
+    return {
+      fileContent: imports.length > 0 ? `${importBlock}\n${code}` : code,
+      importLineCount: imports.length,
+    };
+  }
+
+  private collectSnippetExportSources(
+    sourceFiles: SourceFile[],
+  ): Map<string, SnippetExportSource[]> {
+    const exportSources = new Map<string, SnippetExportSource[]>();
+
+    for (const sourceFile of sourceFiles) {
+      const filePath = this.relativePath(sourceFile.getFilePath());
+      const absolutePath = sourceFile.getFilePath();
+
+      for (const [name, declarations] of sourceFile.getExportedDeclarations()) {
+        if (name === "default") {
+          for (const decl of declarations) {
+            const actualName = this.getDeclarationName(decl);
+            if (actualName) {
+              this.addSnippetExportSource(exportSources, actualName, {
+                filePath,
+                absolutePath,
+                isDefault: true,
+              });
+            }
+          }
+        } else {
+          this.addSnippetExportSource(exportSources, name, {
+            filePath,
+            absolutePath,
+            isDefault: false,
+          });
+        }
+      }
+    }
+
+    return exportSources;
+  }
+
+  private addSnippetExportSource(
+    exportSources: Map<string, SnippetExportSource[]>,
+    name: string,
+    source: SnippetExportSource,
+  ): void {
+    const sources = exportSources.get(name) ?? [];
+    sources.push(source);
+    exportSources.set(name, sources);
+  }
+
+  private groupSnippetImportsByFile(
+    exportSources: Map<string, SnippetExportSource[]>,
+    project: Project,
+  ): Map<string, { type: string[]; value: string[] }> {
+    const fileExports = new Map<string, { type: string[]; value: string[] }>();
+
+    for (const [name, sources] of exportSources) {
+      sources.forEach((source, index) => {
+        const alias = sources.length === 1 ? name : `${name}_${index}`;
+        const importName = source.isDefault
+          ? `default as ${alias}`
+          : alias === name
+            ? name
+            : `${name} as ${alias}`;
+        const existing = fileExports.get(source.absolutePath) ?? { type: [], value: [] };
+        const target = this.isTypeOnlyExport(name, project, source.absolutePath)
+          ? existing.type
+          : existing.value;
+        target.push(importName);
+        fileExports.set(source.absolutePath, existing);
+      });
+    }
+
+    return fileExports;
+  }
+
+  private createSnippetImportStatements(
+    fileExports: Map<string, { type: string[]; value: string[] }>,
+    tempDir: string,
+  ): string[] {
+    const imports: string[] = [];
+    for (const [absolutePath, exportLists] of fileExports) {
+      for (const { imports: exportList, prefix } of [
+        { imports: exportLists.type, prefix: "import type" },
+        { imports: exportLists.value, prefix: "import" },
+      ]) {
+        if (exportList.length === 0) continue;
+        const modulePath = this.toSnippetModulePath(tempDir, absolutePath);
+        imports.push(`${prefix} { ${exportList.join(", ")} } from "${modulePath}";`);
+      }
+    }
+    return imports;
+  }
+
+  private toSnippetModulePath(tempDir: string, absolutePath: string): string {
+    let modulePath = relative(tempDir, absolutePath);
+    if (!modulePath.startsWith(".") && !modulePath.startsWith("/")) {
+      modulePath = "./" + modulePath;
+    }
+    return modulePath.replace(/\\/g, "/").replace(/\.(ts|tsx)$/, "");
+  }
+
+  private toSnippetDiagnostic(
+    diagnostic: import("ts-morph").Diagnostic,
+    importLineCount: number,
+  ): SnippetDiagnostic {
+    const start = diagnostic.getStart();
+    const sourceFile = diagnostic.getSourceFile();
+    let line = 1;
+    let column = 1;
+
+    if (start !== undefined && sourceFile) {
+      const pos = sourceFile.getLineAndColumnAtPos(start);
+      line = Math.max(1, pos.line - importLineCount);
+      column = pos.column;
+    }
+
+    const messageText = diagnostic.getMessageText();
+    const message = typeof messageText === "string" ? messageText : messageText.getMessageText();
+    const severity: "error" | "warning" = diagnostic.getCategory() === 1 ? "error" : "warning";
+
+    return { message, line, column, severity };
+  }
+
+  private removeTempSourceFile(project: Project, tempFileName: string): void {
+    try {
+      const tempFile = project.getSourceFile(tempFileName);
+      if (tempFile) {
+        project.removeSourceFile(tempFile);
+      }
+    } catch {
+      // Ignore cleanup errors
     }
   }
 
