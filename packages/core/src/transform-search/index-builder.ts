@@ -16,6 +16,11 @@ import type {
   CandidateSelectionOptions,
 } from "./types";
 
+interface CandidateConstraint {
+  set: Set<CallableId>;
+  rarity: number;
+}
+
 /**
  * Build an inverted index from callable entries.
  *
@@ -129,105 +134,87 @@ export function selectCandidates(
   index: CallableIndex,
   options: CandidateSelectionOptions,
 ): CallableId[] {
-  const {
-    fromTokens = [],
-    toTokens = [],
-    fromPropKeys = [],
-    toPropKeys = [],
-    exportedOnly = true,
-    kinds,
-    files,
-    budget,
-  } = options;
+  const constraints = collectCandidateConstraints(index, options);
+  const candidates = constraints.length === 0
+    ? selectUnconstrainedCandidates(index, options)
+    : selectConstrainedCandidates(index, options, constraints);
 
-  // Step 1: Collect all constraint sets with their sizes (for rarity ordering)
-  const allConstraints: Array<{ set: Set<CallableId>; rarity: number }> = [];
+  return [...candidates].slice(0, options.budget);
+}
 
-  // Add token constraints (param-side for "from", return-side for "to")
-  for (const token of fromTokens) {
-    const set = index.byParamToken.get(token);
-    if (set) {
-      allConstraints.push({ set, rarity: set.size });
-    }
-  }
+function collectCandidateConstraints(
+  index: CallableIndex,
+  options: CandidateSelectionOptions,
+): CandidateConstraint[] {
+  return [
+    ...constraintsForKeys(index.byParamToken, options.fromTokens ?? []),
+    ...constraintsForKeys(index.byReturnToken, options.toTokens ?? []),
+    ...constraintsForKeys(index.byParamProp, options.fromPropKeys ?? []),
+    ...constraintsForKeys(index.byReturnProp, options.toPropKeys ?? []),
+  ];
+}
 
-  for (const token of toTokens) {
-    const set = index.byReturnToken.get(token);
-    if (set) {
-      allConstraints.push({ set, rarity: set.size });
-    }
-  }
+function constraintsForKeys<K>(
+  map: Map<K, Set<CallableId>>,
+  keys: K[],
+): CandidateConstraint[] {
+  return keys.flatMap((key) => {
+    const set = map.get(key);
+    return set ? [{ set, rarity: set.size }] : [];
+  });
+}
 
-  // Add property key constraints
-  for (const prop of fromPropKeys) {
-    const set = index.byParamProp.get(prop);
-    if (set) {
-      allConstraints.push({ set, rarity: set.size });
-    }
-  }
+function selectUnconstrainedCandidates(
+  index: CallableIndex,
+  options: CandidateSelectionOptions,
+): Set<CallableId> {
+  const candidates = options.exportedOnly ?? true
+    ? new Set(index.exported)
+    : new Set(index.entries.map((entry) => entry.id));
+  return applyOptionalCandidateFilters(candidates, index, options);
+}
 
-  for (const prop of toPropKeys) {
-    const set = index.byReturnProp.get(prop);
-    if (set) {
-      allConstraints.push({ set, rarity: set.size });
-    }
-  }
+function selectConstrainedCandidates(
+  index: CallableIndex,
+  options: CandidateSelectionOptions,
+  constraints: CandidateConstraint[],
+): Set<CallableId> {
+  const candidates = intersectConstraintsByRarity(constraints, options.budget);
+  const exportedCandidates = options.exportedOnly ?? true
+    ? setIntersection(candidates, index.exported)
+    : candidates;
+  return applyOptionalCandidateFilters(exportedCandidates, index, options);
+}
 
-  // If no constraints, start with all exported (or all)
-  if (allConstraints.length === 0) {
-    let startSet: Set<CallableId>;
+function intersectConstraintsByRarity(
+  constraints: CandidateConstraint[],
+  budget: number,
+): Set<CallableId> {
+  const [first, ...remaining] = [...constraints].sort((a, b) => a.rarity - b.rarity);
+  let candidates = new Set(first!.set);
 
-    if (exportedOnly) {
-      startSet = index.exported;
-    } else {
-      startSet = new Set(index.entries.map((e) => e.id));
-    }
-
-    // Apply kind filter if specified
-    if (kinds && kinds.length > 0) {
-      startSet = applyKindFilter(startSet, index, kinds);
-    }
-
-    // Apply file filter if specified
-    if (files && files.length > 0) {
-      startSet = applyFileFilter(startSet, index, files);
-    }
-
-    return [...startSet].slice(0, budget);
-  }
-
-  // Sort by rarity (smallest first) - this is the key optimization
-  allConstraints.sort((a, b) => a.rarity - b.rarity);
-
-  // Start with the rarest set
-  let candidates = new Set(allConstraints[0]!.set);
-
-  // Intersect with remaining constraints
-  for (let i = 1; i < allConstraints.length && candidates.size > 0; i++) {
-    const constraint = allConstraints[i]!.set;
-    candidates = setIntersection(candidates, constraint);
-
-    // Early exit if under budget
+  for (const constraint of remaining) {
+    if (candidates.size === 0) break;
+    candidates = setIntersection(candidates, constraint.set);
     if (candidates.size <= budget) break;
   }
 
-  // Apply export filter
-  if (exportedOnly) {
-    candidates = setIntersection(candidates, index.exported);
-  }
+  return candidates;
+}
 
-  // Apply kind filter if specified
-  if (kinds && kinds.length > 0) {
-    candidates = applyKindFilter(candidates, index, kinds);
+function applyOptionalCandidateFilters(
+  candidates: Set<CallableId>,
+  index: CallableIndex,
+  options: CandidateSelectionOptions,
+): Set<CallableId> {
+  let filtered = candidates;
+  if (options.kinds && options.kinds.length > 0) {
+    filtered = applyKindFilter(filtered, index, options.kinds);
   }
-
-  // Apply file filter if specified
-  if (files && files.length > 0) {
-    candidates = applyFileFilter(candidates, index, files);
+  if (options.files && options.files.length > 0) {
+    filtered = applyFileFilter(filtered, index, options.files);
   }
-
-  // Return up to budget
-  return [...candidates].slice(0, budget);
+  return filtered;
 }
 
 /**
