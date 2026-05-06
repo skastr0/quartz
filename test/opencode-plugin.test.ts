@@ -55,7 +55,9 @@ describe("OpenCode plugin wrapper", () => {
 
     const diagnostics = parse(await toolExecute(plugin, "type_diagnostics", { explain: true }))
     const info = parse(await toolExecute(plugin, "type_info", { symbol: "User" }))
+    const memberInfo = parse(await toolExecute(plugin, "type_info", { symbol: "@file:types/basic.ts:User.name" }))
     const symbols = parse(await toolExecute(plugin, "type_symbols", { pattern: "^User", kind: "interface", limit: 1 }))
+    const related = parse(await toolExecute(plugin, "type_related", { symbol: "ExtendedUser" }))
     const graph = parse(await toolExecute(plugin, "type_graph", { symbol: "ExtendedUser", depth: 1, format: "dot" }))
     const compatible = parse(await toolExecute(plugin, "type_compatible", { from: "ExtendedUser", to: "User" }))
     const file = parse(await toolExecute(plugin, "type_file", { file: "types/basic.ts", symbol: "^User$", includePrivate: false }))
@@ -68,10 +70,12 @@ describe("OpenCode plugin wrapper", () => {
 
     expect(diagnostics).toMatchObject({ totalErrors: 0, explained: 0 })
     expect(info).toMatchObject({ name: "User", kind: "interface" })
+    expect(memberInfo).toMatchObject({ name: "name", kind: "PropertySignature" })
     expect(symbols).toMatchObject({
       symbols: [expect.objectContaining({ name: "User", kind: "interface" })],
       truncated: true,
     })
+    expect(related.references).toEqual(expect.arrayContaining([expect.objectContaining({ context: "extends" })]))
     expect(graph).toMatchObject({ root: "ExtendedUser", format: "dot", depth: 1 })
     expect(graph.graph).toContain("digraph")
     expect(compatible).toMatchObject({ compatible: true })

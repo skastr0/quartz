@@ -4,7 +4,7 @@ import { Project } from "ts-morph"
 import { describe, expect, it } from "vitest"
 import { createFixtureAnalyzer, fixturesPath } from "./helpers/analyzer"
 import { createTypeAnalyzer } from "@type-level-tools/core"
-import { enumerateCallables, TransformSearchEngine } from "../packages/core/src/transform-search"
+import { enumerateCallables, extractTokensFromTypeNode, TransformSearchEngine } from "../packages/core/src/transform-search"
 
 function createFixtureProject(): Project {
   const project = new Project({
@@ -56,6 +56,22 @@ describe("refactor coverage", () => {
     expect(complete.stats.timing.totalMs).toBeGreaterThanOrEqual(0)
     expect(complete.results.some((result) => result.verification.status === "verified")).toBe(true)
     expect(complete.results.every((result) => result.verification.reason !== "synthetic_check_failed")).toBe(true)
+    expect(complete.results[0]?.explanation).toMatchObject({
+      summary: expect.stringContaining("accepts User"),
+      details: {
+        fromMatch: expect.objectContaining({
+          paramName: expect.any(String),
+          compatibility: expect.stringMatching(/exact|assignable/),
+        }),
+        toMatch: expect.objectContaining({
+          compatibility: expect.stringMatching(/exact|assignable/),
+        }),
+        verification: expect.objectContaining({
+          method: "synthetic",
+        }),
+      },
+      confidence: expect.stringMatching(/high|medium|low/),
+    })
     expect(partial.results.length).toBeGreaterThan(0)
     expect(partial.stats.verifiedMatches).toBe(partialWithWiderLimit.stats.verifiedMatches)
     expect(partial.stats.verifiedMatches).toBeGreaterThan(partial.stats.returned)
@@ -182,5 +198,65 @@ describe("refactor coverage", () => {
     await expect(Effect.runPromise(analyzer.getTypeInfo("DuplicateSnippetType"))).rejects.toThrow(
       /Ambiguous symbol "DuplicateSnippetType"/,
     )
+  })
+
+  it("pins related-symbol outgoing references and reference contexts", async () => {
+    const analyzer = createFixtureAnalyzer()
+    const related = await Effect.runPromise(analyzer.findRelated("ExtendedUser"))
+    const refactorRelated = await Effect.runPromise(analyzer.findRelated("RefactorUser"))
+    const profileRelated = await Effect.runPromise(analyzer.findRelated("RefactorUserProfile"))
+
+    expect(related?.references).toEqual(expect.arrayContaining([
+      expect.objectContaining({ symbol: "User", context: "extends" }),
+    ]))
+    expect(profileRelated?.references).toEqual(expect.arrayContaining([
+      expect.objectContaining({ symbol: "RefactorUser", context: 'property "user"' }),
+    ]))
+    expect(refactorRelated?.referencedBy).toEqual(expect.arrayContaining([
+      expect.objectContaining({ context: expect.stringMatching(/type reference|usage|extends/) }),
+    ]))
+    const keys = refactorRelated?.referencedBy.map((ref) => `${ref.symbol}:${ref.context}:${ref.line}`) ?? []
+    expect(new Set(keys).size).toBe(keys.length)
+  })
+
+  it("extracts tokens from supported type-node syntax", () => {
+    const project = createFixtureProject()
+    const sourceFile = project.createSourceFile(
+      join(fixturesPath, "__token_syntax_test__.ts"),
+      `
+        type TokenSyntax<T extends User> =
+          | keyof User
+          | readonly User[]
+          | Promise<UserDTO>
+          | { user: User; make(input: UserInput): UserDTO }
+          | [User, UserDTO]
+          | (User & ExtendedUser)
+          | (User extends ExtendedUser ? UserDTO : never)
+          | typeof DefaultExportedClass
+          | User["id"]
+          | \`user_\${string}\`
+      `,
+      { overwrite: true },
+    )
+    const typeNode = sourceFile.getTypeAliasOrThrow("TokenSyntax").getTypeNodeOrThrow()
+
+    const extracted = extractTokensFromTypeNode(typeNode)
+
+    expect(extracted.tokens).toEqual(expect.arrayContaining([
+      "User",
+      "UserDTO",
+      "UserInput",
+      "ExtendedUser",
+      "Promise",
+      "keyof",
+      "readonly",
+      "Array",
+      "Tuple",
+      "typeof",
+      "DefaultExportedClass",
+      "never",
+    ]))
+    expect(extracted.propKeys).toEqual(expect.arrayContaining(["user", "make"]))
+    project.removeSourceFile(sourceFile)
   })
 })
