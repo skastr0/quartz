@@ -265,111 +265,102 @@ export function generateExplanation(
   const details: MatchExplanation["details"] = {};
   const summaryParts: string[] = [];
 
-  // From match explanation
-  if (assignabilityResult.fromMatch?.matched) {
-    const fm = assignabilityResult.fromMatch;
-
-    if (fm.exact) {
-      details.fromMatch = {
-        description: `Parameter '${fm.paramName}' accepts exactly ${fm.queryType}`,
-        paramName: fm.paramName,
-        paramIndex: fm.paramIndex,
-        compatibility: "exact",
-      };
-      summaryParts.push(`accepts ${query.from?.raw ?? fm.queryType}`);
-    } else {
-      details.fromMatch = {
-        description: `Parameter '${fm.paramName}' (${fm.paramType}) is compatible with ${fm.queryType}`,
-        paramName: fm.paramName,
-        paramIndex: fm.paramIndex,
-        compatibility: "assignable",
-      };
-      summaryParts.push(`accepts ${query.from?.raw ?? fm.queryType} (via ${fm.paramType})`);
-    }
-  }
-
-  // To match explanation
-  if (assignabilityResult.toMatch?.matched) {
-    const tm = assignabilityResult.toMatch;
-
-    if (tm.unwrapped && tm.wrapper) {
-      details.toMatch = {
-        description: `Returns ${tm.wrapper}<${tm.returnType}> which unwraps to ${tm.queryType}`,
-        compatibility: "assignable",
-        unwrapped: {
-          wrapper: tm.wrapper,
-          originalType: `${tm.wrapper}<${tm.returnType}>`,
-        },
-      };
-      summaryParts.push(`returns ${query.to?.raw ?? tm.queryType} (unwrapped from ${tm.wrapper})`);
-    } else if (tm.exact) {
-      details.toMatch = {
-        description: `Returns exactly ${tm.queryType}`,
-        compatibility: "exact",
-      };
-      summaryParts.push(`returns ${query.to?.raw ?? tm.queryType}`);
-    } else {
-      details.toMatch = {
-        description: `Returns ${tm.returnType} which is assignable to ${tm.queryType}`,
-        compatibility: "assignable",
-      };
-      summaryParts.push(`returns ${query.to?.raw ?? tm.queryType} (via ${tm.returnType})`);
-    }
-  }
-
-  // Verification explanation
-  if (syntheticResult) {
-    details.verification = {
-      method: "synthetic",
-      passed: syntheticResult.verified,
-    };
-  } else {
-    details.verification = {
-      method: "assignability-only",
-      passed: true,
-    };
-  }
-
-  // Determine confidence based on verification status
-  let confidence: MatchConfidence = "medium";
-
-  // Get verification status from the new field if available
-  const verificationStatus = syntheticResult?.verification?.status ?? null;
-
-  if (verificationStatus === "verified") {
-    // Only "verified" status gets high confidence
-    confidence = "high";
-  } else if (verificationStatus === "unverifiable") {
-    // Unverifiable results (internal functions) get low confidence
-    confidence = "low";
-  } else if (verificationStatus === "unverified") {
-    // Unverified results get medium or low based on reason
-    const reason = syntheticResult?.verification?.reason;
-    if (reason === "no_type_annotations") {
-      // Functions without type annotations are low confidence
-      confidence = "low";
-    } else if (reason === "partial_query") {
-      // Partial queries (only from or to) are medium
-      confidence = "medium";
-    } else {
-      confidence = "medium";
-    }
-  } else if (
-    !syntheticResult &&
-    assignabilityResult.fromMatch?.exact &&
-    assignabilityResult.toMatch?.exact
-  ) {
-    // Fallback: exact type matches without explicit verification
-    confidence = "high";
-  } else if (assignabilityResult.toMatch?.unwrapped) {
-    confidence = "medium";
-  }
+  addFromMatchExplanation(details, summaryParts, assignabilityResult, query);
+  addToMatchExplanation(details, summaryParts, assignabilityResult, query);
+  details.verification = createVerificationExplanation(syntheticResult);
 
   return {
     summary: summaryParts.join(", ") || "matches query",
     details,
-    confidence,
+    confidence: calculateConfidence(assignabilityResult, syntheticResult),
   };
+}
+
+function addFromMatchExplanation(
+  details: MatchExplanation["details"],
+  summaryParts: string[],
+  assignabilityResult: AssignabilityCheckResult,
+  query: ParsedQuery,
+): void {
+  const fm = assignabilityResult.fromMatch;
+  if (!fm?.matched) return;
+
+  if (fm.exact) {
+    details.fromMatch = {
+      description: `Parameter '${fm.paramName}' accepts exactly ${fm.queryType}`,
+      paramName: fm.paramName,
+      paramIndex: fm.paramIndex,
+      compatibility: "exact",
+    };
+    summaryParts.push(`accepts ${query.from?.raw ?? fm.queryType}`);
+  } else {
+    details.fromMatch = {
+      description: `Parameter '${fm.paramName}' (${fm.paramType}) is compatible with ${fm.queryType}`,
+      paramName: fm.paramName,
+      paramIndex: fm.paramIndex,
+      compatibility: "assignable",
+    };
+    summaryParts.push(`accepts ${query.from?.raw ?? fm.queryType} (via ${fm.paramType})`);
+  }
+}
+
+function addToMatchExplanation(
+  details: MatchExplanation["details"],
+  summaryParts: string[],
+  assignabilityResult: AssignabilityCheckResult,
+  query: ParsedQuery,
+): void {
+  const tm = assignabilityResult.toMatch;
+  if (!tm?.matched) return;
+
+  if (tm.unwrapped && tm.wrapper) {
+    details.toMatch = {
+      description: `Returns ${tm.wrapper}<${tm.returnType}> which unwraps to ${tm.queryType}`,
+      compatibility: "assignable",
+      unwrapped: {
+        wrapper: tm.wrapper,
+        originalType: `${tm.wrapper}<${tm.returnType}>`,
+      },
+    };
+    summaryParts.push(`returns ${query.to?.raw ?? tm.queryType} (unwrapped from ${tm.wrapper})`);
+  } else if (tm.exact) {
+    details.toMatch = {
+      description: `Returns exactly ${tm.queryType}`,
+      compatibility: "exact",
+    };
+    summaryParts.push(`returns ${query.to?.raw ?? tm.queryType}`);
+  } else {
+    details.toMatch = {
+      description: `Returns ${tm.returnType} which is assignable to ${tm.queryType}`,
+      compatibility: "assignable",
+    };
+    summaryParts.push(`returns ${query.to?.raw ?? tm.queryType} (via ${tm.returnType})`);
+  }
+}
+
+function createVerificationExplanation(
+  syntheticResult: SyntheticCheckResult | null,
+): NonNullable<MatchExplanation["details"]["verification"]> {
+  return syntheticResult
+    ? { method: "synthetic", passed: syntheticResult.verified }
+    : { method: "assignability-only", passed: true };
+}
+
+function calculateConfidence(
+  assignabilityResult: AssignabilityCheckResult,
+  syntheticResult: SyntheticCheckResult | null,
+): MatchConfidence {
+  const verificationStatus = syntheticResult?.verification?.status ?? null;
+
+  if (verificationStatus === "verified") return "high";
+  if (verificationStatus === "unverifiable") return "low";
+  if (verificationStatus === "unverified") {
+    return syntheticResult?.verification?.reason === "no_type_annotations" ? "low" : "medium";
+  }
+  if (!syntheticResult && assignabilityResult.fromMatch?.exact && assignabilityResult.toMatch?.exact) {
+    return "high";
+  }
+  return "medium";
 }
 
 /**
