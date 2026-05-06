@@ -2405,12 +2405,7 @@ export class ProjectManager {
       return null;
     }
 
-    // Extract types from the error message
     const extracted = this.extractTypesFromError(errorMessage);
-    const issues: ErrorExplanationIssue[] = [];
-    const suggestions: string[] = [];
-    let explanation = "";
-
     const result: ErrorExplanationResult = {
       error: { code: errorCode ?? 0, message: errorMessage },
       explanation: "",
@@ -2418,185 +2413,209 @@ export class ProjectManager {
       suggestions: [],
     };
 
-    // Handle different error codes
     switch (errorCode) {
-      case 2322: // Type 'X' is not assignable to type 'Y'
-      case 2345: // Argument of type 'X' is not assignable to parameter of type 'Y'
-        if (extracted.types.length >= 2) {
-          const [fromType, toType] = extracted.types;
-          result.types = {};
-
-          // Try to expand both types
-          const fromExpanded = await this.safeExpandType(fromType!, project, pkg);
-          const toExpanded = await this.safeExpandType(toType!, project, pkg);
-
-          if (fromExpanded) {
-            result.types.from = { name: fromType!, expanded: fromExpanded };
-          }
-          if (toExpanded) {
-            result.types.to = { name: toType!, expanded: toExpanded };
-          }
-
-          // Check compatibility to get detailed issues
-          const compat = await this.checkCompatibility(fromType!, toType!, options.packageName);
-          if (!compat.compatible && compat.reason) {
-            // Parse the reason to extract specific issues
-            const reasonParts = compat.reason.split("; ");
-            for (const part of reasonParts) {
-              if (part.includes("missing")) {
-                const propMatch = part.match(/Property '(\w+)'/);
-                const typeMatch = part.match(/expected: ([^)]+)/);
-                issues.push({
-                  kind: "missing_property",
-                  ...(propMatch?.[1] === undefined ? {} : { property: propMatch[1] }),
-                  ...(typeMatch?.[1] === undefined ? {} : { expectedType: typeMatch[1] }),
-                  message: part,
-                });
-              } else if (part.includes("incompatible types")) {
-                const propMatch = part.match(/Property '(\w+)'/);
-                const typesMatch = part.match(/'([^']+)' is not assignable to '([^']+)'/);
-                issues.push({
-                  kind: "type_mismatch",
-                  ...(propMatch?.[1] === undefined ? {} : { property: propMatch[1] }),
-                  ...(typesMatch?.[1] === undefined ? {} : { actualType: typesMatch[1] }),
-                  ...(typesMatch?.[2] === undefined ? {} : { expectedType: typesMatch[2] }),
-                  message: part,
-                });
-              } else {
-                issues.push({ kind: "other", message: part });
-              }
-            }
-          }
-
-          explanation = `You're trying to use a value of type '${fromType}' where a value of type '${toType}' is expected. These types are not compatible.`;
-
-          // Generate suggestions based on issues
-          const missingProps = issues.filter((i) => i.kind === "missing_property");
-          if (missingProps.length > 0) {
-            const propNames = missingProps
-              .map((i) => i.property)
-              .filter(Boolean)
-              .join(", ");
-            suggestions.push(`Add missing properties: ${propNames}`);
-            suggestions.push(`Use Partial<${toType}> if properties should be optional`);
-            suggestions.push(
-              `Use Omit<${toType}, '${propNames}'> to create a type without these properties`,
-            );
-          }
-
-          const typeMismatches = issues.filter((i) => i.kind === "type_mismatch");
-          if (typeMismatches.length > 0) {
-            for (const mismatch of typeMismatches) {
-              suggestions.push(
-                `Fix property '${mismatch.property}': change from '${mismatch.actualType}' to '${mismatch.expectedType}'`,
-              );
-            }
-          }
-        }
+      case 2322:
+      case 2345:
+        await this.explainAssignabilityError(result, extracted, project, pkg, options.packageName);
         break;
-
-      case 2339: // Property 'X' does not exist on type 'Y'
-        if (extracted.properties.length > 0 && extracted.types.length > 0) {
-          const [targetType] = extracted.types;
-          const [missingProp] = extracted.properties;
-
-          result.types = {};
-          const typeExpanded = await this.safeExpandType(targetType!, project, pkg);
-          if (typeExpanded) {
-            result.types.target = { name: targetType!, expanded: typeExpanded };
-          }
-
-          issues.push({
-            kind: "missing_property",
-            ...(missingProp === undefined ? {} : { property: missingProp }),
-            message: `Property '${missingProp}' does not exist on type '${targetType}'`,
-          });
-
-          explanation = `You're trying to access property '${missingProp}' on type '${targetType}', but this property doesn't exist.`;
-          suggestions.push(`Add property '${missingProp}' to the ${targetType} type`);
-          suggestions.push(`Check for typos in the property name`);
-          suggestions.push(`Use optional chaining (?.) if the property might not exist`);
-        }
+      case 2339:
+        await this.explainMissingMemberError(result, extracted, project, pkg);
         break;
-
-      case 2741: // Property 'X' is missing in type 'Y' but required in type 'Z'
-        if (extracted.properties.length > 0 && extracted.types.length >= 2) {
-          const [fromType, toType] = extracted.types;
-          const [missingProp] = extracted.properties;
-
-          result.types = {};
-          const fromExpanded = await this.safeExpandType(fromType!, project, pkg);
-          const toExpanded = await this.safeExpandType(toType!, project, pkg);
-
-          if (fromExpanded) {
-            result.types.from = { name: fromType!, expanded: fromExpanded };
-          }
-          if (toExpanded) {
-            result.types.to = { name: toType!, expanded: toExpanded };
-          }
-
-          issues.push({
-            kind: "missing_property",
-            ...(missingProp === undefined ? {} : { property: missingProp }),
-            message: `Property '${missingProp}' is required but missing`,
-          });
-
-          explanation = `Type '${fromType}' is missing required property '${missingProp}' that '${toType}' expects.`;
-          suggestions.push(`Add property '${missingProp}' to your object`);
-          suggestions.push(`Make '${missingProp}' optional in ${toType} using '${missingProp}?:'`);
-        }
+      case 2741:
+        await this.explainMissingRequiredPropertyError(result, extracted, project, pkg);
         break;
-
-      case 2551: // Property 'X' does not exist on type 'Y'. Did you mean 'Z'?
-        if (extracted.properties.length >= 2 && extracted.types.length > 0) {
-          const [targetType] = extracted.types;
-          const [wrongProp, suggestedProp] = extracted.properties;
-
-          result.types = {};
-          const typeExpanded = await this.safeExpandType(targetType!, project, pkg);
-          if (typeExpanded) {
-            result.types.target = { name: targetType!, expanded: typeExpanded };
-          }
-
-          issues.push({
-            kind: "missing_property",
-            ...(wrongProp === undefined ? {} : { property: wrongProp }),
-            message: `Property '${wrongProp}' doesn't exist, did you mean '${suggestedProp}'?`,
-          });
-
-          explanation = `You typed '${wrongProp}' but this property doesn't exist on '${targetType}'. TypeScript suggests '${suggestedProp}' instead.`;
-          suggestions.push(`Replace '${wrongProp}' with '${suggestedProp}'`);
-        }
+      case 2551:
+        await this.explainSuggestedPropertyError(result, extracted, project, pkg);
         break;
-
       default:
-        // Generic explanation for other error codes
-        if (extracted.types.length > 0) {
-          result.types = {};
-          for (let i = 0; i < Math.min(extracted.types.length, 2); i++) {
-            const typeName = extracted.types[i]!;
-            const expanded = await this.safeExpandType(typeName, project, pkg);
-            if (expanded) {
-              if (i === 0) {
-                result.types.from = { name: typeName, expanded };
-              } else {
-                result.types.to = { name: typeName, expanded };
-              }
-            }
-          }
-        }
-        explanation = errorMessage;
-        issues.push({ kind: "other", message: errorMessage });
-        suggestions.push("Review the types involved using type_expand");
-        suggestions.push("Check type compatibility using type_compatible");
+        await this.explainGenericError(result, extracted, errorMessage, project, pkg);
         break;
     }
 
-    result.explanation = explanation;
-    result.issues = issues;
-    result.suggestions = suggestions;
-
     return result;
+  }
+
+  private async explainAssignabilityError(
+    result: ErrorExplanationResult,
+    extracted: { types: string[]; properties: string[] },
+    project: Project,
+    pkg: PackageInfo,
+    packageName?: string,
+  ): Promise<void> {
+    if (extracted.types.length < 2) return;
+
+    const [fromType, toType] = extracted.types;
+    result.types = {};
+    await this.expandResultTypes(result, [fromType!, toType!], project, pkg);
+
+    const compat = await this.checkCompatibility(fromType!, toType!, packageName);
+    if (!compat.compatible && compat.reason) {
+      result.issues.push(...this.parseCompatibilityIssues(compat.reason));
+    }
+
+    result.explanation = `You're trying to use a value of type '${fromType}' where a value of type '${toType}' is expected. These types are not compatible.`;
+    this.addAssignabilitySuggestions(result, toType!);
+  }
+
+  private async explainMissingMemberError(
+    result: ErrorExplanationResult,
+    extracted: { types: string[]; properties: string[] },
+    project: Project,
+    pkg: PackageInfo,
+  ): Promise<void> {
+    if (extracted.properties.length === 0 || extracted.types.length === 0) return;
+
+    const [targetType] = extracted.types;
+    const [missingProp] = extracted.properties;
+    result.types = {};
+    await this.expandTargetType(result, targetType!, project, pkg);
+
+    result.issues.push({
+      kind: "missing_property",
+      ...(missingProp === undefined ? {} : { property: missingProp }),
+      message: `Property '${missingProp}' does not exist on type '${targetType}'`,
+    });
+    result.explanation = `You're trying to access property '${missingProp}' on type '${targetType}', but this property doesn't exist.`;
+    result.suggestions.push(`Add property '${missingProp}' to the ${targetType} type`);
+    result.suggestions.push("Check for typos in the property name");
+    result.suggestions.push("Use optional chaining (?.) if the property might not exist");
+  }
+
+  private async explainMissingRequiredPropertyError(
+    result: ErrorExplanationResult,
+    extracted: { types: string[]; properties: string[] },
+    project: Project,
+    pkg: PackageInfo,
+  ): Promise<void> {
+    if (extracted.properties.length === 0 || extracted.types.length < 2) return;
+
+    const [fromType, toType] = extracted.types;
+    const [missingProp] = extracted.properties;
+    result.types = {};
+    await this.expandResultTypes(result, [fromType!, toType!], project, pkg);
+
+    result.issues.push({
+      kind: "missing_property",
+      ...(missingProp === undefined ? {} : { property: missingProp }),
+      message: `Property '${missingProp}' is required but missing`,
+    });
+    result.explanation = `Type '${fromType}' is missing required property '${missingProp}' that '${toType}' expects.`;
+    result.suggestions.push(`Add property '${missingProp}' to your object`);
+    result.suggestions.push(`Make '${missingProp}' optional in ${toType} using '${missingProp}?:'`);
+  }
+
+  private async explainSuggestedPropertyError(
+    result: ErrorExplanationResult,
+    extracted: { types: string[]; properties: string[] },
+    project: Project,
+    pkg: PackageInfo,
+  ): Promise<void> {
+    if (extracted.properties.length < 2 || extracted.types.length === 0) return;
+
+    const [targetType] = extracted.types;
+    const [wrongProp, suggestedProp] = extracted.properties;
+    result.types = {};
+    await this.expandTargetType(result, targetType!, project, pkg);
+
+    result.issues.push({
+      kind: "missing_property",
+      ...(wrongProp === undefined ? {} : { property: wrongProp }),
+      message: `Property '${wrongProp}' doesn't exist, did you mean '${suggestedProp}'?`,
+    });
+    result.explanation = `You typed '${wrongProp}' but this property doesn't exist on '${targetType}'. TypeScript suggests '${suggestedProp}' instead.`;
+    result.suggestions.push(`Replace '${wrongProp}' with '${suggestedProp}'`);
+  }
+
+  private async explainGenericError(
+    result: ErrorExplanationResult,
+    extracted: { types: string[]; properties: string[] },
+    errorMessage: string,
+    project: Project,
+    pkg: PackageInfo,
+  ): Promise<void> {
+    if (extracted.types.length > 0) {
+      result.types = {};
+      await this.expandResultTypes(result, extracted.types.slice(0, 2), project, pkg);
+    }
+    result.explanation = errorMessage;
+    result.issues.push({ kind: "other", message: errorMessage });
+    result.suggestions.push("Review the types involved using type_expand");
+    result.suggestions.push("Check type compatibility using type_compatible");
+  }
+
+  private async expandResultTypes(
+    result: ErrorExplanationResult,
+    typeNames: string[],
+    project: Project,
+    pkg: PackageInfo,
+  ): Promise<void> {
+    for (let i = 0; i < Math.min(typeNames.length, 2); i++) {
+      const typeName = typeNames[i]!;
+      const expanded = await this.safeExpandType(typeName, project, pkg);
+      if (!expanded) continue;
+      if (i === 0) {
+        result.types!.from = { name: typeName, expanded };
+      } else {
+        result.types!.to = { name: typeName, expanded };
+      }
+    }
+  }
+
+  private async expandTargetType(
+    result: ErrorExplanationResult,
+    typeName: string,
+    project: Project,
+    pkg: PackageInfo,
+  ): Promise<void> {
+    const expanded = await this.safeExpandType(typeName, project, pkg);
+    if (expanded) {
+      result.types!.target = { name: typeName, expanded };
+    }
+  }
+
+  private parseCompatibilityIssues(reason: string): ErrorExplanationIssue[] {
+    return reason.split("; ").map((part) => {
+      if (part.includes("missing")) {
+        const propMatch = part.match(/Property '(\w+)'/);
+        const typeMatch = part.match(/expected: ([^)]+)/);
+        return {
+          kind: "missing_property",
+          ...(propMatch?.[1] === undefined ? {} : { property: propMatch[1] }),
+          ...(typeMatch?.[1] === undefined ? {} : { expectedType: typeMatch[1] }),
+          message: part,
+        };
+      }
+
+      if (part.includes("incompatible types")) {
+        const propMatch = part.match(/Property '(\w+)'/);
+        const typesMatch = part.match(/'([^']+)' is not assignable to '([^']+)'/);
+        return {
+          kind: "type_mismatch",
+          ...(propMatch?.[1] === undefined ? {} : { property: propMatch[1] }),
+          ...(typesMatch?.[1] === undefined ? {} : { actualType: typesMatch[1] }),
+          ...(typesMatch?.[2] === undefined ? {} : { expectedType: typesMatch[2] }),
+          message: part,
+        };
+      }
+
+      return { kind: "other", message: part };
+    });
+  }
+
+  private addAssignabilitySuggestions(result: ErrorExplanationResult, toType: string): void {
+    const missingProps = result.issues.filter((issue) => issue.kind === "missing_property");
+    if (missingProps.length > 0) {
+      const propNames = missingProps.map((issue) => issue.property).filter(Boolean).join(", ");
+      result.suggestions.push(`Add missing properties: ${propNames}`);
+      result.suggestions.push(`Use Partial<${toType}> if properties should be optional`);
+      result.suggestions.push(`Use Omit<${toType}, '${propNames}'> to create a type without these properties`);
+    }
+
+    for (const mismatch of result.issues.filter((issue) => issue.kind === "type_mismatch")) {
+      result.suggestions.push(
+        `Fix property '${mismatch.property}': change from '${mismatch.actualType}' to '${mismatch.expectedType}'`,
+      );
+    }
   }
 
   /**
