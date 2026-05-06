@@ -161,103 +161,125 @@ export interface TypeAnalyzer {
   readonly markDirty: () => void
 }
 
+const fromProjectPromise = <A>(try_: () => Promise<A>): Effect.Effect<A, TypeLevelToolsError> =>
+  Effect.tryPromise({
+    try: try_,
+    catch: (cause) =>
+      new TypeLevelToolsError({
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      }),
+  })
+
 export const createTypeAnalyzer = (rootDirectory: string): TypeAnalyzer => {
   const absoluteRootDirectory = resolve(rootDirectory)
   const projectManager = new ProjectManager(absoluteRootDirectory)
-  const fromPromise = <A>(try_: () => Promise<A>): Effect.Effect<A, TypeLevelToolsError> =>
-    Effect.tryPromise({
-      try: try_,
-      catch: (cause) =>
-        new TypeLevelToolsError({
-          message: cause instanceof Error ? cause.message : String(cause),
-          cause,
-        }),
-    })
-
-  const searchTypes = (options: SearchTypesOptions): Effect.Effect<readonly TypeInfo[], TypeLevelToolsError> =>
-    Effect.gen(function* () {
-      const symbolOptions: Mutable<ListSymbolsOptions> = { limit: options.limit ?? 25 }
-      if (options.query !== undefined) symbolOptions.pattern = options.query
-      if (options.packageName !== undefined) symbolOptions.packageName = options.packageName
-      const symbols = yield* fromPromise(() => projectManager.listSymbols(symbolOptions))
-      const results = yield* Effect.forEach(
-        symbols.symbols,
-        (symbol) => fromPromise(() => projectManager.getTypeInfo(symbol.name, symbol.package)),
-        { concurrency: 4 },
-      )
-
-      return results.filter((item): item is NonNullable<typeof item> => item !== null)
-    })
 
   return {
-    getPackages: () => fromPromise(() => projectManager.getPackages()),
-    listSymbols: (options = {}) => fromPromise(() => projectManager.listSymbols({ limit: 100, ...options })),
-    getTypeInfo: (symbolName, packageName) => fromPromise(() => projectManager.getTypeInfo(symbolName, packageName)),
+    getPackages: () => fromProjectPromise(() => projectManager.getPackages()),
+    listSymbols: (options = {}) => fromProjectPromise(() => projectManager.listSymbols({ limit: 100, ...options })),
+    getTypeInfo: (symbolName, packageName) => fromProjectPromise(() => projectManager.getTypeInfo(symbolName, packageName)),
     expandType: (symbolName, packageName) =>
-      fromPromise(async () => {
+      fromProjectPromise(async () => {
         const expanded = await projectManager.expandType(symbolName, packageName)
         return expanded === null ? null : { ...expanded, properties: expanded.properties ?? [] }
       }),
-    findRelated: (symbolName, packageName) => fromPromise(() => projectManager.findRelated(symbolName, packageName)),
-    searchTypes,
-    evalType: (expression, packageName) => fromPromise(() => projectManager.evalType(expression, packageName)),
-    checkSnippet: (code, packageName) => fromPromise(() => projectManager.checkSnippet(code, packageName)),
+    findRelated: (symbolName, packageName) => fromProjectPromise(() => projectManager.findRelated(symbolName, packageName)),
+    searchTypes: (options) => searchTypes(projectManager, options),
+    evalType: (expression, packageName) => fromProjectPromise(() => projectManager.evalType(expression, packageName)),
+    checkSnippet: (code, packageName) => fromProjectPromise(() => projectManager.checkSnippet(code, packageName)),
     getFileDeclarations: (file, options = {}) =>
-      fromPromise(() => projectManager.getFileDeclarations(file, options)),
+      fromProjectPromise(() => projectManager.getFileDeclarations(file, options)),
     checkCompatibility: (from, to, packageName) =>
-      fromPromise(() => projectManager.checkCompatibility(from, to, packageName)),
-    generateGraph: (symbol, options = {}) => fromPromise(() => projectManager.generateGraph(symbol, options)),
-    previewRefactor: (options) => fromPromise(() => projectManager.previewRefactor(options)),
-    getDiagnostics: (packageNameOrOptions) =>
-      fromPromise(() => {
-        if (typeof packageNameOrOptions === "object" && packageNameOrOptions?.explain === true) {
-          return projectManager.getPackageDiagnostics(packageNameOrOptions.packageName).then(async (diagnostics) => {
-            const errors = await Promise.all(
-              diagnostics.slice(0, 10).map(async (diagnostic) => ({
-                ...diagnostic,
-                explanation: await projectManager.explainError({
-                  code: diagnostic.code,
-                  message: diagnostic.message,
-                  ...(packageNameOrOptions.packageName === undefined
-                    ? {}
-                    : { packageName: packageNameOrOptions.packageName }),
-                }),
-              })),
-            )
-            return {
-              totalErrors: diagnostics.length,
-              explained: errors.length,
-              truncated: diagnostics.length > 10,
-              errors,
-            }
-          })
-        }
-        return projectManager.getPackageDiagnostics(
-          typeof packageNameOrOptions === "string" ? packageNameOrOptions : packageNameOrOptions?.packageName,
-        )
-      }),
+      fromProjectPromise(() => projectManager.checkCompatibility(from, to, packageName)),
+    generateGraph: (symbol, options = {}) => fromProjectPromise(() => projectManager.generateGraph(symbol, options)),
+    previewRefactor: (options) => fromProjectPromise(() => projectManager.previewRefactor(options)),
+    getDiagnostics: (packageNameOrOptions) => getDiagnostics(projectManager, packageNameOrOptions),
     getTypeAtPosition: (filePath, line, column, packageName) =>
-      fromPromise(() => projectManager.getTypeAtPosition(filePath, line, column, packageName)),
-    explainError: (options) => fromPromise(() => projectManager.explainError(options)),
-    explainType: (expression, packageName) => fromPromise(() => projectManager.explainType(expression, packageName)),
-    transformSearch: (options) =>
-      fromPromise(async () => {
-        const pkg = await projectManager.resolvePackagePublic(options.packageName)
-        const project = projectManager.getProjectPublic(pkg)
-        const sourceFiles = projectManager.getSourceFilesPublic(project, pkg)
-        const engine = new TransformSearchEngine(project, pkg.path, sourceFiles)
-        const result = await engine.search(options)
-        return formatResults(result)
-      }),
-    refresh: (packageName) =>
-      fromPromise(async () => {
-        if (packageName !== undefined) {
-          await projectManager.refreshPackage(packageName)
-          return `Refreshed TypeScript project for "${packageName}". Next type query will use fresh AST.`
-        }
-        projectManager.refreshAll()
-        return "Refreshed all TypeScript projects. Next type queries will use fresh AST."
-      }),
+      fromProjectPromise(() => projectManager.getTypeAtPosition(filePath, line, column, packageName)),
+    explainError: (options) => fromProjectPromise(() => projectManager.explainError(options)),
+    explainType: (expression, packageName) => fromProjectPromise(() => projectManager.explainType(expression, packageName)),
+    transformSearch: (options) => transformSearch(projectManager, options),
+    refresh: (packageName) => refreshAnalyzer(projectManager, packageName),
     markDirty: () => projectManager.markDirty(),
   }
 }
+
+const searchTypes = (
+  projectManager: ProjectManager,
+  options: SearchTypesOptions,
+): Effect.Effect<readonly TypeInfo[], TypeLevelToolsError> =>
+  Effect.gen(function* () {
+    const symbolOptions: Mutable<ListSymbolsOptions> = { limit: options.limit ?? 25 }
+    if (options.query !== undefined) symbolOptions.pattern = options.query
+    if (options.packageName !== undefined) symbolOptions.packageName = options.packageName
+    const symbols = yield* fromProjectPromise(() => projectManager.listSymbols(symbolOptions))
+    const results = yield* Effect.forEach(
+      symbols.symbols,
+      (symbol) => fromProjectPromise(() => projectManager.getTypeInfo(symbol.name, symbol.package)),
+      { concurrency: 4 },
+    )
+
+    return results.filter((item): item is NonNullable<typeof item> => item !== null)
+  })
+
+const getDiagnostics = (
+  projectManager: ProjectManager,
+  packageNameOrOptions?: string | DiagnosticOptions,
+): Effect.Effect<readonly DiagnosticInfo[] | unknown, TypeLevelToolsError> =>
+  fromProjectPromise(() =>
+    typeof packageNameOrOptions === "object" && packageNameOrOptions?.explain === true
+      ? getExplainedDiagnostics(projectManager, packageNameOrOptions)
+      : projectManager.getPackageDiagnostics(
+          typeof packageNameOrOptions === "string" ? packageNameOrOptions : packageNameOrOptions?.packageName,
+        ),
+  )
+
+const getExplainedDiagnostics = async (
+  projectManager: ProjectManager,
+  options: DiagnosticOptions,
+): Promise<unknown> => {
+  const diagnostics = await projectManager.getPackageDiagnostics(options.packageName)
+  const errors = await Promise.all(
+    diagnostics.slice(0, 10).map(async (diagnostic) => ({
+      ...diagnostic,
+      explanation: await projectManager.explainError({
+        code: diagnostic.code,
+        message: diagnostic.message,
+        ...(options.packageName === undefined ? {} : { packageName: options.packageName }),
+      }),
+    })),
+  )
+  return {
+    totalErrors: diagnostics.length,
+    explained: errors.length,
+    truncated: diagnostics.length > 10,
+    errors,
+  }
+}
+
+const transformSearch = (
+  projectManager: ProjectManager,
+  options: TransformSearchOptions & { readonly packageName?: string },
+): Effect.Effect<string, TypeLevelToolsError> =>
+  fromProjectPromise(async () => {
+    const pkg = await projectManager.resolvePackagePublic(options.packageName)
+    const project = projectManager.getProjectPublic(pkg)
+    const sourceFiles = projectManager.getSourceFilesPublic(project, pkg)
+    const engine = new TransformSearchEngine(project, pkg.path, sourceFiles)
+    const result = await engine.search(options)
+    return formatResults(result)
+  })
+
+const refreshAnalyzer = (
+  projectManager: ProjectManager,
+  packageName?: string,
+): Effect.Effect<string, TypeLevelToolsError> =>
+  fromProjectPromise(async () => {
+    if (packageName !== undefined) {
+      await projectManager.refreshPackage(packageName)
+      return `Refreshed TypeScript project for "${packageName}". Next type query will use fresh AST.`
+    }
+    projectManager.refreshAll()
+    return "Refreshed all TypeScript projects. Next type queries will use fresh AST."
+  })
