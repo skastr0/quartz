@@ -23,6 +23,189 @@ import {
 
 import type { TokenExtractionResult, CallableEntry } from "./types";
 
+interface TokenCollector {
+  tokens: string[];
+  propKeys: string[];
+}
+
+const primitiveTokenByKind = new Map<SyntaxKind, string>([
+  [SyntaxKind.StringKeyword, "string"],
+  [SyntaxKind.NumberKeyword, "number"],
+  [SyntaxKind.BooleanKeyword, "boolean"],
+  [SyntaxKind.VoidKeyword, "void"],
+  [SyntaxKind.NeverKeyword, "never"],
+  [SyntaxKind.UnknownKeyword, "unknown"],
+  [SyntaxKind.AnyKeyword, "any"],
+  [SyntaxKind.UndefinedKeyword, "undefined"],
+  [SyntaxKind.NullKeyword, "null"],
+  [SyntaxKind.ObjectKeyword, "object"],
+  [SyntaxKind.SymbolKeyword, "symbol"],
+  [SyntaxKind.BigIntKeyword, "bigint"],
+  [SyntaxKind.ThisType, "this"],
+]);
+
+const addUnique = (items: string[], value: string): void => {
+  if (!items.includes(value)) {
+    items.push(value);
+  }
+};
+
+const visitTypeChildren = (node: Node, collector: TokenCollector): void => {
+  for (const child of node.getChildren()) {
+    if (isTypeNode(child)) {
+      visitTypeNode(child, collector);
+    } else if (child.getKind() === SyntaxKind.SyntaxList) {
+      for (const elem of child.getChildren()) {
+        if (isTypeNode(elem)) {
+          visitTypeNode(elem, collector);
+        }
+      }
+    }
+  }
+};
+
+const visitFirstTypeChild = (node: Node, collector: TokenCollector): void => {
+  for (const child of node.getChildren()) {
+    if (isTypeNode(child)) {
+      visitTypeNode(child, collector);
+      break;
+    }
+  }
+};
+
+const visitTypeReference = (node: Node, collector: TokenCollector): void => {
+  const children = node.getChildren();
+  for (const child of children) {
+    if (child.getKind() === SyntaxKind.Identifier || child.getKind() === SyntaxKind.QualifiedName) {
+      const text = child.getText();
+      collector.tokens.push(text);
+
+      if (child.getKind() === SyntaxKind.QualifiedName) {
+        for (const part of text.split(".")) {
+          addUnique(collector.tokens, part);
+        }
+      }
+    }
+  }
+
+  for (const child of children) {
+    if (child.getKind() === SyntaxKind.SyntaxList) {
+      for (const typeArg of child.getChildren()) {
+        if (isTypeNode(typeArg)) {
+          visitTypeNode(typeArg, collector);
+        }
+      }
+    }
+  }
+};
+
+const visitTypeLiteral = (node: Node, collector: TokenCollector): void => {
+  for (const member of node.getChildren()) {
+    if (member.getKind() !== SyntaxKind.SyntaxList) continue;
+
+    for (const prop of member.getChildren()) {
+      if (prop.getKind() === SyntaxKind.PropertySignature) {
+        const propSig = prop as PropertySignature;
+        addUnique(collector.propKeys, propSig.getName());
+        const propType = propSig.getTypeNode();
+        if (propType) visitTypeNode(propType, collector);
+      } else if (prop.getKind() === SyntaxKind.MethodSignature) {
+        const methodSig = prop as MethodSignature;
+        addUnique(collector.propKeys, methodSig.getName());
+        for (const param of methodSig.getParameters()) {
+          const paramType = param.getTypeNode();
+          if (paramType) visitTypeNode(paramType, collector);
+        }
+        const returnType = methodSig.getReturnTypeNode();
+        if (returnType) visitTypeNode(returnType, collector);
+      }
+    }
+  }
+};
+
+const visitFunctionType = (node: Node, collector: TokenCollector): void => {
+  const fnType = node as FunctionTypeNode;
+  for (const param of fnType.getParameters()) {
+    const paramType = param.getTypeNode();
+    if (paramType) visitTypeNode(paramType, collector);
+  }
+  const returnType = fnType.getReturnTypeNode();
+  if (returnType) visitTypeNode(returnType, collector);
+};
+
+const visitTypeQuery = (node: Node, collector: TokenCollector): void => {
+  collector.tokens.push("typeof");
+  for (const child of node.getChildren()) {
+    if (child.getKind() === SyntaxKind.Identifier || child.getKind() === SyntaxKind.QualifiedName) {
+      collector.tokens.push(child.getText());
+    }
+  }
+};
+
+const visitTypeOperator = (node: Node, collector: TokenCollector): void => {
+  const operatorToken = node.getChildAtIndex(0);
+  if (operatorToken?.getKind() === SyntaxKind.KeyOfKeyword) {
+    collector.tokens.push("keyof");
+  } else if (operatorToken?.getKind() === SyntaxKind.ReadonlyKeyword) {
+    collector.tokens.push("readonly");
+  } else if (operatorToken?.getKind() === SyntaxKind.UniqueKeyword) {
+    collector.tokens.push("unique");
+  }
+  visitTypeChildren(node, collector);
+};
+
+const visitTypeNode = (node: Node, collector: TokenCollector): void => {
+  const primitiveToken = primitiveTokenByKind.get(node.getKind());
+  if (primitiveToken !== undefined) {
+    collector.tokens.push(primitiveToken);
+    return;
+  }
+
+  switch (node.getKind()) {
+    case SyntaxKind.TypeReference:
+      visitTypeReference(node, collector);
+      break;
+    case SyntaxKind.TypeLiteral:
+      visitTypeLiteral(node, collector);
+      break;
+    case SyntaxKind.ArrayType:
+      collector.tokens.push("Array");
+      visitFirstTypeChild(node, collector);
+      break;
+    case SyntaxKind.TupleType:
+      collector.tokens.push("Tuple");
+      visitTypeChildren(node, collector);
+      break;
+    case SyntaxKind.UnionType:
+    case SyntaxKind.IntersectionType:
+    case SyntaxKind.IndexedAccessType:
+    case SyntaxKind.MappedType:
+    case SyntaxKind.ConditionalType:
+    case SyntaxKind.RestType:
+    case SyntaxKind.OptionalType:
+      visitTypeChildren(node, collector);
+      break;
+    case SyntaxKind.FunctionType:
+      visitFunctionType(node, collector);
+      break;
+    case SyntaxKind.ParenthesizedType:
+      visitFirstTypeChild(node, collector);
+      break;
+    case SyntaxKind.TypeQuery:
+      visitTypeQuery(node, collector);
+      break;
+    case SyntaxKind.TypeOperator:
+      visitTypeOperator(node, collector);
+      break;
+    case SyntaxKind.InferType:
+      collector.tokens.push("infer");
+      break;
+    case SyntaxKind.LiteralType:
+    case SyntaxKind.TemplateLiteralType:
+      break;
+  }
+};
+
 /**
  * Extract tokens from a type node without invoking the type checker.
  *
@@ -34,300 +217,13 @@ export function extractTokensFromTypeNode(typeNode: TypeNode | undefined): Token
     return { tokens: [], propKeys: [] };
   }
 
-  const tokens: string[] = [];
-  const propKeys: string[] = [];
-
-  function visit(node: Node): void {
-    const kind = node.getKind();
-
-    switch (kind) {
-      case SyntaxKind.TypeReference: {
-        // Get the type name text
-        const children = node.getChildren();
-        for (const child of children) {
-          if (
-            child.getKind() === SyntaxKind.Identifier ||
-            child.getKind() === SyntaxKind.QualifiedName
-          ) {
-            const text = child.getText();
-            tokens.push(text);
-
-            // Also add parts for qualified names
-            if (child.getKind() === SyntaxKind.QualifiedName) {
-              const parts = text.split(".");
-              parts.forEach((p) => {
-                if (!tokens.includes(p)) tokens.push(p);
-              });
-            }
-          }
-        }
-
-        // Recurse into type arguments
-        for (const child of children) {
-          if (child.getKind() === SyntaxKind.SyntaxList) {
-            for (const typeArg of child.getChildren()) {
-              if (isTypeNode(typeArg)) {
-                visit(typeArg);
-              }
-            }
-          }
-        }
-        break;
-      }
-
-      case SyntaxKind.TypeLiteral: {
-        // Extract property keys and recurse into property types
-        for (const member of node.getChildren()) {
-          if (member.getKind() === SyntaxKind.SyntaxList) {
-            for (const prop of member.getChildren()) {
-              if (prop.getKind() === SyntaxKind.PropertySignature) {
-                const propSig = prop as PropertySignature;
-                const name = propSig.getName();
-                if (name && !propKeys.includes(name)) {
-                  propKeys.push(name);
-                }
-                const propType = propSig.getTypeNode();
-                if (propType) {
-                  visit(propType);
-                }
-              } else if (prop.getKind() === SyntaxKind.MethodSignature) {
-                const methodSig = prop as MethodSignature;
-                const name = methodSig.getName();
-                if (name && !propKeys.includes(name)) {
-                  propKeys.push(name);
-                }
-                // Recurse into method signature types
-                for (const param of methodSig.getParameters()) {
-                  const paramType = param.getTypeNode();
-                  if (paramType) visit(paramType);
-                }
-                const returnType = methodSig.getReturnTypeNode();
-                if (returnType) visit(returnType);
-              }
-            }
-          }
-        }
-        break;
-      }
-
-      case SyntaxKind.ArrayType: {
-        tokens.push("Array");
-        // Recurse into element type
-        for (const child of node.getChildren()) {
-          if (isTypeNode(child)) {
-            visit(child);
-            break;
-          }
-        }
-        break;
-      }
-
-      case SyntaxKind.TupleType: {
-        tokens.push("Tuple");
-        // Recurse into element types
-        for (const child of node.getChildren()) {
-          if (child.getKind() === SyntaxKind.SyntaxList) {
-            for (const elem of child.getChildren()) {
-              if (isTypeNode(elem)) {
-                visit(elem);
-              }
-            }
-          }
-        }
-        break;
-      }
-
-      case SyntaxKind.UnionType:
-      case SyntaxKind.IntersectionType: {
-        // Recurse into constituent types
-        for (const child of node.getChildren()) {
-          if (isTypeNode(child)) {
-            visit(child);
-          } else if (child.getKind() === SyntaxKind.SyntaxList) {
-            for (const elem of child.getChildren()) {
-              if (isTypeNode(elem)) {
-                visit(elem);
-              }
-            }
-          }
-        }
-        break;
-      }
-
-      case SyntaxKind.FunctionType: {
-        const fnType = node as FunctionTypeNode;
-        // Recurse into parameter types
-        for (const param of fnType.getParameters()) {
-          const paramType = param.getTypeNode();
-          if (paramType) visit(paramType);
-        }
-        // Recurse into return type
-        const returnType = fnType.getReturnTypeNode();
-        if (returnType) visit(returnType);
-        break;
-      }
-
-      case SyntaxKind.ParenthesizedType: {
-        // Unwrap and recurse
-        for (const child of node.getChildren()) {
-          if (isTypeNode(child)) {
-            visit(child);
-            break;
-          }
-        }
-        break;
-      }
-
-      case SyntaxKind.TypeQuery: {
-        // typeof operator
-        tokens.push("typeof");
-        // Extract the identifier being queried
-        for (const child of node.getChildren()) {
-          if (
-            child.getKind() === SyntaxKind.Identifier ||
-            child.getKind() === SyntaxKind.QualifiedName
-          ) {
-            tokens.push(child.getText());
-          }
-        }
-        break;
-      }
-
-      case SyntaxKind.TypeOperator: {
-        // keyof, readonly, unique
-        const operatorToken = node.getChildAtIndex(0);
-        if (operatorToken) {
-          if (operatorToken.getKind() === SyntaxKind.KeyOfKeyword) {
-            tokens.push("keyof");
-          } else if (operatorToken.getKind() === SyntaxKind.ReadonlyKeyword) {
-            tokens.push("readonly");
-          } else if (operatorToken.getKind() === SyntaxKind.UniqueKeyword) {
-            tokens.push("unique");
-          }
-        }
-        // Recurse into the operand type
-        for (const child of node.getChildren()) {
-          if (isTypeNode(child)) {
-            visit(child);
-          }
-        }
-        break;
-      }
-
-      case SyntaxKind.IndexedAccessType: {
-        // T[K] - recurse into both parts
-        for (const child of node.getChildren()) {
-          if (isTypeNode(child)) {
-            visit(child);
-          }
-        }
-        break;
-      }
-
-      case SyntaxKind.MappedType: {
-        // { [K in keyof T]: V } - extract what we can
-        for (const child of node.getChildren()) {
-          if (isTypeNode(child)) {
-            visit(child);
-          }
-        }
-        break;
-      }
-
-      case SyntaxKind.ConditionalType: {
-        // T extends U ? X : Y - extract all branches
-        for (const child of node.getChildren()) {
-          if (isTypeNode(child)) {
-            visit(child);
-          }
-        }
-        break;
-      }
-
-      case SyntaxKind.InferType: {
-        tokens.push("infer");
-        break;
-      }
-
-      case SyntaxKind.RestType: {
-        // ...T in tuples
-        for (const child of node.getChildren()) {
-          if (isTypeNode(child)) {
-            visit(child);
-          }
-        }
-        break;
-      }
-
-      case SyntaxKind.OptionalType: {
-        // T? in tuples
-        for (const child of node.getChildren()) {
-          if (isTypeNode(child)) {
-            visit(child);
-          }
-        }
-        break;
-      }
-
-      case SyntaxKind.LiteralType: {
-        // String/number/boolean literal types - skip the value
-        break;
-      }
-
-      case SyntaxKind.TemplateLiteralType: {
-        // Template literal types - skip for v1
-        break;
-      }
-
-      // Primitive keywords
-      case SyntaxKind.StringKeyword:
-        tokens.push("string");
-        break;
-      case SyntaxKind.NumberKeyword:
-        tokens.push("number");
-        break;
-      case SyntaxKind.BooleanKeyword:
-        tokens.push("boolean");
-        break;
-      case SyntaxKind.VoidKeyword:
-        tokens.push("void");
-        break;
-      case SyntaxKind.NeverKeyword:
-        tokens.push("never");
-        break;
-      case SyntaxKind.UnknownKeyword:
-        tokens.push("unknown");
-        break;
-      case SyntaxKind.AnyKeyword:
-        tokens.push("any");
-        break;
-      case SyntaxKind.UndefinedKeyword:
-        tokens.push("undefined");
-        break;
-      case SyntaxKind.NullKeyword:
-        tokens.push("null");
-        break;
-      case SyntaxKind.ObjectKeyword:
-        tokens.push("object");
-        break;
-      case SyntaxKind.SymbolKeyword:
-        tokens.push("symbol");
-        break;
-      case SyntaxKind.BigIntKeyword:
-        tokens.push("bigint");
-        break;
-      case SyntaxKind.ThisType:
-        tokens.push("this");
-        break;
-    }
-  }
-
-  visit(typeNode);
+  const collector: TokenCollector = { tokens: [], propKeys: [] };
+  visitTypeNode(typeNode, collector);
 
   // Deduplicate tokens and propKeys
   return {
-    tokens: [...new Set(tokens)],
-    propKeys: [...new Set(propKeys)],
+    tokens: [...new Set(collector.tokens)],
+    propKeys: [...new Set(collector.propKeys)],
   };
 }
 
