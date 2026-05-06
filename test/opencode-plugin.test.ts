@@ -1,5 +1,13 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { describe, expect, it, vi } from "vitest"
 import pluginModule, { TypeLevelToolsPlugin } from "../apps/opencode-plugin/src/server"
+
+const toolExecute = async (plugin: any, name: string, args: Record<string, unknown> = {}) =>
+  plugin.tool[name].execute(args)
+
+const parse = (value: string) => JSON.parse(value) as any
 
 describe("OpenCode plugin wrapper", () => {
   it("exports a server plugin module", () => {
@@ -9,7 +17,7 @@ describe("OpenCode plugin wrapper", () => {
 
   it("keeps OpenCode-specific behavior in the wrapper", async () => {
     const log = vi.fn()
-    const plugin = await TypeLevelToolsPlugin({
+    const plugin: any = await TypeLevelToolsPlugin({
       directory: new URL("./fixtures", import.meta.url).pathname,
       client: { app: { log } },
     } as never)
@@ -37,5 +45,57 @@ describe("OpenCode plugin wrapper", () => {
       }),
     )
     expect(plugin.event).toEqual(expect.any(Function))
+  })
+
+  it("executes representative tools with preserved argument propagation", async () => {
+    const plugin: any = await TypeLevelToolsPlugin({
+      directory: new URL("./fixtures", import.meta.url).pathname,
+      client: {},
+    } as never)
+
+    const info = parse(await toolExecute(plugin, "type_info", { symbol: "User" }))
+    const symbols = parse(await toolExecute(plugin, "type_symbols", { pattern: "^User", kind: "interface", limit: 1 }))
+    const graph = parse(await toolExecute(plugin, "type_graph", { symbol: "ExtendedUser", depth: 1, format: "dot" }))
+    const file = parse(await toolExecute(plugin, "type_file", { file: "types/basic.ts", symbol: "^User$", includePrivate: false }))
+
+    expect(info).toMatchObject({ name: "User", kind: "interface" })
+    expect(symbols).toMatchObject({
+      symbols: [expect.objectContaining({ name: "User", kind: "interface" })],
+      truncated: true,
+    })
+    expect(graph).toMatchObject({ root: "ExtendedUser", format: "dot", depth: 1 })
+    expect(graph.graph).toContain("digraph")
+    expect(file.declarations.map((declaration: any) => declaration.name)).toEqual(["User"])
+  })
+
+  it("preserves idle logging and dirty-cache hook behavior", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tlt-plugin-"))
+    mkdirSync(join(root, "src"))
+    writeFileSync(join(root, "tsconfig.json"), JSON.stringify({ include: ["src/**/*.ts"] }), "utf8")
+    const sourcePath = join(root, "src", "types.ts")
+    writeFileSync(sourcePath, "export interface TempUser { name: string }\n", "utf8")
+
+    const log = vi.fn()
+    const plugin: any = await TypeLevelToolsPlugin({
+      directory: root,
+      client: { app: { log } },
+    } as never)
+
+    const before = parse(await toolExecute(plugin, "type_info", { symbol: "TempUser" }))
+    writeFileSync(sourcePath, "export interface TempUser { name: string; age: number }\n", "utf8")
+    await plugin["tool.execute.after"]({ tool: "write" })
+    const after = parse(await toolExecute(plugin, "type_info", { symbol: "TempUser" }))
+
+    await plugin.event({ event: { type: "session.idle", properties: { sessionID: "session-1" } } })
+
+    expect(before.properties.map((property: any) => property.name)).toEqual(["name"])
+    expect(after.properties.map((property: any) => property.name)).toEqual(["name", "age"])
+    expect(log).toHaveBeenCalledWith({
+      body: expect.objectContaining({
+        service: "type-level-tools",
+        level: "debug",
+        extra: { sessionID: "session-1" },
+      }),
+    })
   })
 })

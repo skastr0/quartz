@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { spawnSync } from "node:child_process"
 import { describe, expect, it } from "vitest"
 import { fixturesPath } from "./helpers/analyzer"
+import { __testing } from "../apps/cli/src/main"
 
 const repoRoot = join(fixturesPath, "..", "..")
 const cliEntry = "apps/cli/src/main.ts"
@@ -18,6 +19,32 @@ const runCli = (args: readonly string[], input?: string) =>
 const parse = (text: string) => JSON.parse(text) as Record<string, any>
 
 describe("agentic CLI protocol", () => {
+  it("reuses analyzers by normalized root without changing payload-facing roots", () => {
+    __testing.clearAnalyzerCache()
+
+    const first = __testing.analyzerFor({ root: "test/fixtures" })
+    const second = __testing.analyzerFor({ root: "./test/fixtures" })
+
+    expect(first).toBe(second)
+    expect(__testing.cacheRootOf({ root: "test/fixtures" })).toBe(__testing.cacheRootOf({ root: "./test/fixtures" }))
+    expect(__testing.analyzerCacheSize()).toBe(1)
+  })
+
+  it("keeps relative roots visible in response targets", () => {
+    const result = runCli([
+      "diagnostics",
+      JSON.stringify([
+        { root: "test/fixtures" },
+        { root: "./test/fixtures" },
+      ]),
+    ])
+
+    expect(result.status).toBe(0)
+    expect(result.stderr).toBe("")
+    const envelope = parse(result.stdout)
+    expect(envelope.data.results.map((item: any) => item.target.root)).toEqual(["test/fixtures", "./test/fixtures"])
+  })
+
   it("accepts inline, @file, and stdin JSON payloads", () => {
     const payload = { root: fixturesPath, symbol: "User" }
     const payloadFile = join(mkdtempSync(join(tmpdir(), "tlt-payload-")), "payload.json")

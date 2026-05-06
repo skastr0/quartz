@@ -259,17 +259,25 @@ interface PayloadWithPackage {
 }
 
 const packageNameOf = (payload: PayloadWithPackage): string | undefined => payload.package
-const rootOf = (payload: PayloadWithRoot): string => resolve(payload.root ?? process.cwd())
+const rootOf = (payload: PayloadWithRoot): string => payload.root ?? process.cwd()
+const cacheRootOf = (payload: PayloadWithRoot): string => resolve(rootOf(payload))
 const analyzersByRoot = new Map<string, TypeAnalyzer>()
 
 const analyzerFor = (payload: PayloadWithRoot): TypeAnalyzer => {
-  const root = rootOf(payload)
+  const root = cacheRootOf(payload)
   const cached = analyzersByRoot.get(root)
   if (cached !== undefined) return cached
 
   const analyzer = createTypeAnalyzer(root)
   analyzersByRoot.set(root, analyzer)
   return analyzer
+}
+
+export const __testing = {
+  analyzerFor,
+  cacheRootOf,
+  clearAnalyzerCache: () => analyzersByRoot.clear(),
+  analyzerCacheSize: () => analyzersByRoot.size,
 }
 
 const packageField = (payload: PayloadWithPackage): { readonly packageName?: string } => {
