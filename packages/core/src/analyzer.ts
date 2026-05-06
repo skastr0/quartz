@@ -7,6 +7,8 @@ import {
   TypeFormatFlags,
   type Diagnostic,
   type SourceFile,
+  type Symbol,
+  type Type,
 } from "ts-morph"
 import { Effect } from "effect"
 import { discoverPackages, type PackageInfo } from "./discovery"
@@ -76,6 +78,7 @@ export interface ExpandedType {
 }
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] }
+const MAX_DECLARED_PROPERTIES = 50
 
 export interface TypeAtPositionResult {
   readonly type: string
@@ -280,13 +283,14 @@ export const createTypeAnalyzer = (rootDirectory: string): TypeAnalyzer => {
       const symbol = declaration.getSymbol()
       const type = declaration.getType()
       const signature = getSignatureText(declaration)
+      const properties = getProperties(declaration, absoluteRootDirectory)
 
       return {
         name: getDeclarationName(declaration) ?? symbolName,
         kind: getDeclarationKind(declaration),
         type: type.getText(declaration, TypeFormatFlags.NoTruncation),
         ...(signature === undefined ? {} : { signature }),
-        properties: getProperties(declaration),
+        ...(properties.length === 0 ? {} : { properties }),
         location: {
           file: relative(rootDirectory, sourceFile.getFilePath()),
           line: declaration.getStartLineNumber(),
@@ -476,10 +480,8 @@ const getDeclarationKind = (declaration: Node): string => {
   return SyntaxKind[declaration.getKind()] ?? "unknown"
 }
 
-const getProperties = (declaration: Node): readonly TypePropertyInfo[] =>
-  declaration
-    .getType()
-    .getProperties()
+const getProperties = (declaration: Node, rootDirectory: string): readonly TypePropertyInfo[] =>
+  getDisplayProperties(declaration.getType(), rootDirectory)
     .map((property) => {
       const propertyDeclaration = property.getValueDeclaration() ?? property.getDeclarations()[0]
       const propertyType =
@@ -493,6 +495,17 @@ const getProperties = (declaration: Node): readonly TypePropertyInfo[] =>
         optional: property.isOptional(),
       }
     })
+
+const getDisplayProperties = (type: Type, rootDirectory: string): readonly Symbol[] => {
+  const properties = type.getProperties()
+  if (properties.length === 0 || properties.length > MAX_DECLARED_PROPERTIES) return []
+
+  return properties.filter((property) =>
+    property.getDeclarations().some((propertyDeclaration) =>
+      propertyDeclaration.getSourceFile().getFilePath().startsWith(rootDirectory),
+    ),
+  )
+}
 
 const getSignatureText = (declaration: Node): string | undefined => {
   const signatures = declaration.getType().getCallSignatures()

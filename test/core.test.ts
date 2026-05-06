@@ -63,6 +63,14 @@ describe("type analyzer core", () => {
     expect(results.map((result) => result.name)).toContain("Role")
   })
 
+  it("omits noisy library prototype properties from search results", async () => {
+    const analyzer = createFixtureAnalyzer()
+    const results = await Effect.runPromise(analyzer.searchTypes({ query: "AdminOrUser", limit: 1 }))
+
+    expect(results[0]).toMatchObject({ name: "AdminOrUser" })
+    expect(results[0]?.properties).toBeUndefined()
+  })
+
   it("finds related symbols", async () => {
     const analyzer = createFixtureAnalyzer()
     const related = await Effect.runPromise(analyzer.findRelated("User"))
@@ -124,5 +132,6 @@ describe("type analyzer core", () => {
 
     expect(result).not.toBeNull()
     expect(result?.type).toBe("string")
+    expect(result?.nodeKind).toBe("Identifier")
   })
 })

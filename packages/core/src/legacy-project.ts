@@ -2,6 +2,7 @@ import {
   Project,
   type SourceFile,
   type Symbol,
+  type Type,
   SyntaxKind,
   type Node,
   TypeFormatFlags,
@@ -200,6 +201,7 @@ interface CachedProject {
 
 const CACHE_TTL = 60_000; // 60 seconds TTL for MCP environments without tool hooks
 const MAX_CACHED_PROJECTS = 5; // LRU cache size limit
+const MAX_DECLARED_PROPERTIES = 50;
 
 /**
  * Simple LRU cache using Map's insertion order.
@@ -381,8 +383,22 @@ export class ProjectManager {
       case SyntaxKind.ModuleDeclaration:
         return "module";
       default:
-        return "unknown";
+        return SyntaxKind[kind] ?? "unknown";
     }
+  }
+
+  private getDisplayProperties(type: Type): Symbol[] {
+    const properties = type.getProperties();
+    if (properties.length === 0 || properties.length > MAX_DECLARED_PROPERTIES) return [];
+
+    const localProperties = properties.filter((property) => {
+      const declarations = property.getDeclarations();
+      if (declarations.length === 0) return false;
+      return declarations.some((declaration) => declaration.getSourceFile().getFilePath().startsWith(this.rootDirectory));
+    });
+
+    if (localProperties.length === 0) return [];
+    return localProperties.length <= MAX_DECLARED_PROPERTIES ? localProperties : [];
   }
 
   private relativePath(absolutePath: string): string {
@@ -898,8 +914,8 @@ export class ProjectManager {
       }
     }
 
-    const properties = type.getProperties();
-    if (properties.length > 0 && properties.length <= 50) {
+    const properties = this.getDisplayProperties(type);
+    if (properties.length > 0) {
       info.properties = properties.map((prop) => {
         const propDecl = prop.getDeclarations()[0];
         const propType = propDecl ? propDecl.getType() : prop.getTypeAtLocation(node);
@@ -964,8 +980,8 @@ export class ProjectManager {
       expanded,
     };
 
-    const properties = type.getProperties();
-    if (properties.length > 0 && properties.length <= 50) {
+    const properties = this.getDisplayProperties(type);
+    if (properties.length > 0) {
       result.properties = properties.map((prop) => {
         const propDecl = prop.getDeclarations()[0];
         const propType = propDecl ? propDecl.getType() : prop.getTypeAtLocation(node);
