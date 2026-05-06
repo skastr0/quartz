@@ -1138,139 +1138,105 @@ export class ProjectManager {
   ): Promise<{ result: string; expanded: string } | { error: string }> {
     const pkg = await this.resolvePackage(packageName);
     const project = this.getProject(pkg);
-    const checker = project.getTypeChecker();
     const sourceFiles = this.getSourceFiles(project, pkg);
-
-    // Track exports with their source files to handle duplicates via aliasing
-    // Map: exportName -> Array<{ filePath, absolutePath, isDefault }>
-    const exportSources = new Map<
-      string,
-      Array<{ filePath: string; absolutePath: string; isDefault: boolean }>
-    >();
-
-    // First pass: collect all exports and their source files
-    for (const sourceFile of sourceFiles) {
-      const filePath = this.relativePath(sourceFile.getFilePath());
-      const absolutePath = sourceFile.getFilePath();
-      const exports = sourceFile.getExportedDeclarations();
-
-      for (const [name, declarations] of exports) {
-        if (name === "default") {
-          // Handle default exports - use actual name if available
-          for (const decl of declarations) {
-            const actualName = this.getDeclarationName(decl);
-            if (actualName) {
-              const sources = exportSources.get(actualName) || [];
-              sources.push({ filePath, absolutePath, isDefault: true });
-              exportSources.set(actualName, sources);
-            }
-          }
-          continue;
-        }
-        const sources = exportSources.get(name) || [];
-        sources.push({ filePath, absolutePath, isDefault: false });
-        exportSources.set(name, sources);
-      }
-    }
-
-    // Build import statements with aliasing for duplicates
-    // For duplicates: import { Foo as Foo_0 } from "file1"; import { Foo as Foo_1 } from "file2";
-    // For unique exports: import { Foo } from "file";
-    // For default exports: import { default as Foo } from "file";
-    const imports: string[] = [];
-    const fileExports = new Map<string, string[]>(); // absolutePath -> list of "Name" or "Name as Alias"
-
-    for (const [name, sources] of exportSources) {
-      if (sources.length === 1) {
-        // Unique export - no aliasing needed (but default exports need special syntax)
-        const src = sources[0]!;
-        const existing = fileExports.get(src.absolutePath) || [];
-        if (src.isDefault) {
-          existing.push(`default as ${name}`);
-        } else {
-          existing.push(name);
-        }
-        fileExports.set(src.absolutePath, existing);
-      } else {
-        // Duplicate export - use aliasing
-        sources.forEach((src, index) => {
-          const alias = `${name}_${index}`;
-          const existing = fileExports.get(src.absolutePath) || [];
-          if (src.isDefault) {
-            existing.push(`default as ${alias}`);
-          } else {
-            existing.push(`${name} as ${alias}`);
-          }
-          fileExports.set(src.absolutePath, existing);
-        });
-      }
-    }
 
     // Create temp file inside package directory for proper module resolution
     const tempFileName = join(pkg.path, `__type_eval_${Date.now()}__.ts`);
     const tempDir = dirname(tempFileName);
-
-    // Generate import statements with relative paths from temp file location
-    for (const [absolutePath, exportList] of fileExports) {
-      if (exportList.length > 0) {
-        // Compute relative path from temp file to source file
-        let modulePath = relative(tempDir, absolutePath);
-        // Ensure it starts with ./ for local imports
-        if (!modulePath.startsWith(".") && !modulePath.startsWith("/")) {
-          modulePath = "./" + modulePath;
-        }
-        // Normalize path separators for Windows
-        modulePath = modulePath.replace(/\\/g, "/");
-        // Strip .ts/.tsx extension for module specifier
-        modulePath = modulePath.replace(/\.(ts|tsx)$/, "");
-        imports.push(`import type { ${exportList.join(", ")} } from "${modulePath}";`);
-      }
-    }
-
-    const fileContent = `${imports.join("\n")}\ntype __EvalResult__ = ${expression};`;
+    const fileContent = this.createEvalTypeContent(sourceFiles, tempDir, expression);
 
     try {
       const tempFile = project.createSourceFile(tempFileName, fileContent, { overwrite: true });
-
-      const typeAlias = tempFile.getTypeAlias("__EvalResult__");
-      if (!typeAlias) {
-        project.removeSourceFile(tempFile);
-        return { error: "Failed to parse type expression" };
-      }
-
-      const type = typeAlias.getType();
-      const result = type.getText(typeAlias);
-
-      const expandFlags =
-        TypeFormatFlags.NoTruncation |
-        TypeFormatFlags.WriteArrayAsGenericType |
-        TypeFormatFlags.UseStructuralFallback |
-        TypeFormatFlags.WriteTypeArgumentsOfSignature |
-        TypeFormatFlags.InTypeAlias;
-
-      const expanded = checker.compilerObject.typeToString(
-        type.compilerType,
-        typeAlias.compilerNode,
-        expandFlags as unknown as number,
-      );
-
+      const evaluated = this.evaluateTypeAlias(project, tempFile);
       project.removeSourceFile(tempFile);
-
-      return { result, expanded };
+      return evaluated;
     } catch (error) {
-      try {
-        const tempFile = project.getSourceFile(tempFileName);
-        if (tempFile) {
-          project.removeSourceFile(tempFile);
-        }
-      } catch {
-        // Ignore cleanup errors
-      }
-
+      this.removeTempSourceFile(project, tempFileName);
       return {
         error: error instanceof Error ? error.message : String(error),
       };
     }
+  }
+
+  private createEvalTypeContent(
+    sourceFiles: SourceFile[],
+    tempDir: string,
+    expression: string,
+  ): string {
+    const exportSources = this.collectSnippetExportSources(sourceFiles);
+    const fileExports = this.groupEvalImportsByFile(exportSources);
+    const imports = this.createEvalTypeImports(fileExports, tempDir);
+    return `${imports.join("\n")}\ntype __EvalResult__ = ${expression};`;
+  }
+
+  private groupEvalImportsByFile(
+    exportSources: Map<string, SnippetExportSource[]>,
+  ): Map<string, string[]> {
+    const fileExports = new Map<string, string[]>();
+
+    for (const [name, sources] of exportSources) {
+      sources.forEach((source, index) => {
+        const alias = sources.length === 1 ? name : `${name}_${index}`;
+        const importName = source.isDefault
+          ? `default as ${alias}`
+          : alias === name
+            ? name
+            : `${name} as ${alias}`;
+        const existing = fileExports.get(source.absolutePath) ?? [];
+        existing.push(importName);
+        fileExports.set(source.absolutePath, existing);
+      });
+    }
+
+    return fileExports;
+  }
+
+  private createEvalTypeImports(
+    fileExports: Map<string, string[]>,
+    tempDir: string,
+  ): string[] {
+    const imports: string[] = [];
+    for (const [absolutePath, exportList] of fileExports) {
+      if (exportList.length === 0) continue;
+      const modulePath = this.toSnippetModulePath(tempDir, absolutePath);
+      imports.push(`import type { ${exportList.join(", ")} } from "${modulePath}";`);
+    }
+    return imports;
+  }
+
+  private evaluateTypeAlias(
+    project: Project,
+    tempFile: SourceFile,
+  ): { result: string; expanded: string } | { error: string } {
+    const typeAlias = tempFile.getTypeAlias("__EvalResult__");
+    if (!typeAlias) {
+      return { error: "Failed to parse type expression" };
+    }
+
+    const type = typeAlias.getType();
+    const result = type.getText(typeAlias);
+    const expanded = this.formatExpandedType(project, typeAlias, type);
+
+    return { result, expanded };
+  }
+
+  private formatExpandedType(
+    project: Project,
+    typeAlias: import("ts-morph").TypeAliasDeclaration,
+    type: import("ts-morph").Type,
+  ): string {
+    const expandFlags =
+      TypeFormatFlags.NoTruncation |
+      TypeFormatFlags.WriteArrayAsGenericType |
+      TypeFormatFlags.UseStructuralFallback |
+      TypeFormatFlags.WriteTypeArgumentsOfSignature |
+      TypeFormatFlags.InTypeAlias;
+
+    return project.getTypeChecker().compilerObject.typeToString(
+      type.compilerType,
+      typeAlias.compilerNode,
+      expandFlags as unknown as number,
+    );
   }
 
   /**
