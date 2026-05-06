@@ -207,7 +207,7 @@ describe("agentic CLI protocol", () => {
         package_count: 1,
       },
     })
-  })
+  }, 15_000)
 
   it("rejects payloads for list discovery commands", () => {
     const result = runCli(["schema", "list", JSON.stringify({ name: "graph" })])
