@@ -19,7 +19,7 @@ import { enumerateCallables } from "./enumerate";
 import { populateEntryTokens } from "./tokens";
 import { buildCallableIndex, selectCandidates } from "./index-builder";
 import { SignatureResolver } from "./signature-resolver";
-import { AssignabilityFilter } from "./assignability-filter";
+import { AssignabilityFilter, type AssignabilityCheckResult } from "./assignability-filter";
 import { SyntheticVerifier, shouldSkipSyntheticCheck } from "./synthetic-verifier";
 import { QueryParser, type ParsedQuery } from "./query-parser";
 import {
@@ -58,6 +58,8 @@ export interface TransformSearchOptions {
    */
   allowTypeErasure?: boolean;
 }
+
+type SearchTiming = TransformSearchResponse["stats"]["timing"];
 
 /**
  * Main search engine for transform search.
@@ -130,10 +132,30 @@ export class TransformSearchEngine {
     query: ParsedQuery,
     options: TransformSearchOptions,
     index: CallableIndex,
-    timing: TransformSearchResponse["stats"]["timing"],
+    timing: SearchTiming,
     startTime: number,
   ): Promise<TransformSearchResponse> {
-    // Layer B: Candidate selection via inverted index
+    const candidateIds = this.selectIndexedCandidates(query, index, timing);
+    const assignableResults = this.resolveAssignableCandidates(
+      query,
+      options,
+      index,
+      candidateIds,
+      timing,
+    );
+    const syntheticResults = this.verifyTopCandidates(query, index, assignableResults, timing);
+    const results = this.buildSearchResults(query, index, assignableResults, syntheticResults);
+
+    timing.totalMs = performance.now() - startTime;
+
+    return this.createSearchResponse(options, query, candidateIds, assignableResults, results, timing);
+  }
+
+  private selectIndexedCandidates(
+    query: ParsedQuery,
+    index: CallableIndex,
+    timing: SearchTiming,
+  ): CallableId[] {
     const indexStart = performance.now();
     const candidateIds = selectCandidates(index, {
       ...(query.from?.tokens === undefined ? {} : { fromTokens: query.from.tokens }),
@@ -144,14 +166,21 @@ export class TransformSearchEngine {
       budget: 1500,
     });
     timing.indexLookupMs = performance.now() - indexStart;
+    return candidateIds;
+  }
 
-    // Layer C: Resolve signatures (fresh resolver each search for type stability)
+  private resolveAssignableCandidates(
+    query: ParsedQuery,
+    options: TransformSearchOptions,
+    index: CallableIndex,
+    candidateIds: CallableId[],
+    timing: SearchTiming,
+  ): AssignabilityCheckResult[] {
     const resolutionStart = performance.now();
     const resolver = this.createSignatureResolver(index);
     const resolvedSignatures = resolver.resolveSignatures(candidateIds);
     timing.resolutionMs = performance.now() - resolutionStart;
 
-    // Assignability filtering
     const assignabilityStart = performance.now();
     const filter = new AssignabilityFilter(this.project);
     const assignableResults = filter.filterByAssignability(resolvedSignatures, {
@@ -162,141 +191,167 @@ export class TransformSearchEngine {
       allowTypeErasure: options.allowTypeErasure ?? false,
     });
     timing.assignabilityMs = performance.now() - assignabilityStart;
+    return assignableResults;
+  }
 
-    // Synthetic verification (top candidates only)
+  private verifyTopCandidates(
+    query: ParsedQuery,
+    index: CallableIndex,
+    assignableResults: AssignabilityCheckResult[],
+    timing: SearchTiming,
+  ): Map<CallableId, VerificationMeta> {
     const syntheticStart = performance.now();
-    const syntheticBudget = Math.min(50, assignableResults.length);
-    const topCandidates = assignableResults.slice(0, syntheticBudget);
+    const topCandidates = assignableResults.slice(0, Math.min(50, assignableResults.length));
+    const syntheticResults = query.from?.raw && query.to?.raw
+      ? this.verifyCompleteQueryCandidates(query, index, topCandidates)
+      : this.markPartialQueryCandidates(index, topCandidates);
+    timing.syntheticMs = performance.now() - syntheticStart;
+    return syntheticResults;
+  }
 
-    // Store full verification metadata, not just boolean
+  private verifyCompleteQueryCandidates(
+    query: ParsedQuery,
+    index: CallableIndex,
+    topCandidates: AssignabilityCheckResult[],
+  ): Map<CallableId, VerificationMeta> {
     const syntheticResults = new Map<CallableId, VerificationMeta>();
+    const verifier = new SyntheticVerifier(this.project, this.packagePath);
 
-    // Only run synthetic checks if we have both from and to expressions
-    if (query.from?.raw && query.to?.raw) {
-      const verifier = new SyntheticVerifier(this.project, this.packagePath);
+    for (const candidate of topCandidates) {
+      const entry = index.entries[candidate.candidateId];
+      if (!entry) continue;
 
-      for (const candidate of topCandidates) {
-        const entry = index.entries[candidate.candidateId];
-        if (!entry) continue;
-
-        // Check if we should skip synthetic verification
-        const skipResult = shouldSkipSyntheticCheck(entry, candidate);
-
-        if (skipResult.skip) {
-          // CRITICAL FIX: Properly propagate the verification status
-          // Don't mark unannotated/internal functions as "verified"!
-          syntheticResults.set(candidate.candidateId, {
-            status: skipResult.status,
-            method: skipResult.method,
-            reason: skipResult.reason,
-          });
-          continue;
-        }
-
-        // Perform full synthetic verification
-        const verified = verifier.verifyCandidates(
-          [candidate],
-          {
-            fromExpr: query.from.raw,
-            toExpr: query.to.raw,
-            unwrapReturn: query.unwrapReturn,
-          },
-          index,
-        );
-
-        if (verified.length > 0) {
-          syntheticResults.set(candidate.candidateId, verified[0]!.verification);
-        }
+      const skipResult = shouldSkipSyntheticCheck(entry, candidate);
+      if (skipResult.skip) {
+        syntheticResults.set(candidate.candidateId, {
+          status: skipResult.status,
+          method: skipResult.method,
+          reason: skipResult.reason,
+        });
+        continue;
       }
-    } else {
-      // If only from or only to is specified, mark as partial query (unverified)
-      for (const candidate of topCandidates) {
-        const entry = index.entries[candidate.candidateId];
-        if (!entry) continue;
 
-        // Still check for skippable conditions
-        const skipResult = shouldSkipSyntheticCheck(entry, candidate);
-        if (skipResult.skip && skipResult.status !== "verified") {
-          // Preserve unverified/unverifiable status
-          syntheticResults.set(candidate.candidateId, {
-            status: skipResult.status,
-            method: skipResult.method,
-            reason: skipResult.reason,
-          });
-        } else {
-          // Partial query - can't fully verify
-          syntheticResults.set(candidate.candidateId, {
-            status: "unverified",
-            method: "assignability_only",
-            reason: "partial_query",
-          });
-        }
+      const verified = verifier.verifyCandidates(
+        [candidate],
+        {
+          fromExpr: query.from!.raw,
+          toExpr: query.to!.raw,
+          unwrapReturn: query.unwrapReturn,
+        },
+        index,
+      );
+
+      if (verified.length > 0) {
+        syntheticResults.set(candidate.candidateId, verified[0]!.verification);
       }
     }
-    timing.syntheticMs = performance.now() - syntheticStart;
 
-    // Build final results
+    return syntheticResults;
+  }
+
+  private markPartialQueryCandidates(
+    index: CallableIndex,
+    topCandidates: AssignabilityCheckResult[],
+  ): Map<CallableId, VerificationMeta> {
+    const syntheticResults = new Map<CallableId, VerificationMeta>();
+    for (const candidate of topCandidates) {
+      const entry = index.entries[candidate.candidateId];
+      if (!entry) continue;
+
+      const skipResult = shouldSkipSyntheticCheck(entry, candidate);
+      if (skipResult.skip && skipResult.status !== "verified") {
+        syntheticResults.set(candidate.candidateId, {
+          status: skipResult.status,
+          method: skipResult.method,
+          reason: skipResult.reason,
+        });
+      } else {
+        syntheticResults.set(candidate.candidateId, {
+          status: "unverified",
+          method: "assignability_only",
+          reason: "partial_query",
+        });
+      }
+    }
+    return syntheticResults;
+  }
+
+  private buildSearchResults(
+    query: ParsedQuery,
+    index: CallableIndex,
+    assignableResults: AssignabilityCheckResult[],
+    syntheticResults: Map<CallableId, VerificationMeta>,
+  ): TransformSearchResult[] {
     const results: TransformSearchResult[] = [];
 
     for (const assignResult of assignableResults) {
-      const entry = index.entries[assignResult.candidateId];
-      if (!entry) continue;
-
-      const verificationMeta = syntheticResults.get(assignResult.candidateId);
-
-      // Skip if synthetic verification was performed and explicitly failed
-      // (status === 'unverified' with reason 'synthetic_check_failed')
-      if (verificationMeta?.reason === "synthetic_check_failed") continue;
-
-      // Create compatible SyntheticCheckResult for scoring/explanation functions
-      const syntheticResultCompat = verificationMeta
-        ? {
-            candidateId: entry.id,
-            verified: verificationMeta.status === "verified",
-            verification: verificationMeta,
-            diagnostics: verificationMeta.diagnostics ?? [],
-            syntheticCode: "",
-          }
-        : null;
-
-      const score = calculateScore(entry, assignResult, syntheticResultCompat);
-      const explanation = generateExplanation(entry, assignResult, syntheticResultCompat, query);
-
-      // Determine the final verification for the result
-      const finalVerification: VerificationMeta = verificationMeta ?? {
-        status: "unverified",
-        method: "assignability_only",
-        reason: "partial_query",
-      };
-
-      results.push({
-        name: entry.qualifiedName,
-        signature: this.getSignatureText(entry),
-        kind: entry.kind,
-        file: entry.filePath,
-        line: this.getLineNumber(entry),
-        exported: entry.exportState === "exported",
-        deprecated: entry.isDeprecated,
-        score: score.total,
-        confidence: explanation.confidence,
-        explanation,
-        verification: finalVerification,
-        matchDetails: {
-          fromMatch: assignResult.fromMatch,
-          toMatch: assignResult.toMatch,
-          syntheticVerified: finalVerification.status === "verified",
-        },
-      });
+      const result = this.createSearchResult(query, index, assignResult, syntheticResults);
+      if (result) results.push(result);
     }
 
-    // Sort by score and limit
     results.sort((a, b) => b.score - a.score);
-    const limitedResults = results.slice(0, query.limit);
+    return results.slice(0, query.limit);
+  }
 
-    timing.totalMs = performance.now() - startTime;
+  private createSearchResult(
+    query: ParsedQuery,
+    index: CallableIndex,
+    assignResult: AssignabilityCheckResult,
+    syntheticResults: Map<CallableId, VerificationMeta>,
+  ): TransformSearchResult | null {
+    const entry = index.entries[assignResult.candidateId];
+    if (!entry) return null;
+
+    const verificationMeta = syntheticResults.get(assignResult.candidateId);
+    if (verificationMeta?.reason === "synthetic_check_failed") return null;
+
+    const syntheticResultCompat = verificationMeta
+      ? {
+          candidateId: entry.id,
+          verified: verificationMeta.status === "verified",
+          verification: verificationMeta,
+          diagnostics: verificationMeta.diagnostics ?? [],
+          syntheticCode: "",
+        }
+      : null;
+    const score = calculateScore(entry, assignResult, syntheticResultCompat);
+    const explanation = generateExplanation(entry, assignResult, syntheticResultCompat, query);
+    const finalVerification: VerificationMeta = verificationMeta ?? {
+      status: "unverified",
+      method: "assignability_only",
+      reason: "partial_query",
+    };
 
     return {
-      results: limitedResults,
+      name: entry.qualifiedName,
+      signature: this.getSignatureText(entry),
+      kind: entry.kind,
+      file: entry.filePath,
+      line: this.getLineNumber(entry),
+      exported: entry.exportState === "exported",
+      deprecated: entry.isDeprecated,
+      score: score.total,
+      confidence: explanation.confidence,
+      explanation,
+      verification: finalVerification,
+      matchDetails: {
+        fromMatch: assignResult.fromMatch,
+        toMatch: assignResult.toMatch,
+        syntheticVerified: finalVerification.status === "verified",
+      },
+    };
+  }
+
+  private createSearchResponse(
+    options: TransformSearchOptions,
+    query: ParsedQuery,
+    candidateIds: CallableId[],
+    assignableResults: AssignabilityCheckResult[],
+    results: TransformSearchResult[],
+    timing: SearchTiming,
+  ): TransformSearchResponse {
+    return {
+      results,
       query: {
         from: options.from ?? null,
         to: options.to ?? null,
@@ -310,7 +365,7 @@ export class TransformSearchEngine {
         totalCandidates: candidateIds.length,
         assignableMatches: assignableResults.length,
         verifiedMatches: results.length,
-        returned: limitedResults.length,
+        returned: results.length,
         timing,
       },
     };
