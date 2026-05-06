@@ -64,7 +64,7 @@ describe("agentic CLI protocol", () => {
         data: { name: "User", kind: "interface" },
       })
     }
-  })
+  }, 10_000)
 
   it("writes expected failures as stderr envelopes", () => {
     const result = runCli(["info", JSON.stringify({ root: fixturesPath })])

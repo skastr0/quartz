@@ -2599,16 +2599,22 @@ export class ProjectManager {
     const typePatterns = [
       /Type '([^']+)' is not assignable to type '([^']+)'/,
       /Argument of type '([^']+)' is not assignable to parameter of type '([^']+)'/,
+      /Type ([\w.$]+) is not assignable to type ([\w.$]+)/,
+      /Argument of type ([\w.$]+) is not assignable to parameter of type ([\w.$]+)/,
       /Property '[^']+' does not exist on type '([^']+)'/,
       /Property '[^']+' is missing in type '([^']+)' but required in type '([^']+)'/,
+      /Property ([\w$]+) is missing in type ([\w.$]+) but required in type ([\w.$]+)/,
       /Cannot find name '([^']+)'/,
       /Type '([^']+)' has no properties in common with type '([^']+)'/,
+      /Type ([\w.$]+) has no properties in common with type ([\w.$]+)/,
     ];
 
     // Patterns for extracting properties
     const propPatterns = [
       /Property '([^']+)' does not exist/,
       /Property '([^']+)' is missing/,
+      /Property ([\w$]+) does not exist/,
+      /Property ([\w$]+) is missing/,
       /Did you mean '([^']+)'\?/,
     ];
 

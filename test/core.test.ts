@@ -126,6 +126,20 @@ describe("type analyzer core", () => {
     expect(transforms).toContain("toDTO")
   })
 
+  it("explains simplified unquoted assignability diagnostics", async () => {
+    const analyzer = createFixtureAnalyzer()
+    const explanation = await Effect.runPromise(
+      analyzer.explainError({
+        code: 2322,
+        message: "Type UserInput is not assignable to type User",
+      }),
+    )
+
+    expect(explanation?.explanation).toContain("UserInput")
+    expect(explanation?.explanation).toContain("User")
+    expect(explanation?.suggestions.length).toBeGreaterThan(0)
+  })
+
   it("returns the type at a source position", async () => {
     const analyzer = createFixtureAnalyzer()
     const result = await Effect.runPromise(analyzer.getTypeAtPosition("types/basic.ts", 9, 3))
