@@ -15,6 +15,8 @@ import { Effect } from "effect";
 import { discoverPackages, type PackageInfo } from "./discovery";
 import { getDisplayPropertySymbols } from "./display-properties";
 
+const FILE_DECLARATION_TYPE_TEXT_LIMIT = 240;
+
 export interface SymbolInfo {
   name: string;
   kind: string;
@@ -1638,7 +1640,7 @@ export class ProjectManager {
 
     const type = node.getType();
     if (kind !== "class" && kind !== "interface" && kind !== "enum") {
-      info.type = type.getText(node);
+      info.type = this.truncateFileDeclarationType(type.getText(node));
     }
 
     const signature = this.getFileDeclarationSignature(node, name, kind, type);
@@ -1689,6 +1691,12 @@ export class ProjectManager {
       if (!a.isDefaultExport && b.isDefaultExport) return 1;
       return a.name.localeCompare(b.name);
     });
+  }
+
+  private truncateFileDeclarationType(typeText: string): string {
+    if (typeText.length <= FILE_DECLARATION_TYPE_TEXT_LIMIT) return typeText;
+    const truncatedChars = typeText.length - FILE_DECLARATION_TYPE_TEXT_LIMIT;
+    return `${typeText.slice(0, FILE_DECLARATION_TYPE_TEXT_LIMIT)}... [truncated ${truncatedChars} chars]`;
   }
 
   async checkCompatibility(

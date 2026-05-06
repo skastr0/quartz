@@ -1,3 +1,5 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect } from "effect"
 import { Project } from "ts-morph"
@@ -181,6 +183,21 @@ describe("refactor coverage", () => {
       exportedAs: "RefactorableUser",
     })
     expect(transforms?.declarations[0]?.signature).toContain("(from: User) => UserDTO")
+  })
+
+  it("truncates very large file declaration type text", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tlt-large-file-"))
+    mkdirSync(join(root, "src"))
+    writeFileSync(join(root, "tsconfig.json"), JSON.stringify({ include: ["src/**/*.ts"] }), "utf8")
+    const properties = Array.from({ length: 160 }, (_, index) => `p${index}: string`).join("; ")
+    writeFileSync(join(root, "src", "large.ts"), `export type LargeShape = { ${properties} }\n`, "utf8")
+
+    const analyzer = createTypeAnalyzer(root)
+    const file = await Effect.runPromise(analyzer.getFileDeclarations("src/large.ts"))
+
+    const typeText = file?.declarations[0]?.type
+    expect(typeText).toContain("[truncated")
+    expect(typeText?.length).toBeLessThan(340)
   })
 
   it("preserves analyzer package-scoped diagnostics and refresh helpers", async () => {
