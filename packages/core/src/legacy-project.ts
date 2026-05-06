@@ -81,6 +81,12 @@ export interface FileInspectionResult {
   total: number;
 }
 
+interface FileExportMetadata {
+  exportedNames: Set<string>;
+  defaultExportNames: Set<string>;
+  exportAliases: Map<string, string>;
+}
+
 export interface CompatibilityResult {
   compatible: boolean;
   from: string;
@@ -1528,17 +1534,29 @@ export class ProjectManager {
     pkg: PackageInfo,
     options: { symbol?: string; includePrivate?: boolean },
   ): FileInspectionResult {
-    const declarations: FileDeclarationInfo[] = [];
     const symbolFilter = options.symbol ? new RegExp(options.symbol, "i") : null;
+    const exportMetadata = this.getFileExportMetadata(sourceFile);
+    const declarations = this.collectFileDeclarations(sourceFile, exportMetadata, {
+      symbolFilter,
+      includePrivate: options.includePrivate ?? false,
+    });
 
-    // Get exported declarations
-    const exports = sourceFile.getExportedDeclarations();
+    this.sortFileDeclarations(declarations);
+
+    return {
+      file: this.relativePath(sourceFile.getFilePath()),
+      package: pkg.name,
+      declarations,
+      total: declarations.length,
+    };
+  }
+
+  private getFileExportMetadata(sourceFile: SourceFile): FileExportMetadata {
     const exportedNames = new Set<string>();
     const defaultExportNames = new Set<string>();
-    const exportAliases = new Map<string, string>(); // localName -> exportedAs
+    const exportAliases = new Map<string, string>();
 
-    // Track what's exported and what's a default export
-    for (const [exportName, decls] of exports) {
+    for (const [exportName, decls] of sourceFile.getExportedDeclarations()) {
       if (exportName === "default") {
         for (const decl of decls) {
           const actualName = this.getDeclarationName(decl);
@@ -1548,11 +1566,9 @@ export class ProjectManager {
           }
         }
       } else {
-        // Check if this is an aliased export (export { Foo as Bar })
         for (const decl of decls) {
           const actualName = this.getDeclarationName(decl);
           if (actualName && actualName !== exportName) {
-            // This is an alias: actualName is exported as exportName
             exportAliases.set(actualName, exportName);
             exportedNames.add(actualName);
           } else {
@@ -1562,108 +1578,123 @@ export class ProjectManager {
       }
     }
 
-    // Collect all declarations from the file
-    const collectDeclaration = (node: Node, name: string) => {
-      if (symbolFilter && !symbolFilter.test(name)) {
-        return;
-      }
+    return { exportedNames, defaultExportNames, exportAliases };
+  }
 
-      const isExported = exportedNames.has(name);
-      const isDefaultExport = defaultExportNames.has(name);
-      const exportedAs = exportAliases.get(name);
-
-      // Skip non-exported if includePrivate is false
-      if (!isExported && !options.includePrivate) {
-        return;
-      }
-
-      const type = node.getType();
-      const kind = this.kindToString(node.getKind());
-
-      const info: FileDeclarationInfo = {
-        name,
-        kind,
-        line: node.getStartLineNumber(),
-        exported: isExported,
-        isDefaultExport,
-      };
-
-      // Add alias info if exported under a different name
-      if (exportedAs) {
-        info.exportedAs = exportedAs;
-      }
-
-      // Add type string for non-class/interface/enum
-      if (kind !== "class" && kind !== "interface" && kind !== "enum") {
-        info.type = type.getText(node);
-      }
-
-      // Add signature for functions and classes
-      if (kind === "function") {
-        const callSigs = type.getCallSignatures();
-        if (callSigs.length > 0) {
-          info.signature = callSigs
-            .map((sig) => {
-              const params = sig
-                .getParameters()
-                .map((p) => `${p.getName()}: ${p.getTypeAtLocation(node).getText(node)}`)
-                .join(", ");
-              const ret = sig.getReturnType().getText(node);
-              return `(${params}) => ${ret}`;
-            })
-            .join(" | ");
-        }
-      } else if (kind === "class") {
-        const props = type.getProperties().slice(0, 20);
-        const methods = props.filter((p) => {
-          const decl = p.getDeclarations()[0];
-          return decl && decl.getKind() === SyntaxKind.MethodDeclaration;
-        });
-        info.signature = `class ${name} { ${methods.map((m) => m.getName() + "()").join(", ")}${methods.length < props.length ? ", ..." : ""} }`;
-      }
-
-      declarations.push(info);
+  private collectFileDeclarations(
+    sourceFile: SourceFile,
+    exportMetadata: FileExportMetadata,
+    options: { symbolFilter: RegExp | null; includePrivate: boolean },
+  ): FileDeclarationInfo[] {
+    const declarations: FileDeclarationInfo[] = [];
+    const addDeclaration = (node: Node, name: string) => {
+      const declaration = this.createFileDeclarationInfo(node, name, exportMetadata, options);
+      if (declaration) declarations.push(declaration);
     };
 
-    // Collect classes
     for (const classDecl of sourceFile.getClasses()) {
       const name = classDecl.getName();
       if (name) {
-        collectDeclaration(classDecl, name);
+        addDeclaration(classDecl, name);
       }
     }
 
-    // Collect interfaces
     for (const interfaceDecl of sourceFile.getInterfaces()) {
-      collectDeclaration(interfaceDecl, interfaceDecl.getName());
+      addDeclaration(interfaceDecl, interfaceDecl.getName());
     }
 
-    // Collect type aliases
     for (const typeAlias of sourceFile.getTypeAliases()) {
-      collectDeclaration(typeAlias, typeAlias.getName());
+      addDeclaration(typeAlias, typeAlias.getName());
     }
 
-    // Collect functions
     for (const funcDecl of sourceFile.getFunctions()) {
       const name = funcDecl.getName();
       if (name) {
-        collectDeclaration(funcDecl, name);
+        addDeclaration(funcDecl, name);
       }
     }
 
-    // Collect enums
     for (const enumDecl of sourceFile.getEnums()) {
-      collectDeclaration(enumDecl, enumDecl.getName());
+      addDeclaration(enumDecl, enumDecl.getName());
     }
 
-    // Collect top-level variables
     for (const varStatement of sourceFile.getVariableStatements()) {
       for (const varDecl of varStatement.getDeclarations()) {
-        collectDeclaration(varDecl, varDecl.getName());
+        addDeclaration(varDecl, varDecl.getName());
       }
     }
 
-    // Sort: exported first, then by name
+    return declarations;
+  }
+
+  private createFileDeclarationInfo(
+    node: Node,
+    name: string,
+    exportMetadata: FileExportMetadata,
+    options: { symbolFilter: RegExp | null; includePrivate: boolean },
+  ): FileDeclarationInfo | null {
+    if (options.symbolFilter && !options.symbolFilter.test(name)) return null;
+
+    const isExported = exportMetadata.exportedNames.has(name);
+    if (!isExported && !options.includePrivate) return null;
+
+    const kind = this.kindToString(node.getKind());
+    const exportedAs = exportMetadata.exportAliases.get(name);
+    const info: FileDeclarationInfo = {
+      name,
+      kind,
+      line: node.getStartLineNumber(),
+      exported: isExported,
+      isDefaultExport: exportMetadata.defaultExportNames.has(name),
+      ...(exportedAs === undefined ? {} : { exportedAs }),
+    };
+
+    const type = node.getType();
+    if (kind !== "class" && kind !== "interface" && kind !== "enum") {
+      info.type = type.getText(node);
+    }
+
+    const signature = this.getFileDeclarationSignature(node, name, kind, type);
+    if (signature !== undefined) {
+      info.signature = signature;
+    }
+    return info;
+  }
+
+  private getFileDeclarationSignature(
+    node: Node,
+    name: string,
+    kind: string,
+    type: import("ts-morph").Type,
+  ): string | undefined {
+    if (kind === "function") {
+      const callSigs = type.getCallSignatures();
+      if (callSigs.length === 0) return undefined;
+      return callSigs
+        .map((sig) => {
+          const params = sig
+            .getParameters()
+            .map((p) => `${p.getName()}: ${p.getTypeAtLocation(node).getText(node)}`)
+            .join(", ");
+          const ret = sig.getReturnType().getText(node);
+          return `(${params}) => ${ret}`;
+        })
+        .join(" | ");
+    }
+
+    if (kind !== "class") return undefined;
+
+    const props = type.getProperties().slice(0, 20);
+    const methods = props.filter((p) => {
+      const decl = p.getDeclarations()[0];
+      return decl && decl.getKind() === SyntaxKind.MethodDeclaration;
+    });
+    const methodList = methods.map((method) => method.getName() + "()").join(", ");
+    const suffix = methods.length < props.length ? ", ..." : "";
+    return `class ${name} { ${methodList}${suffix} }`;
+  }
+
+  private sortFileDeclarations(declarations: FileDeclarationInfo[]): void {
     declarations.sort((a, b) => {
       if (a.exported && !b.exported) return -1;
       if (!a.exported && b.exported) return 1;
@@ -1671,13 +1702,6 @@ export class ProjectManager {
       if (!a.isDefaultExport && b.isDefaultExport) return 1;
       return a.name.localeCompare(b.name);
     });
-
-    return {
-      file: this.relativePath(sourceFile.getFilePath()),
-      package: pkg.name,
-      declarations,
-      total: declarations.length,
-    };
   }
 
   async checkCompatibility(
