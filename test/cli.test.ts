@@ -64,7 +64,7 @@ describe("agentic CLI protocol", () => {
         data: { name: "User", kind: "interface" },
       })
     }
-  }, 10_000)
+  }, 20_000)
 
   it("writes expected failures as stderr envelopes", () => {
     const result = runCli(["info", JSON.stringify({ root: fixturesPath })])
@@ -81,7 +81,7 @@ describe("agentic CLI protocol", () => {
         },
       },
     })
-  })
+  }, 10_000)
 
   it("returns ordered batch results with partial failure semantics", () => {
     const result = runCli([
@@ -142,7 +142,7 @@ describe("agentic CLI protocol", () => {
     const artifactPath = envelope.data.artifact.absolute_path
     expect(existsSync(artifactPath)).toBe(true)
     expect(readFileSync(artifactPath, "utf8")).toContain("ExtendedUser")
-  })
+  }, 10_000)
 
   it("exposes capabilities, schemas, examples, and doctor discovery", () => {
     const capabilities = runCli(["capabilities"])

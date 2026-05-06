@@ -57,7 +57,10 @@ describe("OpenCode plugin wrapper", () => {
     const info = parse(await toolExecute(plugin, "type_info", { symbol: "User" }))
     const symbols = parse(await toolExecute(plugin, "type_symbols", { pattern: "^User", kind: "interface", limit: 1 }))
     const graph = parse(await toolExecute(plugin, "type_graph", { symbol: "ExtendedUser", depth: 1, format: "dot" }))
+    const compatible = parse(await toolExecute(plugin, "type_compatible", { from: "ExtendedUser", to: "User" }))
     const file = parse(await toolExecute(plugin, "type_file", { file: "types/basic.ts", symbol: "^User$", includePrivate: false }))
+    const explainedType = parse(await toolExecute(plugin, "type_explain", { expression: 'Pick<User, "id">' }))
+    const transformSearch = parse(await toolExecute(plugin, "type_transform_search", { from: "User", to: "UserDTO", limit: 1 }))
     const whyError = parse(await toolExecute(plugin, "type_why_error", {
       code: 2322,
       message: "Type UserInput is not assignable to type User",
@@ -71,7 +74,10 @@ describe("OpenCode plugin wrapper", () => {
     })
     expect(graph).toMatchObject({ root: "ExtendedUser", format: "dot", depth: 1 })
     expect(graph.graph).toContain("digraph")
+    expect(compatible).toMatchObject({ compatible: true })
     expect(file.declarations.map((declaration: any) => declaration.name)).toEqual(["User"])
+    expect(explainedType.final).toContain("id")
+    expect(transformSearch.results[0]).toMatchObject({ name: expect.stringContaining("toDTO") })
     expect(whyError).toMatchObject({
       explanation: expect.stringContaining("UserInput"),
       issues: [expect.objectContaining({ kind: "missing_property", property: "id" })],

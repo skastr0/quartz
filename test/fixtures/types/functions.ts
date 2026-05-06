@@ -87,6 +87,15 @@ export function withLogging<T extends (...args: unknown[]) => unknown>(
   };
 }
 
+export function localUserFactory(): User {
+  const localUser: User = {
+    id: "local",
+    name: "Local",
+    email: "local@example.com",
+  };
+  return localUser;
+}
+
 export function memoize<T extends (...args: unknown[]) => unknown>(fn: T): T {
   const cache = new Map<string, ReturnType<T>>();
   return ((...args: Parameters<T>): ReturnType<T> => {

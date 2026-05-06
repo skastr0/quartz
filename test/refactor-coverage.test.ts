@@ -3,6 +3,7 @@ import { Effect } from "effect"
 import { Project } from "ts-morph"
 import { describe, expect, it } from "vitest"
 import { createFixtureAnalyzer, fixturesPath } from "./helpers/analyzer"
+import { createTypeAnalyzer } from "@type-level-tools/core"
 import { enumerateCallables, TransformSearchEngine } from "../packages/core/src/transform-search"
 
 function createFixtureProject(): Project {
@@ -107,6 +108,7 @@ describe("refactor coverage", () => {
     const userName = await Effect.runPromise(analyzer.getTypeInfo("@file:types/basic.ts:User.name"))
     const defaultClass = await Effect.runPromise(analyzer.getTypeInfo("@file:basic.ts:DefaultExportedClass"))
     const aliasedUser = await Effect.runPromise(analyzer.getTypeInfo("@file:refactor.ts:RefactorableUser"))
+    const localUser = await Effect.runPromise(analyzer.getTypeInfo("localUserFactory.localUser"))
 
     expect(internalHelper).toMatchObject({ name: "internalHelper", kind: "variable" })
     expect(internalHelper?.type).toContain("number")
@@ -114,6 +116,8 @@ describe("refactor coverage", () => {
     expect(userName?.type).toBe("string")
     expect(defaultClass).toMatchObject({ name: "default", kind: "class" })
     expect(aliasedUser).toMatchObject({ name: "RefactorUser", kind: "interface" })
+    expect(localUser).toMatchObject({ name: "localUser", kind: "variable" })
+    expect(localUser?.type).toContain("User")
   })
 
   it("checks snippets with injected imports, duplicate aliases, and line offsets", async () => {
@@ -161,5 +165,22 @@ describe("refactor coverage", () => {
       exportedAs: "RefactorableUser",
     })
     expect(transforms?.declarations[0]?.signature).toContain("(from: User) => UserDTO")
+  })
+
+  it("preserves analyzer package-scoped diagnostics and refresh helpers", async () => {
+    const analyzer = createTypeAnalyzer(".")
+    const diagnostics = await Effect.runPromise(analyzer.getDiagnostics({ packageName: "fixtures", explain: true }))
+    const refresh = await Effect.runPromise(analyzer.refresh("fixtures"))
+
+    expect(diagnostics).toMatchObject({ totalErrors: 0, explained: 0, truncated: false })
+    expect(refresh).toContain('Refreshed TypeScript project for "fixtures"')
+  })
+
+  it("reports ambiguous exported symbols", async () => {
+    const analyzer = createFixtureAnalyzer()
+
+    await expect(Effect.runPromise(analyzer.getTypeInfo("DuplicateSnippetType"))).rejects.toThrow(
+      /Ambiguous symbol "DuplicateSnippetType"/,
+    )
   })
 })
