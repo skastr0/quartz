@@ -44,6 +44,40 @@ const primitiveTokenByKind = new Map<SyntaxKind, string>([
   [SyntaxKind.ThisType, "this"],
 ]);
 
+const typeNodeKinds = new Set<SyntaxKind>([
+  SyntaxKind.TypeReference,
+  SyntaxKind.TypeLiteral,
+  SyntaxKind.ArrayType,
+  SyntaxKind.TupleType,
+  SyntaxKind.UnionType,
+  SyntaxKind.IntersectionType,
+  SyntaxKind.FunctionType,
+  SyntaxKind.ParenthesizedType,
+  SyntaxKind.TypeQuery,
+  SyntaxKind.TypeOperator,
+  SyntaxKind.IndexedAccessType,
+  SyntaxKind.MappedType,
+  SyntaxKind.ConditionalType,
+  SyntaxKind.InferType,
+  SyntaxKind.RestType,
+  SyntaxKind.OptionalType,
+  SyntaxKind.LiteralType,
+  SyntaxKind.TemplateLiteralType,
+  SyntaxKind.StringKeyword,
+  SyntaxKind.NumberKeyword,
+  SyntaxKind.BooleanKeyword,
+  SyntaxKind.VoidKeyword,
+  SyntaxKind.NeverKeyword,
+  SyntaxKind.UnknownKeyword,
+  SyntaxKind.AnyKeyword,
+  SyntaxKind.UndefinedKeyword,
+  SyntaxKind.NullKeyword,
+  SyntaxKind.ObjectKeyword,
+  SyntaxKind.SymbolKeyword,
+  SyntaxKind.BigIntKeyword,
+  SyntaxKind.ThisType,
+]);
+
 const addUnique = (items: string[], value: string): void => {
   if (!items.includes(value)) {
     items.push(value);
@@ -260,40 +294,7 @@ export function extractTokensFromTypeParameters(
  * Check if a node is a type node.
  */
 function isTypeNode(node: Node): boolean {
-  const kind = node.getKind();
-  return (
-    kind === SyntaxKind.TypeReference ||
-    kind === SyntaxKind.TypeLiteral ||
-    kind === SyntaxKind.ArrayType ||
-    kind === SyntaxKind.TupleType ||
-    kind === SyntaxKind.UnionType ||
-    kind === SyntaxKind.IntersectionType ||
-    kind === SyntaxKind.FunctionType ||
-    kind === SyntaxKind.ParenthesizedType ||
-    kind === SyntaxKind.TypeQuery ||
-    kind === SyntaxKind.TypeOperator ||
-    kind === SyntaxKind.IndexedAccessType ||
-    kind === SyntaxKind.MappedType ||
-    kind === SyntaxKind.ConditionalType ||
-    kind === SyntaxKind.InferType ||
-    kind === SyntaxKind.RestType ||
-    kind === SyntaxKind.OptionalType ||
-    kind === SyntaxKind.LiteralType ||
-    kind === SyntaxKind.TemplateLiteralType ||
-    kind === SyntaxKind.StringKeyword ||
-    kind === SyntaxKind.NumberKeyword ||
-    kind === SyntaxKind.BooleanKeyword ||
-    kind === SyntaxKind.VoidKeyword ||
-    kind === SyntaxKind.NeverKeyword ||
-    kind === SyntaxKind.UnknownKeyword ||
-    kind === SyntaxKind.AnyKeyword ||
-    kind === SyntaxKind.UndefinedKeyword ||
-    kind === SyntaxKind.NullKeyword ||
-    kind === SyntaxKind.ObjectKeyword ||
-    kind === SyntaxKind.SymbolKeyword ||
-    kind === SyntaxKind.BigIntKeyword ||
-    kind === SyntaxKind.ThisType
-  );
+  return typeNodeKinds.has(node.getKind());
 }
 
 /**
