@@ -13,4 +13,4 @@ export type {
 } from "./analyzer"
 export { discoverPackages } from "./discovery"
 export type { PackageInfo } from "./discovery"
-export { TypeLevelToolsError } from "./errors"
+export { QuartzError } from "./errors"

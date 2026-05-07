@@ -1,8 +1,8 @@
 import type { Plugin } from "@opencode-ai/plugin"
 import { tool } from "@opencode-ai/plugin"
 import { Effect } from "effect"
-import { createTypeAnalyzer } from "@type-level-tools/core"
-import type { TypeAnalyzer } from "@type-level-tools/core"
+import { createTypeAnalyzer } from "@skastr0/quartz-core"
+import type { TypeAnalyzer } from "@skastr0/quartz-core"
 
 const run = <A>(effect: Effect.Effect<A, unknown>) =>
   Effect.runPromise(effect.pipe(Effect.mapError((error) => (error instanceof Error ? error : new Error(String(error))))))
@@ -326,7 +326,7 @@ const createToolDefinitions = (analyzer: TypeAnalyzer) => ({
   ...createRelationshipTools(analyzer),
 })
 
-export const TypeLevelToolsPlugin: Plugin = async (ctx) => {
+export const QuartzPlugin: Plugin = async (ctx) => {
   const analyzer = createTypeAnalyzer(ctx.directory)
   const client = ctx.client as { app?: { log?: (input: unknown) => Promise<unknown> } }
 
@@ -335,9 +335,9 @@ export const TypeLevelToolsPlugin: Plugin = async (ctx) => {
       if (event.type === "session.idle") {
         await client.app?.log?.({
           body: {
-            service: "type-level-tools",
+            service: "quartz",
             level: "debug",
-            message: "session idle observed by type-level-tools plugin",
+            message: "session idle observed by quartz plugin",
             extra: { sessionID: event.properties.sessionID },
           },
         })
@@ -353,6 +353,6 @@ export const TypeLevelToolsPlugin: Plugin = async (ctx) => {
 }
 
 export default {
-  id: "type-level-tools",
-  server: TypeLevelToolsPlugin,
+  id: "quartz",
+  server: QuartzPlugin,
 }

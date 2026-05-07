@@ -1,7 +1,7 @@
 import { resolve } from "node:path"
 import { Effect } from "effect"
 import type { PackageInfo } from "./discovery"
-import { TypeLevelToolsError } from "./errors"
+import { QuartzError } from "./errors"
 import {
   ProjectManager,
   type CompatibilityResult,
@@ -119,53 +119,53 @@ export interface RefactorPreviewOptions {
 }
 
 export interface TypeAnalyzer {
-  readonly getPackages: () => Effect.Effect<readonly PackageInfo[], TypeLevelToolsError>
-  readonly listSymbols: (options?: ListSymbolsOptions) => Effect.Effect<SymbolListResult, TypeLevelToolsError>
-  readonly getTypeInfo: (symbolName: string, packageName?: string) => Effect.Effect<TypeInfo | null, TypeLevelToolsError>
-  readonly expandType: (symbolName: string, packageName?: string) => Effect.Effect<ExpandedType | null, TypeLevelToolsError>
-  readonly findRelated: (symbolName: string, packageName?: string) => Effect.Effect<RelatedInfo | null, TypeLevelToolsError>
-  readonly searchTypes: (options: SearchTypesOptions) => Effect.Effect<readonly TypeInfo[], TypeLevelToolsError>
-  readonly evalType: (expression: string, packageName?: string) => Effect.Effect<unknown, TypeLevelToolsError>
-  readonly checkSnippet: (code: string, packageName?: string) => Effect.Effect<SnippetCheckResult, TypeLevelToolsError>
+  readonly getPackages: () => Effect.Effect<readonly PackageInfo[], QuartzError>
+  readonly listSymbols: (options?: ListSymbolsOptions) => Effect.Effect<SymbolListResult, QuartzError>
+  readonly getTypeInfo: (symbolName: string, packageName?: string) => Effect.Effect<TypeInfo | null, QuartzError>
+  readonly expandType: (symbolName: string, packageName?: string) => Effect.Effect<ExpandedType | null, QuartzError>
+  readonly findRelated: (symbolName: string, packageName?: string) => Effect.Effect<RelatedInfo | null, QuartzError>
+  readonly searchTypes: (options: SearchTypesOptions) => Effect.Effect<readonly TypeInfo[], QuartzError>
+  readonly evalType: (expression: string, packageName?: string) => Effect.Effect<unknown, QuartzError>
+  readonly checkSnippet: (code: string, packageName?: string) => Effect.Effect<SnippetCheckResult, QuartzError>
   readonly getFileDeclarations: (
     file: string,
     options?: { readonly symbol?: string; readonly includePrivate?: boolean; readonly packageName?: string },
-  ) => Effect.Effect<FileInspectionResult | null, TypeLevelToolsError>
+  ) => Effect.Effect<FileInspectionResult | null, QuartzError>
   readonly checkCompatibility: (
     from: string,
     to: string,
     packageName?: string,
-  ) => Effect.Effect<CompatibilityResult, TypeLevelToolsError>
+  ) => Effect.Effect<CompatibilityResult, QuartzError>
   readonly generateGraph: (
     symbol: string,
     options?: { readonly depth?: number; readonly format?: "mermaid" | "dot"; readonly packageName?: string },
-  ) => Effect.Effect<GraphResult | null, TypeLevelToolsError>
-  readonly previewRefactor: (options: RefactorPreviewOptions) => Effect.Effect<RefactorPreviewResult, TypeLevelToolsError>
+  ) => Effect.Effect<GraphResult | null, QuartzError>
+  readonly previewRefactor: (options: RefactorPreviewOptions) => Effect.Effect<RefactorPreviewResult, QuartzError>
   readonly getDiagnostics: (
     packageNameOrOptions?: string | DiagnosticOptions,
-  ) => Effect.Effect<readonly DiagnosticInfo[] | unknown, TypeLevelToolsError>
+  ) => Effect.Effect<readonly DiagnosticInfo[] | unknown, QuartzError>
   readonly getTypeAtPosition: (
     filePath: string,
     line: number,
     column: number,
     packageName?: string,
-  ) => Effect.Effect<TypeAtPositionResult | null, TypeLevelToolsError>
+  ) => Effect.Effect<TypeAtPositionResult | null, QuartzError>
   readonly explainError: (
     options: ErrorExplanationOptions,
-  ) => Effect.Effect<ErrorExplanationResult | null, TypeLevelToolsError>
-  readonly explainType: (expression: string, packageName?: string) => Effect.Effect<TypeExplanationResult, TypeLevelToolsError>
+  ) => Effect.Effect<ErrorExplanationResult | null, QuartzError>
+  readonly explainType: (expression: string, packageName?: string) => Effect.Effect<TypeExplanationResult, QuartzError>
   readonly transformSearch: (
     options: TransformSearchOptions & { readonly packageName?: string },
-  ) => Effect.Effect<string, TypeLevelToolsError>
-  readonly refresh: (packageName?: string) => Effect.Effect<string, TypeLevelToolsError>
+  ) => Effect.Effect<string, QuartzError>
+  readonly refresh: (packageName?: string) => Effect.Effect<string, QuartzError>
   readonly markDirty: () => void
 }
 
-const fromProjectPromise = <A>(try_: () => Promise<A>): Effect.Effect<A, TypeLevelToolsError> =>
+const fromProjectPromise = <A>(try_: () => Promise<A>): Effect.Effect<A, QuartzError> =>
   Effect.tryPromise({
     try: try_,
     catch: (cause) =>
-      new TypeLevelToolsError({
+      new QuartzError({
         message: cause instanceof Error ? cause.message : String(cause),
         cause,
       }),
@@ -208,7 +208,7 @@ export const createTypeAnalyzer = (rootDirectory: string): TypeAnalyzer => {
 const searchTypes = (
   projectManager: ProjectManager,
   options: SearchTypesOptions,
-): Effect.Effect<readonly TypeInfo[], TypeLevelToolsError> =>
+): Effect.Effect<readonly TypeInfo[], QuartzError> =>
   Effect.gen(function* () {
     const symbolOptions: Mutable<ListSymbolsOptions> = { limit: options.limit ?? 25 }
     if (options.query !== undefined) symbolOptions.pattern = options.query
@@ -226,7 +226,7 @@ const searchTypes = (
 const getDiagnostics = (
   projectManager: ProjectManager,
   packageNameOrOptions?: string | DiagnosticOptions,
-): Effect.Effect<readonly DiagnosticInfo[] | unknown, TypeLevelToolsError> =>
+): Effect.Effect<readonly DiagnosticInfo[] | unknown, QuartzError> =>
   fromProjectPromise(() =>
     typeof packageNameOrOptions === "object" && packageNameOrOptions?.explain === true
       ? getExplainedDiagnostics(projectManager, packageNameOrOptions)
@@ -261,7 +261,7 @@ const getExplainedDiagnostics = async (
 const transformSearch = (
   projectManager: ProjectManager,
   options: TransformSearchOptions & { readonly packageName?: string },
-): Effect.Effect<string, TypeLevelToolsError> =>
+): Effect.Effect<string, QuartzError> =>
   fromProjectPromise(async () => {
     const pkg = await projectManager.resolvePackagePublic(options.packageName)
     const project = projectManager.getProjectPublic(pkg)
@@ -274,7 +274,7 @@ const transformSearch = (
 const refreshAnalyzer = (
   projectManager: ProjectManager,
   packageName?: string,
-): Effect.Effect<string, TypeLevelToolsError> =>
+): Effect.Effect<string, QuartzError> =>
   fromProjectPromise(async () => {
     if (packageName !== undefined) {
       await projectManager.refreshPackage(packageName)

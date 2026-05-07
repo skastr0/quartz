@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { Effect } from "effect"
-import { createTypeAnalyzer } from "@type-level-tools/core"
+import { createTypeAnalyzer } from "@skastr0/quartz-core"
 import { createFixtureAnalyzer, fixturesPath } from "./helpers/analyzer"
 
 describe("type analyzer core", () => {

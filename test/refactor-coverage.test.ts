@@ -5,7 +5,7 @@ import { Effect } from "effect"
 import { Project } from "ts-morph"
 import { describe, expect, it } from "vitest"
 import { createFixtureAnalyzer, fixturesPath } from "./helpers/analyzer"
-import { createTypeAnalyzer } from "@type-level-tools/core"
+import { createTypeAnalyzer } from "@skastr0/quartz-core"
 import {
   buildCallableIndex,
   enumerateCallables,

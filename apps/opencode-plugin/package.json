@@ -1,5 +1,5 @@
 {
-  "name": "@type-level-tools/opencode-plugin",
+  "name": "@skastr0/quartz-opencode-plugin",
   "version": "0.1.0",
   "type": "module",
   "private": true,
@@ -11,7 +11,7 @@
     "build": "bun build ./src/server.ts --outdir ./dist --target bun --format esm --external @opencode-ai/plugin"
   },
   "dependencies": {
-    "@type-level-tools/core": "workspace:*"
+    "@skastr0/quartz-core": "workspace:*"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": ">=1.4.0"

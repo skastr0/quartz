@@ -1,5 +1,5 @@
 {
-  "name": "@type-level-tools/core",
+  "name": "@skastr0/quartz-core",
   "version": "0.1.0",
   "type": "module",
   "private": true,

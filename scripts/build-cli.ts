@@ -40,10 +40,10 @@ await mkdir(DIST_DIR, { recursive: true })
 console.log("\nBuilding workspace packages...")
 await run("Building CLI package", ["bun", "run", "cli:build"])
 
-console.log(`\nCompiling type-level-tools CLI v${version} binaries...`)
+console.log(`\nCompiling quartz CLI v${version} binaries...`)
 for (const { platform, arch } of binaryTargets) {
   const target = `${platform}-${arch}`
-  const outfile = join(DIST_DIR, `type-level-tools-${target}`)
+  const outfile = join(DIST_DIR, `quartz-${target}`)
   console.log(`Compiling ${target}...`)
   const buildResult = await Bun.build({
     target: "bun",

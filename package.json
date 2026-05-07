@@ -1,5 +1,5 @@
 {
-  "name": "type-level-tools",
+  "name": "@skastr0/quartz",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -12,8 +12,8 @@
     "dev": "bun run apps/cli/src/main.ts",
     "build:cli": "bun scripts/build-cli.ts",
     "install:local": "bun scripts/install.ts",
-    "cli:build": "bun run --filter @type-level-tools/cli build",
-    "cli:install-local": "bun run --filter @type-level-tools/cli install:local",
+    "cli:build": "bun run --filter @skastr0/quartz-cli build",
+    "cli:install-local": "bun run --filter @skastr0/quartz-cli install:local",
     "build": "bun run --filter './apps/*' build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

@@ -7,7 +7,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      "@type-level-tools/core": new URL("./packages/core/src/index.ts", import.meta.url).pathname,
+      "@skastr0/quartz-core": new URL("./packages/core/src/index.ts", import.meta.url).pathname,
     },
   },
 })

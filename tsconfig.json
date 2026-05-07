@@ -15,7 +15,7 @@
     "ignoreDeprecations": "6.0",
     "baseUrl": ".",
     "paths": {
-      "@type-level-tools/core": ["packages/core/src/index.ts"]
+      "@skastr0/quartz-core": ["packages/core/src/index.ts"]
     }
   },
   "include": ["apps/**/*.ts", "packages/**/*.ts", "scripts/**/*.ts", "test/**/*.ts", "vitest.config.ts"]

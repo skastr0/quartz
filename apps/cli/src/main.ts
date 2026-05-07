@@ -2,8 +2,8 @@
 import { mkdir, writeFile } from "node:fs/promises"
 import { isAbsolute, join, relative, resolve } from "node:path"
 import { Either, Effect, JSONSchema, ParseResult, Schema } from "effect"
-import { createTypeAnalyzer, TypeLevelToolsError } from "@type-level-tools/core"
-import type { ListSymbolsOptions, SearchTypesOptions, TypeAnalyzer } from "@type-level-tools/core"
+import { createTypeAnalyzer, QuartzError } from "@skastr0/quartz-core"
+import type { ListSymbolsOptions, SearchTypesOptions, TypeAnalyzer } from "@skastr0/quartz-core"
 
 const VERSION = "0.1.0"
 const DEFAULT_CONCURRENCY = 5
@@ -155,7 +155,7 @@ class NotFoundError extends Schema.TaggedError<NotFoundError>()("NotFoundError",
   details: Schema.optional(Schema.Unknown),
 }) {}
 
-type CliError = CommandInputError | CommandExecutionError | CommandTimeoutError | NotFoundError | TypeLevelToolsError
+type CliError = CommandInputError | CommandExecutionError | CommandTimeoutError | NotFoundError | QuartzError
 
 interface ProtocolError {
   readonly type: string
@@ -619,7 +619,7 @@ const commandSpecs = {
           packages,
           input_modes: ["inline-json", "@file", "stdin"],
           local_install: {
-            bin: "type-level-tools",
+            bin: "quartz",
             build: "bun run cli:build",
             install: "bun run cli:install-local",
           },
@@ -1078,7 +1078,7 @@ const writeArtifact = (
 ): Effect.Effect<ArtifactResult, CommandExecutionError> =>
   Effect.tryPromise({
     try: async () => {
-      const artifactDirectory = resolve(options.artifactDir ?? join(process.cwd(), ".type-level-tools", "artifacts"))
+      const artifactDirectory = resolve(options.artifactDir ?? join(process.cwd(), ".quartz", "artifacts"))
       await mkdir(artifactDirectory, { recursive: true })
 
       const createdAt = new Date().toISOString()
@@ -1110,7 +1110,7 @@ const writeArtifact = (
   })
 
 const capabilities = () => ({
-  name: "type-level-tools",
+  name: "quartz",
   version: VERSION,
   protocol: "agentic-cli/v1",
   input_modes: ["inline JSON", "@file", "stdin (-)"],
@@ -1175,9 +1175,9 @@ const showSchema = (name: string | undefined): Effect.Effect<unknown, CommandInp
     json_schema: toJsonSchema(spec.schema),
     example: spec.example,
     input_modes: {
-      inline: `type-level-tools ${name} '${JSON.stringify(spec.example)}'`,
-      file: `type-level-tools ${name} @payload.json`,
-      stdin: `cat payload.json | type-level-tools ${name} -`,
+      inline: `quartz ${name} '${JSON.stringify(spec.example)}'`,
+      file: `quartz ${name} @payload.json`,
+      stdin: `cat payload.json | quartz ${name} -`,
     },
   })
 }
@@ -1205,9 +1205,9 @@ const showExample = (name: string | undefined): Effect.Effect<unknown, CommandIn
     command: spec.name,
     payload: spec.example,
     invocations: {
-      inline: `type-level-tools ${name} '${JSON.stringify(spec.example)}'`,
-      file: `type-level-tools ${name} @payload.json`,
-      stdin: `cat payload.json | type-level-tools ${name} -`,
+      inline: `quartz ${name} '${JSON.stringify(spec.example)}'`,
+      file: `quartz ${name} @payload.json`,
+      stdin: `cat payload.json | quartz ${name} -`,
     },
   })
 }

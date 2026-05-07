@@ -1,4 +1,4 @@
-# type-level-tools
+# quartz
 
 Generic TypeScript type-analysis core, an agent-native CLI, and a thin OpenCode plugin app.
 
@@ -21,9 +21,9 @@ The CLI accepts domain input as JSON payloads. Flags are reserved for execution 
 Payloads can be passed inline, from a file, or from stdin:
 
 ```bash
-type-level-tools info @payloads/info.json
-type-level-tools info '{"root":"test/fixtures","symbol":"User"}'
-cat payloads/info.json | type-level-tools info -
+quartz info @payloads/info.json
+quartz info '{"root":"test/fixtures","symbol":"User"}'
+cat payloads/info.json | quartz info -
 ```
 
 Every command returns an envelope. Success is written to stdout:
@@ -43,12 +43,12 @@ Expected failures are written to stderr and exit with code `1`:
 Agents should discover the contract instead of scraping help text:
 
 ```bash
-type-level-tools capabilities
-type-level-tools schema list
-type-level-tools schema show graph
-type-level-tools examples list
-type-level-tools examples show info
-type-level-tools doctor '{"root":"test/fixtures"}'
+quartz capabilities
+quartz schema list
+quartz schema show graph
+quartz examples list
+quartz examples show info
+quartz doctor '{"root":"test/fixtures"}'
 ```
 
 ## Example Payloads
@@ -89,7 +89,7 @@ type-level-tools doctor '{"root":"test/fixtures"}'
 Batch-capable commands accept an array of payload objects and preserve input order:
 
 ```bash
-type-level-tools info @payloads/info-batch.json --concurrency 5
+quartz info @payloads/info-batch.json --concurrency 5
 ```
 
 `payloads/info-batch.json`:
@@ -108,8 +108,8 @@ Batch responses use `outcome: "succeeded" | "partial_failure" | "failed"` with p
 Large outputs can be redirected to artifacts:
 
 ```bash
-type-level-tools graph @payloads/graph.json --output artifact --artifact-dir .type-level-tools/artifacts
-type-level-tools diagnostics '{"root":"test/fixtures","explain":true}' --output auto
+quartz graph @payloads/graph.json --output artifact --artifact-dir .quartz/artifacts
+quartz diagnostics '{"root":"test/fixtures","explain":true}' --output auto
 ```
 
 Artifact responses include a compact summary plus an absolute path:
@@ -120,7 +120,7 @@ Artifact responses include a compact summary plus an absolute path:
   "summary": "graph output written to artifact (428 bytes).",
   "artifact": {
     "kind": "json",
-    "absolute_path": "/abs/path/.type-level-tools/artifacts/result.json"
+    "absolute_path": "/abs/path/.quartz/artifacts/result.json"
   }
 }
 ```
@@ -157,7 +157,7 @@ Use `schema show <command>` for exact payload fields.
 ```bash
 bun run cli:build
 bun run cli:install-local
-type-level-tools capabilities
+quartz capabilities
 ```
 
 Package checks:

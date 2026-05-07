@@ -3,7 +3,7 @@ import { readdir } from "node:fs/promises"
 import { dirname, join, relative } from "node:path"
 import { promisify } from "node:util"
 import { Effect } from "effect"
-import { TypeLevelToolsError } from "./errors"
+import { QuartzError } from "./errors"
 
 const execFileAsync = promisify(execFile)
 
@@ -26,7 +26,7 @@ const ignoredDirectories = new Set([
   ".cache",
 ])
 
-export const discoverPackages = (rootDirectory: string): Effect.Effect<readonly PackageInfo[], TypeLevelToolsError> =>
+export const discoverPackages = (rootDirectory: string): Effect.Effect<readonly PackageInfo[], QuartzError> =>
   Effect.gen(function* () {
     const tsconfigPaths = yield* findTsconfigs(rootDirectory)
     return tsconfigPaths
@@ -46,7 +46,7 @@ export const discoverPackages = (rootDirectory: string): Effect.Effect<readonly 
       })
   })
 
-const findTsconfigs = (rootDirectory: string): Effect.Effect<readonly string[], TypeLevelToolsError> =>
+const findTsconfigs = (rootDirectory: string): Effect.Effect<readonly string[], QuartzError> =>
   Effect.gen(function* () {
     const trackedFiles = yield* getGitTrackedFiles(rootDirectory)
     if (trackedFiles.length > 0) {
@@ -58,7 +58,7 @@ const findTsconfigs = (rootDirectory: string): Effect.Effect<readonly string[], 
     return yield* walkForTsconfigs(rootDirectory)
   })
 
-const getGitTrackedFiles = (rootDirectory: string): Effect.Effect<readonly string[], TypeLevelToolsError> =>
+const getGitTrackedFiles = (rootDirectory: string): Effect.Effect<readonly string[], QuartzError> =>
   Effect.tryPromise({
     try: async () => {
       const { stdout } = await execFileAsync("git", ["ls-files", "--cached", "--others", "--exclude-standard"], {
@@ -69,10 +69,10 @@ const getGitTrackedFiles = (rootDirectory: string): Effect.Effect<readonly strin
         .split("\n")
         .filter((file) => file.length > 0)
     },
-    catch: () => new TypeLevelToolsError({ message: "git file discovery failed" }),
+    catch: () => new QuartzError({ message: "git file discovery failed" }),
   }).pipe(Effect.catchAll(() => Effect.succeed([])))
 
-const walkForTsconfigs = (directory: string): Effect.Effect<readonly string[], TypeLevelToolsError> =>
+const walkForTsconfigs = (directory: string): Effect.Effect<readonly string[], QuartzError> =>
   Effect.tryPromise({
     try: async () => {
       const results: string[] = []
@@ -91,6 +91,6 @@ const walkForTsconfigs = (directory: string): Effect.Effect<readonly string[], T
 
       return results
     },
-    catch: (cause) => new TypeLevelToolsError({ message: `Could not scan ${directory}`, cause }),
+    catch: (cause) => new QuartzError({ message: `Could not scan ${directory}`, cause }),
   }).pipe(Effect.catchAll(() => Effect.succeed([])))
 

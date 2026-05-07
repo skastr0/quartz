@@ -1,16 +1,16 @@
 {
-  "name": "@type-level-tools/cli",
+  "name": "@skastr0/quartz-cli",
   "version": "0.1.0",
   "type": "module",
   "private": true,
   "bin": {
-    "type-level-tools": "./dist/main.js"
+    "quartz": "./dist/main.js"
   },
   "scripts": {
     "build": "bun build ./src/main.ts --outdir ./dist --target bun --format esm",
     "install:local": "bun run build && bun link"
   },
   "dependencies": {
-    "@type-level-tools/core": "workspace:*"
+    "@skastr0/quartz-core": "workspace:*"
   }
 }

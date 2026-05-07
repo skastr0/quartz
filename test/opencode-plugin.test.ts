@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it, vi } from "vitest"
-import pluginModule, { TypeLevelToolsPlugin } from "../apps/opencode-plugin/src/server"
+import pluginModule, { QuartzPlugin } from "../apps/opencode-plugin/src/server"
 
 const toolExecute = async (plugin: any, name: string, args: Record<string, unknown> = {}) =>
   plugin.tool[name].execute(args)
@@ -11,13 +11,13 @@ const parse = (value: string) => JSON.parse(value) as any
 
 describe("OpenCode plugin wrapper", () => {
   it("exports a server plugin module", () => {
-    expect(pluginModule.id).toBe("type-level-tools")
-    expect(pluginModule.server).toBe(TypeLevelToolsPlugin)
+    expect(pluginModule.id).toBe("quartz")
+    expect(pluginModule.server).toBe(QuartzPlugin)
   })
 
   it("keeps OpenCode-specific behavior in the wrapper", async () => {
     const log = vi.fn()
-    const plugin: any = await TypeLevelToolsPlugin({
+    const plugin: any = await QuartzPlugin({
       directory: new URL("./fixtures", import.meta.url).pathname,
       client: { app: { log } },
     } as never)
@@ -48,7 +48,7 @@ describe("OpenCode plugin wrapper", () => {
   })
 
   it("executes representative tools with preserved argument propagation", async () => {
-    const plugin: any = await TypeLevelToolsPlugin({
+    const plugin: any = await QuartzPlugin({
       directory: new URL("./fixtures", import.meta.url).pathname,
       client: {},
     } as never)
@@ -104,7 +104,7 @@ describe("OpenCode plugin wrapper", () => {
     writeFileSync(sourcePath, "export interface TempUser { name: string }\n", "utf8")
 
     const log = vi.fn()
-    const plugin: any = await TypeLevelToolsPlugin({
+    const plugin: any = await QuartzPlugin({
       directory: root,
       client: { app: { log } },
     } as never)
@@ -122,7 +122,7 @@ describe("OpenCode plugin wrapper", () => {
     expect(refresh).toContain("Refreshed all TypeScript projects")
     expect(log).toHaveBeenCalledWith({
       body: expect.objectContaining({
-        service: "type-level-tools",
+        service: "quartz",
         level: "debug",
         extra: { sessionID: "session-1" },
       }),
