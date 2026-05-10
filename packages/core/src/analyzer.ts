@@ -69,8 +69,6 @@ export interface ExpandedType {
   readonly properties: readonly TypePropertyInfo[]
 }
 
-type Mutable<T> = { -readonly [K in keyof T]: T[K] }
-
 export interface TypeAtPositionResult {
   readonly type: string
   readonly expanded: string
@@ -174,38 +172,33 @@ const fromProjectPromise = <A>(try_: () => Promise<A>): Effect.Effect<A, QuartzE
       }),
   })
 
-export const createTypeAnalyzer = (rootDirectory: string): TypeAnalyzer =>
-  createTypeAnalyzerWithWorkspace(rootDirectory)
+type ServiceOwnedAnalyzerKey =
+  | "getPackages"
+  | "getTypeInfo"
+  | "expandType"
+  | "searchTypes"
+  | "evalType"
+  | "checkSnippet"
+  | "getFileDeclarations"
+  | "getTypeAtPosition"
 
-export const createTypeAnalyzerWithWorkspace = (
+export type LegacyProjectAnalyzer = Omit<TypeAnalyzer, ServiceOwnedAnalyzerKey>
+
+export const createLegacyTypeAnalyzerWithWorkspace = (
   rootDirectory: string,
   workspace?: ProjectWorkspaceState,
-): TypeAnalyzer => {
+): LegacyProjectAnalyzer => {
   const absoluteRootDirectory = resolve(rootDirectory)
   const projectManager = new ProjectManager(absoluteRootDirectory, workspace)
 
   return {
-    getPackages: () => fromProjectPromise(() => projectManager.getPackages()),
     listSymbols: (options = {}) => fromProjectPromise(() => projectManager.listSymbols({ limit: 100, ...options })),
-    getTypeInfo: (symbolName, packageName) => fromProjectPromise(() => projectManager.getTypeInfo(symbolName, packageName)),
-    expandType: (symbolName, packageName) =>
-      fromProjectPromise(async () => {
-        const expanded = await projectManager.expandType(symbolName, packageName)
-        return expanded === null ? null : { ...expanded, properties: expanded.properties ?? [] }
-      }),
     findRelated: (symbolName, packageName) => fromProjectPromise(() => projectManager.findRelated(symbolName, packageName)),
-    searchTypes: (options) => searchTypes(projectManager, options),
-    evalType: (expression, packageName) => fromProjectPromise(() => projectManager.evalType(expression, packageName)),
-    checkSnippet: (code, packageName) => fromProjectPromise(() => projectManager.checkSnippet(code, packageName)),
-    getFileDeclarations: (file, options = {}) =>
-      fromProjectPromise(() => projectManager.getFileDeclarations(file, options)),
     checkCompatibility: (from, to, packageName) =>
       fromProjectPromise(() => projectManager.checkCompatibility(from, to, packageName)),
     generateGraph: (symbol, options = {}) => fromProjectPromise(() => projectManager.generateGraph(symbol, options)),
     previewRefactor: (options) => fromProjectPromise(() => projectManager.previewRefactor(options)),
     getDiagnostics: (packageNameOrOptions) => getDiagnostics(projectManager, packageNameOrOptions),
-    getTypeAtPosition: (filePath, line, column, packageName) =>
-      fromProjectPromise(() => projectManager.getTypeAtPosition(filePath, line, column, packageName)),
     explainError: (options) => fromProjectPromise(() => projectManager.explainError(options)),
     explainType: (expression, packageName) => fromProjectPromise(() => projectManager.explainType(expression, packageName)),
     transformSearch: (options) => transformSearch(projectManager, options),
@@ -213,29 +206,6 @@ export const createTypeAnalyzerWithWorkspace = (
     markDirty: () => projectManager.markDirty(),
   }
 }
-
-const searchTypes = (
-  projectManager: ProjectManager,
-  options: SearchTypesOptions,
-): Effect.Effect<readonly TypeInfo[], QuartzError> =>
-  Effect.gen(function* () {
-    const symbolOptions: Mutable<SearchTypesOptions> = { limit: options.limit ?? 25 }
-    const pattern = options.pattern ?? options.query
-    if (pattern !== undefined) symbolOptions.pattern = pattern
-    if (options.hasProperty !== undefined) symbolOptions.hasProperty = options.hasProperty
-    if (options.extends !== undefined) symbolOptions.extends = options.extends
-    if (options.packageName !== undefined) symbolOptions.packageName = options.packageName
-    const symbols = yield* fromProjectPromise(() =>
-      projectManager.searchTypes(symbolOptions, options.packageName),
-    )
-    const results = yield* Effect.forEach(
-      symbols.symbols,
-      (symbol) => fromProjectPromise(() => projectManager.getTypeInfo(symbol.name, symbol.package)),
-      { concurrency: 4 },
-    )
-
-    return results.filter((item): item is NonNullable<typeof item> => item !== null)
-  })
 
 const getDiagnostics = (
   projectManager: ProjectManager,

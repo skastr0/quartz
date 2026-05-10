@@ -4,14 +4,11 @@ import {
   type Symbol,
   SyntaxKind,
   Node,
-  TypeFormatFlags,
 } from "ts-morph";
 import { isAbsolute, join, relative } from "path";
 
 import { getDeclarationName } from "./declarations";
 import type { PackageInfo } from "./discovery";
-import { getDisplayPropertySymbols } from "./display-properties";
-import { inspectSourceFile } from "./file-inspection";
 import { collectLoadedPackageDiagnostics, collectPackageDiagnostics } from "./project-diagnostics";
 import {
   createProjectWorkspaceState,
@@ -32,21 +29,15 @@ import type {
   CompatibilityResult,
   ErrorExplanationIssue,
   ErrorExplanationResult,
-  ExpandedType,
-  FileInspectionResult,
   GraphResult,
   ListSymbolsOptions,
   RefactorPreviewResult,
   RelatedInfo,
-  SnippetCheckResult,
   SymbolInfo,
   SymbolListResult,
-  TypeAtPositionResult,
   TypeExplanationResult,
-  TypeInfo,
 } from "./project-types";
-import { SnippetEvaluator } from "./snippet-evaluation";
-import { SymbolLookup } from "./symbol-lookup";
+import { findSymbolInWorkspace } from "./symbol-lookup";
 import { generateTypeGraph } from "./type-graph";
 import { TypeExplainer } from "./type-explanations";
 import { TypeRelationExplorer } from "./type-relations";
@@ -78,15 +69,11 @@ export type {
 
 export class ProjectManager {
   private readonly workspace: ProjectWorkspaceState;
-  private readonly symbolLookup: SymbolLookup;
-  private readonly snippetEvaluator: SnippetEvaluator;
   private readonly typeRelations: TypeRelationExplorer;
   private readonly typeExplainer: TypeExplainer;
 
   constructor(directory: string, workspace: ProjectWorkspaceState = createProjectWorkspaceState(directory)) {
     this.workspace = workspace;
-    this.symbolLookup = new SymbolLookup(this.workspace);
-    this.snippetEvaluator = new SnippetEvaluator();
     this.typeRelations = new TypeRelationExplorer({
       relativePath: this.relativePath.bind(this),
     });
@@ -94,7 +81,7 @@ export class ProjectManager {
       getPackageDiagnostics: this.getPackageDiagnostics.bind(this),
       checkCompatibility: this.checkCompatibility.bind(this),
       findSymbol: this.findSymbol.bind(this),
-      evalType: this.evalType.bind(this),
+      evalType: async () => ({ error: "Type expression evaluation is owned by TypeAnalyzerService" }),
     });
   }
 
@@ -234,135 +221,7 @@ export class ProjectManager {
     project: Project,
     pkg: PackageInfo,
   ): { node: Node; symbol: Symbol } | null {
-    return this.symbolLookup.findSymbol(symbolName, project, pkg);
-  }
-
-  async getTypeInfo(symbolName: string, packageName?: string): Promise<TypeInfo | null> {
-    const pkg = await this.resolvePackage(packageName);
-    const project = this.getProject(pkg);
-    const found = this.findSymbol(symbolName, project, pkg);
-
-    if (!found) {
-      return null;
-    }
-
-    const { node, symbol } = found;
-    const type = node.getType();
-    const sourceFile = node.getSourceFile();
-
-    const info: TypeInfo = {
-      name: symbol.getName(),
-      kind: this.kindToString(node.getKind()),
-      type: type.getText(node),
-      location: {
-        file: this.relativePath(sourceFile.getFilePath()),
-        line: node.getStartLineNumber(),
-      },
-      package: pkg.name,
-    };
-
-    if (node.getKind() === SyntaxKind.ClassDeclaration) {
-      info.signature = `class ${symbol.getName()}`;
-    } else if (node.getKind() === SyntaxKind.InterfaceDeclaration) {
-      info.signature = `interface ${symbol.getName()}`;
-    } else if (node.getKind() === SyntaxKind.TypeAliasDeclaration) {
-      info.signature = `type ${symbol.getName()}`;
-    } else if (node.getKind() === SyntaxKind.FunctionDeclaration) {
-      const callSignatures = type.getCallSignatures();
-      if (callSignatures.length > 0) {
-        info.signature = callSignatures.map((sig) => sig.getDeclaration().getText()).join("\n");
-      }
-    }
-
-    const properties = getDisplayPropertySymbols(type, this.rootDirectory);
-    if (properties.length > 0) {
-      info.properties = properties.map((prop) => {
-        const propDecl = prop.getDeclarations()[0];
-        const propType = propDecl ? propDecl.getType() : prop.getTypeAtLocation(node);
-        return {
-          name: prop.getName(),
-          type: propType.getText(propDecl ?? node),
-          optional: prop.isOptional(),
-        };
-      });
-    }
-
-    if (node.getKind() === SyntaxKind.ClassDeclaration) {
-      const constructSignatures = type.getConstructSignatures();
-      if (constructSignatures.length > 0) {
-        info.constructors = constructSignatures.map((sig) => {
-          const params = sig
-            .getParameters()
-            .map((p) => {
-              const paramType = p.getTypeAtLocation(node);
-              return `${p.getName()}: ${paramType.getText(node)}`;
-            })
-            .join(", ");
-          const returnType = sig.getReturnType().getText(node);
-          return `new (${params}) => ${returnType}`;
-        });
-      }
-    }
-
-    return info;
-  }
-
-  async expandType(symbolName: string, packageName?: string): Promise<ExpandedType | null> {
-    const pkg = await this.resolvePackage(packageName);
-    const project = this.getProject(pkg);
-    const found = this.findSymbol(symbolName, project, pkg);
-
-    if (!found) {
-      return null;
-    }
-
-    const { node } = found;
-    const type = node.getType();
-    const checker = project.getTypeChecker();
-
-    const original = type.getText(node);
-    const expandFlags =
-      TypeFormatFlags.NoTruncation |
-      TypeFormatFlags.WriteArrayAsGenericType |
-      TypeFormatFlags.UseStructuralFallback |
-      TypeFormatFlags.WriteTypeArgumentsOfSignature |
-      TypeFormatFlags.InTypeAlias |
-      TypeFormatFlags.UseAliasDefinedOutsideCurrentScope;
-
-    const expanded = checker.compilerObject.typeToString(
-      type.compilerType,
-      node.compilerNode,
-      expandFlags as unknown as number,
-    );
-
-    const result: ExpandedType = {
-      original,
-      expanded,
-    };
-
-    const properties = getDisplayPropertySymbols(type, this.rootDirectory);
-    if (properties.length > 0) {
-      result.properties = properties.map((prop) => {
-        const propDecl = prop.getDeclarations()[0];
-        const propType = propDecl ? propDecl.getType() : prop.getTypeAtLocation(node);
-
-        let from: string | undefined;
-        if (propDecl) {
-          const propSourceFile = propDecl.getSourceFile();
-          if (!propSourceFile.isInNodeModules()) {
-            from = this.relativePath(propSourceFile.getFilePath());
-          }
-        }
-
-        return {
-          name: prop.getName(),
-          type: propType.getText(propDecl ?? node),
-          ...(from === undefined ? {} : { from }),
-        };
-      });
-    }
-
-    return result;
+    return findSymbolInWorkspace(this.workspace, symbolName, project, pkg);
   }
 
   async findRelated(symbolName: string, packageName?: string): Promise<RelatedInfo | null> {
@@ -423,69 +282,6 @@ export class ProjectManager {
       truncated: results.length >= limit,
       package: pkg.name,
     };
-  }
-
-  async evalType(
-    expression: string,
-    packageName?: string,
-  ): Promise<{ result: string; expanded: string } | { error: string }> {
-    const pkg = await this.resolvePackage(packageName);
-    const project = this.getProject(pkg);
-    const sourceFiles = this.getSourceFiles(project, pkg);
-    return this.snippetEvaluator.evalType(expression, project, pkg, sourceFiles);
-  }
-
-  /**
-   * Type-check a code snippet without writing to disk.
-   * Creates a temporary in-memory source file, collects diagnostics, and cleans up.
-   * Useful for validating code before committing to edits.
-   */
-  async checkSnippet(code: string, packageName?: string): Promise<SnippetCheckResult> {
-    const pkg = await this.resolvePackage(packageName);
-    const project = this.getProject(pkg);
-    const sourceFiles = this.getSourceFiles(project, pkg);
-    return this.snippetEvaluator.checkSnippet(code, project, pkg, sourceFiles);
-  }
-
-  async getFileDeclarations(
-    filePath: string,
-    options: { symbol?: string; includePrivate?: boolean; packageName?: string } = {},
-  ): Promise<FileInspectionResult | null> {
-    const pkg = await this.resolvePackage(options.packageName);
-    const project = this.getProject(pkg);
-
-    // Normalize the file path - support both relative and absolute
-    const targetPath = isAbsolute(filePath) ? filePath : join(this.rootDirectory, filePath);
-
-    // Find the source file
-    const sourceFile = project.getSourceFile(targetPath);
-    if (!sourceFile) {
-      // Try finding by partial match
-      const allFiles = this.getSourceFiles(project, pkg);
-      const matchingFile = allFiles.find((sf) => {
-        const sfPath = sf.getFilePath();
-        return sfPath.endsWith(filePath) || sfPath.includes(filePath);
-      });
-
-      if (!matchingFile) {
-        return null;
-      }
-
-      return this.inspectSourceFile(matchingFile, pkg, options);
-    }
-
-    return this.inspectSourceFile(sourceFile, pkg, options);
-  }
-
-  private inspectSourceFile(
-    sourceFile: SourceFile,
-    pkg: PackageInfo,
-    options: { symbol?: string; includePrivate?: boolean },
-  ): FileInspectionResult {
-    return inspectSourceFile(sourceFile, pkg, options, {
-      kindToString: this.kindToString.bind(this),
-      relativePath: this.relativePath.bind(this),
-    });
   }
 
   async checkCompatibility(
@@ -638,103 +434,6 @@ export class ProjectManager {
     return previewRenameRefactor(options, project, pkg, found, {
       relativePath: this.relativePath.bind(this),
     });
-  }
-
-  /**
-   * Get the type of an expression at a specific file position.
-   * Useful for understanding inferred types without needing a named symbol.
-   */
-  async getTypeAtPosition(
-    filePath: string,
-    line: number,
-    column: number,
-    packageName?: string,
-  ): Promise<TypeAtPositionResult | null> {
-    const pkg = await this.resolvePackage(packageName);
-    const project = this.getProject(pkg);
-    const checker = project.getTypeChecker();
-
-    // Normalize the file path
-    const targetPath = isAbsolute(filePath) ? filePath : join(this.rootDirectory, filePath);
-
-    // Find the source file
-    let sourceFile = project.getSourceFile(targetPath);
-    if (!sourceFile) {
-      // Try finding by partial match
-      const allFiles = this.getSourceFiles(project, pkg);
-      const matchingFile = allFiles.find((sf) => {
-        const sfPath = sf.getFilePath();
-        return sfPath.endsWith(filePath) || sfPath.includes(filePath);
-      });
-
-      if (!matchingFile) {
-        return null;
-      }
-      sourceFile = matchingFile;
-    }
-
-    // Convert line/column to position (0-based internally)
-    const pos = sourceFile.compilerNode.getPositionOfLineAndCharacter(line - 1, column - 1);
-
-    // Find the node at this position
-    const node = this.getDescendantAtPos(sourceFile, pos);
-    if (!node) {
-      return null;
-    }
-
-    // Get the type at this location
-    const type = node.getType();
-    const nodeText = node.getText();
-
-    // Get both simple and expanded type representations
-    const simpleType = type.getText(node);
-
-    const expandFlags =
-      TypeFormatFlags.NoTruncation |
-      TypeFormatFlags.WriteArrayAsGenericType |
-      TypeFormatFlags.UseStructuralFallback |
-      TypeFormatFlags.WriteTypeArgumentsOfSignature |
-      TypeFormatFlags.InTypeAlias;
-
-    const expanded = checker.compilerObject.typeToString(
-      type.compilerType,
-      node.compilerNode,
-      expandFlags as unknown as number,
-    );
-
-    return {
-      type: simpleType,
-      expanded,
-      nodeKind: this.kindToString(node.getKind()),
-      nodeText: nodeText.length > 100 ? nodeText.slice(0, 100) + "..." : nodeText,
-      location: {
-        file: this.relativePath(sourceFile.getFilePath()),
-        line: node.getStartLineNumber(),
-        column: node.getStartLineNumber() === line ? column : 1,
-      },
-    };
-  }
-
-  /**
-   * Find the most specific node at a given position.
-   * Walks down the AST to find the innermost node containing the position.
-   */
-  private getDescendantAtPos(sourceFile: SourceFile, pos: number): Node | null {
-    let result: Node | null = null;
-
-    const visit = (node: Node): void => {
-      const start = node.getStart();
-      const end = node.getEnd();
-
-      if (pos >= start && pos <= end) {
-        result = node;
-        // Continue to children to find more specific node
-        node.forEachChild(visit);
-      }
-    };
-
-    sourceFile.forEachChild(visit);
-    return result;
   }
 
   // === Public API for Transform Search ===

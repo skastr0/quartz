@@ -29,17 +29,7 @@ export class SymbolLookup {
   constructor(private readonly workspace: ProjectWorkspaceState) {}
 
   findSymbol(symbolName: string, project: Project, pkg: PackageInfo): { node: Node; symbol: Symbol } | null {
-    const fileRef = parseFileReference(symbolName)
-    if (fileRef !== null) {
-      if (fileRef.symbol === "*") return null
-      return this.findSymbolInFile(fileRef.filePath, fileRef.symbol, project, pkg)
-    }
-
-    const parts = symbolName.split(".")
-    const rootName = parts[0]!
-    const matches = this.findExportedSymbolMatches(rootName, project, pkg)
-    const match = this.resolveSingleSymbolMatch(rootName, matches)
-    return match === null ? null : this.navigateExportedSymbolMembers(match.node, match.symbol, parts)
+    return findSymbolInWorkspace(this.workspace, symbolName, project, pkg)
   }
 
   findSymbolInFile(
@@ -48,103 +38,141 @@ export class SymbolLookup {
     project: Project,
     pkg: PackageInfo,
   ): { node: Node; symbol: Symbol } | null {
-    const sourceFile = this.resolveSourceFileForLookup(filePath, project, pkg)
-    if (sourceFile === null) return null
-    const parts = symbolName.split(".")
-    const rootName = parts[0]!
-    const root = this.findRootSymbolInSourceFile(sourceFile, rootName)
-    return root === null ? null : this.navigateSymbolMembers(root.node, root.symbol, parts)
+    return findSymbolInFile(this.workspace, filePath, symbolName, project, pkg)
+  }
+}
+
+export const findSymbolInWorkspace = (
+  workspace: ProjectWorkspaceState,
+  symbolName: string,
+  project: Project,
+  pkg: PackageInfo,
+): { node: Node; symbol: Symbol } | null => {
+  const fileRef = parseFileReference(symbolName)
+  if (fileRef !== null) {
+    if (fileRef.symbol === "*") return null
+    return findSymbolInFile(workspace, fileRef.filePath, fileRef.symbol, project, pkg)
   }
 
-  private resolveSourceFileForLookup(filePath: string, project: Project, pkg: PackageInfo): SourceFile | null {
-    const targetPath = isAbsolute(filePath) ? filePath : join(this.workspace.rootDirectory, filePath)
-    const sourceFile = project.getSourceFile(targetPath)
-    if (sourceFile !== undefined) return sourceFile
+  const parts = symbolName.split(".")
+  const rootName = parts[0]!
+  const matches = findExportedSymbolMatches(workspace, rootName, project, pkg)
+  const match = resolveSingleSymbolMatch(rootName, matches)
+  return match === null ? null : navigateExportedSymbolMembers(match.node, match.symbol, parts)
+}
 
-    return getWorkspaceSourceFiles(project, pkg).find((candidate) => {
+export const findSymbolInFile = (
+  workspace: ProjectWorkspaceState,
+  filePath: string,
+  symbolName: string,
+  project: Project,
+  pkg: PackageInfo,
+): { node: Node; symbol: Symbol } | null => {
+  const sourceFile = resolveSourceFileForLookup(workspace, filePath, project, pkg)
+  if (sourceFile === null) return null
+  const parts = symbolName.split(".")
+  const rootName = parts[0]!
+  const root = findRootSymbolInSourceFile(sourceFile, rootName)
+  return root === null ? null : navigateSymbolMembers(root.node, root.symbol, parts)
+}
+
+const resolveSourceFileForLookup = (
+  workspace: ProjectWorkspaceState,
+  filePath: string,
+  project: Project,
+  pkg: PackageInfo,
+): SourceFile | null => {
+  const targetPath = isAbsolute(filePath) ? filePath : join(workspace.rootDirectory, filePath)
+  const sourceFile = project.getSourceFile(targetPath)
+  if (sourceFile !== undefined) return sourceFile
+
+  return (
+    getWorkspaceSourceFiles(project, pkg).find((candidate) => {
       const candidatePath = candidate.getFilePath()
       return candidatePath.endsWith(filePath) || candidatePath.includes(filePath)
     }) ?? null
+  )
+}
+
+const findRootSymbolInSourceFile = (sourceFile: SourceFile, rootName: string): { node: Node; symbol: Symbol } | null =>
+  findNamedNodeSymbol(sourceFile.getClasses(), rootName) ??
+  findNamedNodeSymbol(sourceFile.getInterfaces(), rootName) ??
+  findNamedNodeSymbol(sourceFile.getTypeAliases(), rootName) ??
+  findNamedNodeSymbol(sourceFile.getFunctions(), rootName) ??
+  findNamedNodeSymbol(sourceFile.getEnums(), rootName) ??
+  findVariableDeclarationSymbol(sourceFile, rootName) ??
+  findExportedRootSymbol(sourceFile, rootName)
+
+const navigateSymbolMembers = (
+  startNode: Node,
+  startSymbol: Symbol,
+  parts: readonly string[],
+): { node: Node; symbol: Symbol } | null => {
+  let node = startNode
+  let symbol: Symbol | undefined = startSymbol
+
+  for (let index = 1; index < parts.length && symbol !== undefined; index++) {
+    const memberName = parts[index]!
+    const property = node.getType().getProperty(memberName)
+    const propDecl = property?.getDeclarations()[0]
+    if (property === undefined || propDecl === undefined) return null
+    node = propDecl
+    symbol = property
   }
 
-  private findRootSymbolInSourceFile(sourceFile: SourceFile, rootName: string): { node: Node; symbol: Symbol } | null {
-    return (
-      findNamedNodeSymbol(sourceFile.getClasses(), rootName) ??
-      findNamedNodeSymbol(sourceFile.getInterfaces(), rootName) ??
-      findNamedNodeSymbol(sourceFile.getTypeAliases(), rootName) ??
-      findNamedNodeSymbol(sourceFile.getFunctions(), rootName) ??
-      findNamedNodeSymbol(sourceFile.getEnums(), rootName) ??
-      findVariableDeclarationSymbol(sourceFile, rootName) ??
-      findExportedRootSymbol(sourceFile, rootName)
-    )
+  return symbol === undefined ? null : { node, symbol }
+}
+
+const findExportedSymbolMatches = (
+  workspace: ProjectWorkspaceState,
+  rootName: string,
+  project: Project,
+  pkg: PackageInfo,
+): SymbolMatch[] => {
+  const matches: SymbolMatch[] = []
+
+  for (const sourceFile of getWorkspaceSourceFiles(project, pkg)) {
+    const exports = sourceFile.getExportedDeclarations()
+    addNamedExportMatch(matches, sourceFile, exports.get(rootName), workspace)
+    addDefaultExportMatches(matches, sourceFile, rootName, exports.get("default"), workspace)
   }
 
-  private navigateSymbolMembers(
-    startNode: Node,
-    startSymbol: Symbol,
-    parts: readonly string[],
-  ): { node: Node; symbol: Symbol } | null {
-    let node = startNode
-    let symbol: Symbol | undefined = startSymbol
+  return matches
+}
 
-    for (let index = 1; index < parts.length && symbol !== undefined; index++) {
-      const memberName = parts[index]!
-      const property = node.getType().getProperty(memberName)
-      const propDecl = property?.getDeclarations()[0]
-      if (property === undefined || propDecl === undefined) return null
+const resolveSingleSymbolMatch = (rootName: string, matches: readonly SymbolMatch[]): SymbolMatch | null => {
+  if (matches.length === 0) return null
+  if (matches.length > 1) throw new Error(formatAmbiguousSymbolError(rootName, matches))
+  return matches[0]!
+}
+
+const navigateExportedSymbolMembers = (
+  startNode: Node,
+  startSymbol: Symbol,
+  parts: readonly string[],
+): { node: Node; symbol: Symbol } | null => {
+  let node: Node = startNode
+  let symbol: Symbol | undefined = startSymbol
+
+  for (let index = 1; index < parts.length && symbol !== undefined; index++) {
+    const memberName = parts[index]!
+    const property = node.getType().getProperty(memberName)
+
+    if (property !== undefined) {
+      const propDecl = property.getDeclarations()[0]
+      if (propDecl === undefined) return null
       node = propDecl
       symbol = property
+      continue
     }
 
-    return symbol === undefined ? null : { node, symbol }
+    const localVar = findLocalVariable(node, memberName)
+    if (localVar === null) return null
+    node = localVar.node
+    symbol = localVar.symbol
   }
 
-  private findExportedSymbolMatches(rootName: string, project: Project, pkg: PackageInfo): SymbolMatch[] {
-    const matches: SymbolMatch[] = []
-
-    for (const sourceFile of getWorkspaceSourceFiles(project, pkg)) {
-      const exports = sourceFile.getExportedDeclarations()
-      addNamedExportMatch(matches, sourceFile, exports.get(rootName), this.workspace)
-      addDefaultExportMatches(matches, sourceFile, rootName, exports.get("default"), this.workspace)
-    }
-
-    return matches
-  }
-
-  private resolveSingleSymbolMatch(rootName: string, matches: readonly SymbolMatch[]): SymbolMatch | null {
-    if (matches.length === 0) return null
-    if (matches.length > 1) throw new Error(formatAmbiguousSymbolError(rootName, matches))
-    return matches[0]!
-  }
-
-  private navigateExportedSymbolMembers(
-    startNode: Node,
-    startSymbol: Symbol,
-    parts: readonly string[],
-  ): { node: Node; symbol: Symbol } | null {
-    let node: Node = startNode
-    let symbol: Symbol | undefined = startSymbol
-
-    for (let index = 1; index < parts.length && symbol !== undefined; index++) {
-      const memberName = parts[index]!
-      const property = node.getType().getProperty(memberName)
-
-      if (property !== undefined) {
-        const propDecl = property.getDeclarations()[0]
-        if (propDecl === undefined) return null
-        node = propDecl
-        symbol = property
-        continue
-      }
-
-      const localVar = findLocalVariable(node, memberName)
-      if (localVar === null) return null
-      node = localVar.node
-      symbol = localVar.symbol
-    }
-
-    return symbol === undefined ? null : { node, symbol }
-  }
+  return symbol === undefined ? null : { node, symbol }
 }
 
 const parseFileReference = (symbolName: string): { filePath: string; symbol: string } | null => {

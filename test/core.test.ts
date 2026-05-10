@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest"
-import { Effect } from "effect"
-import { createTypeAnalyzerRuntime } from "@skastr0/quartz-core"
+import { Effect, Layer } from "effect"
+import {
+  AnalyzerConfig,
+  FileInspection,
+  ProjectWorkspace,
+  SnippetEvaluation,
+  SourceProjectCache,
+  SymbolLookup,
+  TypeAnalyzerService,
+  createTypeAnalyzerRuntime,
+} from "@skastr0/quartz-core"
 import { createFixtureAnalyzer, fixturesPath } from "./helpers/analyzer"
 
 describe("type analyzer core", () => {
@@ -38,6 +47,38 @@ describe("type analyzer core", () => {
     const info = await Effect.runPromise(analyzer.getTypeInfo("User", "fixtures"))
 
     expect(info).toMatchObject({ name: "User", package: "test/fixtures" })
+  })
+
+  it("allows substituting symbol lookup through a test layer", async () => {
+    const configLayer = AnalyzerConfig.layer(fixturesPath)
+    const workspaceLayer = ProjectWorkspace.Default.pipe(Layer.provide(configLayer))
+    const cacheLayer = SourceProjectCache.Default.pipe(Layer.provide(workspaceLayer))
+    const fileInspectionLayer = FileInspection.Default.pipe(Layer.provide(workspaceLayer))
+    const symbolLookupLayer = Layer.succeed(SymbolLookup, {
+      _tag: "@skastr0/quartz/SymbolLookup",
+      findSymbol: () => Effect.succeed(null),
+    } as SymbolLookup)
+    const analyzerLayer = TypeAnalyzerService.Default.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          configLayer,
+          workspaceLayer,
+          cacheLayer,
+          fileInspectionLayer,
+          symbolLookupLayer,
+          SnippetEvaluation.Default,
+        ),
+      ),
+    )
+
+    const result = await Effect.runPromise(
+      TypeAnalyzerService.pipe(
+        Effect.flatMap((analyzer) => analyzer.getTypeInfo("User")),
+        Effect.provide(analyzerLayer),
+      ),
+    )
+
+    expect(result).toBeNull()
   })
 
   it("preserves the public 100 symbol default", async () => {
