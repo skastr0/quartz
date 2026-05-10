@@ -32,5 +32,15 @@
   },
   "peerDependencies": {
     "@opencode-ai/plugin": ">=1.4.0"
+  },
+  "license": "MIT",
+  "description": "TypeScript code intelligence and transform search tooling.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/skastr0/quartz.git"
+  },
+  "homepage": "https://github.com/skastr0/quartz#readme",
+  "bugs": {
+    "url": "https://github.com/skastr0/quartz/issues"
   }
 }

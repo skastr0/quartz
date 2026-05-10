@@ -10,5 +10,15 @@
   "dependencies": {
     "effect": "^3.21.0",
     "ts-morph": "^27.0.2"
+  },
+  "license": "MIT",
+  "description": "Effect-native TypeScript code intelligence core for quartz.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/skastr0/quartz.git"
+  },
+  "homepage": "https://github.com/skastr0/quartz#readme",
+  "bugs": {
+    "url": "https://github.com/skastr0/quartz/issues"
   }
 }

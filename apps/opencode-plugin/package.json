@@ -11,9 +11,20 @@
     "build": "bun build ./src/server.ts --outdir ./dist --target bun --format esm --external @opencode-ai/plugin"
   },
   "dependencies": {
-    "@skastr0/quartz-core": "workspace:*"
+    "@skastr0/quartz-core": "workspace:*",
+    "effect": "^3.21.0"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": ">=1.4.0"
+  },
+  "license": "MIT",
+  "description": "OpenCode plugin wrapper for quartz TypeScript code intelligence.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/skastr0/quartz.git"
+  },
+  "homepage": "https://github.com/skastr0/quartz#readme",
+  "bugs": {
+    "url": "https://github.com/skastr0/quartz/issues"
   }
 }

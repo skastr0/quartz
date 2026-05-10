@@ -11,6 +11,17 @@
     "install:local": "bun run build && bun link"
   },
   "dependencies": {
-    "@skastr0/quartz-core": "workspace:*"
+    "@skastr0/quartz-core": "workspace:*",
+    "effect": "^3.21.0"
+  },
+  "license": "MIT",
+  "description": "Agent-native CLI for quartz TypeScript code intelligence.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/skastr0/quartz.git"
+  },
+  "homepage": "https://github.com/skastr0/quartz#readme",
+  "bugs": {
+    "url": "https://github.com/skastr0/quartz/issues"
   }
 }

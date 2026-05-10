@@ -1,0 +1,139 @@
+import type { Node, Project, Symbol } from "ts-morph";
+import { SyntaxKind } from "ts-morph";
+import type { RelatedInfo } from "./project-types";
+
+export interface TypeRelationContext {
+  readonly relativePath: (absolutePath: string) => string;
+}
+
+export class TypeRelationExplorer {
+  constructor(private readonly context: TypeRelationContext) {}
+
+  findRelated(symbolName: string, project: Project, found: { readonly node: Node; readonly symbol: Symbol }): RelatedInfo {
+    const result: RelatedInfo = {
+      symbol: symbolName,
+      referencedBy: [],
+      references: [],
+    };
+
+    result.referencedBy.push(...this.findIncomingReferences(project, found.node, found.symbol));
+    result.references.push(...this.findOutgoingTypeReferences(found.node));
+
+    return result;
+  }
+
+  private findIncomingReferences(
+    project: Project,
+    node: Node,
+    symbol: Symbol,
+  ): RelatedInfo["referencedBy"] {
+    try {
+      return this.collectIncomingReferences(project, node, symbol);
+    } catch {
+      return [];
+    }
+  }
+
+  private collectIncomingReferences(
+    project: Project,
+    node: Node,
+    symbol: Symbol,
+  ): RelatedInfo["referencedBy"] {
+    const referencedBy: RelatedInfo["referencedBy"] = [];
+    const seenRefs = new Set<string>();
+
+    for (const refSymbol of project.getLanguageService().findReferences(node)) {
+      for (const ref of refSymbol.getReferences().slice(0, 100)) {
+        const refInfo = this.toIncomingReference(ref.getNode(), symbol);
+        if (refInfo === null) continue;
+
+        const key = `${refInfo.symbol}:${refInfo.context}:${refInfo.line}`;
+        if (seenRefs.has(key)) continue;
+        seenRefs.add(key);
+        referencedBy.push(refInfo);
+      }
+    }
+
+    return referencedBy;
+  }
+
+  private toIncomingReference(refNode: Node, symbol: Symbol): RelatedInfo["referencedBy"][number] | null {
+    const refSourceFile = refNode.getSourceFile();
+    if (refSourceFile.isInNodeModules()) return null;
+
+    const parent = refNode.getParent();
+    if (parent === undefined) return null;
+
+    const context = classifyReferenceContext(parent);
+    const containingSymbol = findContainingSymbolName(parent, symbol);
+    if (containingSymbol === symbol.getName()) return null;
+
+    return {
+      symbol: containingSymbol,
+      context,
+      file: this.context.relativePath(refSourceFile.getFilePath()),
+      line: refNode.getStartLineNumber(),
+    };
+  }
+
+  private findOutgoingTypeReferences(node: Node): RelatedInfo["references"] {
+    const type = node.getType();
+    return [
+      ...findPropertyTypeReferences(type),
+      ...findBaseTypeReferences(type),
+    ];
+  }
+}
+
+const classifyReferenceContext = (parent: Node): string => {
+  const parentKind = parent.getKind();
+  if (parentKind === SyntaxKind.HeritageClause) return "extends";
+  if (parentKind === SyntaxKind.TypeReference) return "type reference";
+  if (parentKind === SyntaxKind.PropertyAccessExpression) return "property access";
+  if (parentKind === SyntaxKind.CallExpression) return "call";
+  return "usage";
+};
+
+const findContainingSymbolName = (parent: Node, symbol: Symbol): string => {
+  let current: Node | undefined = parent;
+  while (current !== undefined) {
+    const currentSymbol = current.getSymbol();
+    if (currentSymbol !== undefined && currentSymbol !== symbol) {
+      return currentSymbol.getName();
+    }
+    current = current.getParent();
+  }
+  return "anonymous";
+};
+
+const findPropertyTypeReferences = (type: import("ts-morph").Type): RelatedInfo["references"] => {
+  const references: RelatedInfo["references"] = [];
+
+  for (const property of type.getProperties().slice(0, 50)) {
+    const propertyDeclaration = property.getDeclarations()[0];
+    if (propertyDeclaration === undefined) continue;
+
+    const propertyType = propertyDeclaration.getType();
+    const propertyTypeText = propertyType.getText(propertyDeclaration);
+    if (isPrimitiveRelatedType(propertyTypeText)) continue;
+
+    const typeSymbol = propertyType.getSymbol() || propertyType.getAliasSymbol();
+    if (typeSymbol !== undefined) {
+      references.push({
+        symbol: typeSymbol.getName(),
+        context: `property "${property.getName()}"`,
+      });
+    }
+  }
+
+  return references;
+};
+
+const findBaseTypeReferences = (type: import("ts-morph").Type): RelatedInfo["references"] =>
+  type.getBaseTypes().flatMap((baseType) => {
+    const baseSymbol = baseType.getSymbol();
+    return baseSymbol === undefined ? [] : [{ symbol: baseSymbol.getName(), context: "extends" }];
+  });
+
+const isPrimitiveRelatedType = (typeText: string): boolean =>
+  typeText === "string" || typeText === "number" || typeText === "boolean";

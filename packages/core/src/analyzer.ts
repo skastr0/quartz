@@ -2,16 +2,18 @@ import { resolve } from "node:path"
 import { Effect } from "effect"
 import type { PackageInfo } from "./discovery"
 import { QuartzError } from "./errors"
+import type {
+  CompatibilityResult,
+  ErrorExplanationResult,
+  FileInspectionResult,
+  GraphResult,
+  RefactorPreviewResult,
+  RelatedInfo,
+  SnippetCheckResult,
+  TypeExplanationResult,
+} from "./project-types"
 import {
   ProjectManager,
-  type CompatibilityResult,
-  type FileInspectionResult,
-  type GraphResult,
-  type RefactorPreviewResult,
-  type RelatedInfo,
-  type SnippetCheckResult,
-  type TypeExplanationResult,
-  type ErrorExplanationResult,
 } from "./legacy-project"
 import { TransformSearchEngine, formatResults, type TransformSearchOptions } from "./transform-search"
 
