@@ -4,11 +4,13 @@ import { Context, Effect, Layer, ManagedRuntime, Ref } from "effect"
 import { createTypeAnalyzerWithWorkspace, type TypeAnalyzer } from "./analyzer"
 import { discoverPackages, type PackageInfo } from "./discovery"
 import { QuartzError } from "./errors"
+import { inspectSourceFile, type FileInspectionOptions } from "./file-inspection"
 import {
   createProjectWorkspaceState,
   getCachedProject,
   getWorkspacePackages,
   getWorkspaceSourceFiles,
+  kindToString,
   markWorkspaceDirty,
   refreshAllProjects,
   refreshPackageProject,
@@ -16,6 +18,9 @@ import {
   type ProjectWorkspaceState,
   workspaceRelativePath,
 } from "./project-workspace"
+import type { FileInspectionResult, SnippetCheckResult } from "./project-types"
+import { SnippetEvaluator } from "./snippet-evaluation"
+import { SymbolLookup as SymbolLookupImplementation } from "./symbol-lookup"
 
 const toQuartzError = (message: string) => (cause: unknown) =>
   new QuartzError({
@@ -101,26 +106,76 @@ export class SourceProjectCache extends Effect.Service<SourceProjectCache>()("@s
   }),
 }) {}
 
-export class SymbolLookup extends Context.Tag("@skastr0/quartz/SymbolLookup")<
-  SymbolLookup,
-  {
-    readonly _service: "SymbolLookup"
-  }
->() {}
+export class SymbolLookup extends Effect.Service<SymbolLookup>()("@skastr0/quartz/SymbolLookup", {
+  accessors: true,
+  effect: Effect.gen(function* () {
+    const workspace = yield* ProjectWorkspace
+    const state = yield* Ref.get(workspace.state)
+    const lookup = new SymbolLookupImplementation(state)
+    return {
+      findSymbol: Effect.fnUntraced(function* (symbolName: string, project: Project, pkg: PackageInfo) {
+        return yield* Effect.try({
+          try: () => lookup.findSymbol(symbolName, project, pkg),
+          catch: toQuartzError("Could not find symbol"),
+        })
+      }),
+    }
+  }),
+}) {}
 
-export class FileInspection extends Context.Tag("@skastr0/quartz/FileInspection")<
-  FileInspection,
-  {
-    readonly _service: "FileInspection"
-  }
->() {}
+export class FileInspection extends Effect.Service<FileInspection>()("@skastr0/quartz/FileInspection", {
+  accessors: true,
+  effect: Effect.gen(function* () {
+    const workspace = yield* ProjectWorkspace
+    return {
+      inspectSourceFile: (
+        sourceFile: SourceFile,
+        pkg: PackageInfo,
+        options: FileInspectionOptions,
+      ): Effect.Effect<FileInspectionResult, QuartzError> =>
+        Effect.gen(function* () {
+          const state = yield* Ref.get(workspace.state)
+          return yield* Effect.try({
+            try: () =>
+              inspectSourceFile(sourceFile, pkg, options, {
+                kindToString,
+                relativePath: (absolutePath) => workspaceRelativePath(state, absolutePath),
+              }),
+            catch: toQuartzError("Could not inspect source file"),
+          })
+        }),
+    }
+  }),
+}) {}
 
-export class SnippetEvaluation extends Context.Tag("@skastr0/quartz/SnippetEvaluation")<
-  SnippetEvaluation,
-  {
-    readonly _service: "SnippetEvaluation"
-  }
->() {}
+export class SnippetEvaluation extends Effect.Service<SnippetEvaluation>()("@skastr0/quartz/SnippetEvaluation", {
+  accessors: true,
+  sync: () => {
+    const evaluator = new SnippetEvaluator()
+    return {
+      evalType: (
+        expression: string,
+        project: Project,
+        pkg: PackageInfo,
+        sourceFiles: readonly SourceFile[],
+      ): Effect.Effect<{ result: string; expanded: string } | { error: string }, QuartzError> =>
+        Effect.try({
+          try: () => evaluator.evalType(expression, project, pkg, sourceFiles),
+          catch: toQuartzError("Could not evaluate type"),
+        }),
+      checkSnippet: (
+        code: string,
+        project: Project,
+        pkg: PackageInfo,
+        sourceFiles: readonly SourceFile[],
+      ): Effect.Effect<SnippetCheckResult, QuartzError> =>
+        Effect.try({
+          try: () => evaluator.checkSnippet(code, project, pkg, sourceFiles),
+          catch: toQuartzError("Could not check snippet"),
+        }),
+    }
+  },
+}) {}
 
 export class TypeRelations extends Context.Tag("@skastr0/quartz/TypeRelations")<
   TypeRelations,
@@ -180,16 +235,25 @@ export type CoreServices =
   | PackageDiscovery
   | ProjectWorkspace
   | SourceProjectCache
+  | SymbolLookup
+  | FileInspection
+  | SnippetEvaluation
   | TypeAnalyzerService
 
 export const CoreLayer = (rootDirectory: string): Layer.Layer<CoreServices> => {
   const configLayer = AnalyzerConfig.layer(rootDirectory)
   const workspaceLayer = ProjectWorkspace.Default.pipe(Layer.provide(configLayer))
+  const cacheLayer = SourceProjectCache.Default.pipe(Layer.provide(workspaceLayer))
+  const symbolLookupLayer = SymbolLookup.Default.pipe(Layer.provide(workspaceLayer))
+  const fileInspectionLayer = FileInspection.Default.pipe(Layer.provide(workspaceLayer))
   return Layer.mergeAll(
     configLayer,
     PackageDiscovery.Default.pipe(Layer.provide(configLayer)),
     workspaceLayer,
-    SourceProjectCache.Default.pipe(Layer.provide(workspaceLayer)),
+    cacheLayer,
+    symbolLookupLayer,
+    fileInspectionLayer,
+    SnippetEvaluation.Default,
     TypeAnalyzerService.Default.pipe(Layer.provide(Layer.mergeAll(configLayer, workspaceLayer))),
   )
 }
