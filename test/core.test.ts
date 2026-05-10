@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { Effect } from "effect"
-import { createTypeAnalyzer } from "@skastr0/quartz-core"
+import { createTypeAnalyzerRuntime } from "@skastr0/quartz-core"
 import { createFixtureAnalyzer, fixturesPath } from "./helpers/analyzer"
 
 describe("type analyzer core", () => {
@@ -27,14 +27,14 @@ describe("type analyzer core", () => {
   })
 
   it("normalizes relative roots before comparing source paths", async () => {
-    const analyzer = createTypeAnalyzer("test/fixtures")
+    const analyzer = createTypeAnalyzerRuntime("test/fixtures").analyzer
     const result = await Effect.runPromise(analyzer.listSymbols({ pattern: "^User", limit: 50 }))
 
     expect(result.symbols.map((symbol) => symbol.name)).toContain("User")
   })
 
   it("accepts package path suffix selectors", async () => {
-    const analyzer = createTypeAnalyzer(".")
+    const analyzer = createTypeAnalyzerRuntime(".").analyzer
     const info = await Effect.runPromise(analyzer.getTypeInfo("User", "fixtures"))
 
     expect(info).toMatchObject({ name: "User", package: "test/fixtures" })

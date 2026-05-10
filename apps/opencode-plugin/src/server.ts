@@ -1,7 +1,7 @@
 import type { Plugin } from "@opencode-ai/plugin"
 import { tool } from "@opencode-ai/plugin"
 import { Effect } from "effect"
-import { createTypeAnalyzer } from "@skastr0/quartz-core"
+import { createTypeAnalyzerRuntime } from "@skastr0/quartz-core"
 import type { TypeAnalyzer } from "@skastr0/quartz-core"
 
 const run = <A>(effect: Effect.Effect<A, unknown>) =>
@@ -333,7 +333,8 @@ const createToolDefinitions = (analyzer: TypeAnalyzer) => ({
 })
 
 export const QuartzPlugin: Plugin = async (ctx) => {
-  const analyzer = createTypeAnalyzer(ctx.directory)
+  const analyzerRuntime = createTypeAnalyzerRuntime(ctx.directory)
+  const analyzer = analyzerRuntime.analyzer
   const client = ctx.client as { app?: { log?: (input: unknown) => Promise<unknown> } }
 
   return {

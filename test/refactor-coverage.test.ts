@@ -5,7 +5,7 @@ import { Effect } from "effect"
 import { Project } from "ts-morph"
 import { describe, expect, it } from "vitest"
 import { createFixtureAnalyzer, fixturesPath } from "./helpers/analyzer"
-import { createTypeAnalyzer } from "@skastr0/quartz-core"
+import { createTypeAnalyzerRuntime } from "@skastr0/quartz-core"
 import {
   buildCallableIndex,
   enumerateCallables,
@@ -245,7 +245,7 @@ describe("refactor coverage", () => {
     const properties = Array.from({ length: 160 }, (_, index) => `p${index}: string`).join("; ")
     writeFileSync(join(root, "src", "large.ts"), `export type LargeShape = { ${properties} }\n`, "utf8")
 
-    const analyzer = createTypeAnalyzer(root)
+    const analyzer = createTypeAnalyzerRuntime(root).analyzer
     const file = await Effect.runPromise(analyzer.getFileDeclarations("src/large.ts"))
 
     const typeText = file?.declarations[0]?.type
@@ -254,7 +254,7 @@ describe("refactor coverage", () => {
   })
 
   it("preserves analyzer package-scoped diagnostics and refresh helpers", async () => {
-    const analyzer = createTypeAnalyzer(".")
+    const analyzer = createTypeAnalyzerRuntime(".").analyzer
     const diagnostics = await Effect.runPromise(analyzer.getDiagnostics({ packageName: "fixtures", explain: true }))
     const refresh = await Effect.runPromise(analyzer.refresh("fixtures"))
 

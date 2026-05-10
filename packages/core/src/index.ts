@@ -1,4 +1,24 @@
-export { createTypeAnalyzer } from "./analyzer"
+export {
+  AnalyzerConfig,
+  AppLayer,
+  CoreLayer,
+  Diagnostics,
+  FileInspection,
+  PackageDiscovery,
+  ProjectWorkspace,
+  RefactorPreview,
+  SnippetEvaluation,
+  SourceProjectCache,
+  SymbolLookup,
+  TransformSearch,
+  TypeAnalyzerService,
+  TypeExplainer,
+  TypeGraph,
+  TypeRelations,
+  createTypeAnalyzerRuntime,
+  effectRewriteDeletionLedger,
+  type TypeAnalyzerRuntime,
+} from "./service-spine"
 export type {
   DiagnosticInfo,
   ExpandedType,
