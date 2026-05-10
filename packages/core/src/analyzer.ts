@@ -2,6 +2,7 @@ import { resolve } from "node:path"
 import { Effect } from "effect"
 import type { PackageInfo } from "./discovery"
 import { QuartzError } from "./errors"
+import type { ProjectWorkspaceState } from "./project-workspace"
 import type {
   CompatibilityResult,
   ErrorExplanationResult,
@@ -173,9 +174,15 @@ const fromProjectPromise = <A>(try_: () => Promise<A>): Effect.Effect<A, QuartzE
       }),
   })
 
-export const createTypeAnalyzer = (rootDirectory: string): TypeAnalyzer => {
+export const createTypeAnalyzer = (rootDirectory: string): TypeAnalyzer =>
+  createTypeAnalyzerWithWorkspace(rootDirectory)
+
+export const createTypeAnalyzerWithWorkspace = (
+  rootDirectory: string,
+  workspace?: ProjectWorkspaceState,
+): TypeAnalyzer => {
   const absoluteRootDirectory = resolve(rootDirectory)
-  const projectManager = new ProjectManager(absoluteRootDirectory)
+  const projectManager = new ProjectManager(absoluteRootDirectory, workspace)
 
   return {
     getPackages: () => fromProjectPromise(() => projectManager.getPackages()),

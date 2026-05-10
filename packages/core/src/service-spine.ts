@@ -1,9 +1,27 @@
 import { resolve } from "node:path"
-import { Context, Effect, Layer, ManagedRuntime } from "effect"
-import { createTypeAnalyzer as createLegacyTypeAnalyzer, type TypeAnalyzer } from "./analyzer"
+import type { Project, SourceFile } from "ts-morph"
+import { Context, Effect, Layer, ManagedRuntime, Ref } from "effect"
+import { createTypeAnalyzerWithWorkspace, type TypeAnalyzer } from "./analyzer"
 import { discoverPackages, type PackageInfo } from "./discovery"
 import { QuartzError } from "./errors"
-import { ProjectWorkspace as ProjectWorkspaceImplementation } from "./project-workspace"
+import {
+  createProjectWorkspaceState,
+  getCachedProject,
+  getWorkspacePackages,
+  getWorkspaceSourceFiles,
+  markWorkspaceDirty,
+  refreshAllProjects,
+  refreshPackageProject,
+  resolveWorkspacePackage,
+  type ProjectWorkspaceState,
+  workspaceRelativePath,
+} from "./project-workspace"
+
+const toQuartzError = (message: string) => (cause: unknown) =>
+  new QuartzError({
+    message: cause instanceof Error ? cause.message : message,
+    cause,
+  })
 
 export class AnalyzerConfig extends Context.Tag("@skastr0/quartz/AnalyzerConfig")<
   AnalyzerConfig,
@@ -31,18 +49,25 @@ export class ProjectWorkspace extends Effect.Service<ProjectWorkspace>()("@skast
   accessors: true,
   effect: Effect.gen(function* () {
     const config = yield* AnalyzerConfig
-    const workspace = new ProjectWorkspaceImplementation(config.rootDirectory)
+    const state = yield* Ref.make(createProjectWorkspaceState(config.rootDirectory))
+    const withState = <A>(f: (workspace: ProjectWorkspaceState) => A, message: string): Effect.Effect<A, QuartzError> =>
+      Ref.get(state).pipe(
+        Effect.flatMap((workspace) =>
+          Effect.try({
+            try: () => f(workspace),
+            catch: toQuartzError(message),
+          }),
+        ),
+      )
+
     return {
-      workspace,
-      getPackages: (): Effect.Effect<readonly PackageInfo[], QuartzError> =>
-        Effect.tryPromise({
-          try: () => workspace.getPackages(),
-          catch: (cause) =>
-            new QuartzError({
-              message: cause instanceof Error ? cause.message : "Could not read workspace packages",
-              cause,
-            }),
-        }),
+      state,
+      rootDirectory: config.rootDirectory,
+      getPackages: () => withState(getWorkspacePackages, "Could not read workspace packages"),
+      resolvePackage: (packageName?: string) =>
+        withState((workspace) => resolveWorkspacePackage(workspace, packageName), "Could not resolve package"),
+      relativePath: (absolutePath: string) =>
+        withState((workspace) => workspaceRelativePath(workspace, absolutePath), "Could not resolve relative path"),
     }
   }),
 }) {}
@@ -51,9 +76,27 @@ export class SourceProjectCache extends Effect.Service<SourceProjectCache>()("@s
   accessors: true,
   effect: Effect.gen(function* () {
     const workspace = yield* ProjectWorkspace
+    const withWorkspace = <A>(
+      f: (state: ProjectWorkspaceState) => A,
+      message: string,
+    ): Effect.Effect<A, QuartzError> =>
+      Ref.get(workspace.state).pipe(
+        Effect.flatMap((state) =>
+          Effect.try({
+            try: () => f(state),
+            catch: toQuartzError(message),
+          }),
+        ),
+      )
     return {
-      markDirty: () => Effect.sync(() => workspace.workspace.markDirty()),
-      refreshAll: () => Effect.sync(() => workspace.workspace.refreshAll()),
+      getProject: (pkg: PackageInfo): Effect.Effect<Project, QuartzError> =>
+        withWorkspace((state) => getCachedProject(state, pkg), "Could not load TypeScript project"),
+      getSourceFiles: (project: Project, pkg: PackageInfo): Effect.Effect<readonly SourceFile[], QuartzError> =>
+        Effect.sync(() => getWorkspaceSourceFiles(project, pkg)),
+      markDirty: () => withWorkspace(markWorkspaceDirty, "Could not mark workspace dirty"),
+      refreshAll: () => withWorkspace(refreshAllProjects, "Could not refresh workspace cache"),
+      refreshPackage: (packageName: string) =>
+        withWorkspace((state) => refreshPackageProject(state, packageName), "Could not refresh package cache"),
     }
   }),
 }) {}
@@ -125,7 +168,9 @@ export class TypeAnalyzerService extends Effect.Service<TypeAnalyzerService>()("
   accessors: true,
   effect: Effect.gen(function* () {
     const config = yield* AnalyzerConfig
-    const analyzer = createLegacyTypeAnalyzer(config.rootDirectory)
+    const workspace = yield* ProjectWorkspace
+    const state = yield* Ref.get(workspace.state)
+    const analyzer = createTypeAnalyzerWithWorkspace(config.rootDirectory, state)
     return analyzer
   }),
 }) {}
@@ -145,7 +190,7 @@ export const CoreLayer = (rootDirectory: string): Layer.Layer<CoreServices> => {
     PackageDiscovery.Default.pipe(Layer.provide(configLayer)),
     workspaceLayer,
     SourceProjectCache.Default.pipe(Layer.provide(workspaceLayer)),
-    TypeAnalyzerService.Default.pipe(Layer.provide(configLayer)),
+    TypeAnalyzerService.Default.pipe(Layer.provide(Layer.mergeAll(configLayer, workspaceLayer))),
   )
 }
 
@@ -159,8 +204,9 @@ export interface TypeAnalyzerRuntime {
 
 export const createTypeAnalyzerRuntime = (rootDirectory: string): TypeAnalyzerRuntime => {
   const runtime = ManagedRuntime.make(CoreLayer(rootDirectory))
+  const workspace = createProjectWorkspaceState(rootDirectory)
   return {
-    analyzer: createLegacyTypeAnalyzer(rootDirectory),
+    analyzer: createTypeAnalyzerWithWorkspace(rootDirectory, workspace),
     runtime,
     dispose: runtime.dispose,
   }
@@ -178,7 +224,7 @@ export const effectRewriteDeletionLedger = [
     reason: "Promise bridge kept only until all analyzer operations are service-native.",
   },
   {
-    symbol: "discoverPackagesPromise/findTsconfigsPromise/walkForTsconfigsPromise",
+    symbol: "removed promise-shaped discovery helpers",
     ownerGlyph: "QZ-003",
     reason: "Package discovery becomes Effect-native only.",
   },

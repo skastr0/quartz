@@ -48,112 +48,115 @@ class LruCache<K, V> {
   }
 }
 
-export class ProjectWorkspace {
+export interface ProjectWorkspaceState {
   readonly rootDirectory: string
-  private packages: PackageInfo[] | null = null
-  private readonly projectCache = new LruCache<string, CachedProject>(MAX_CACHED_PROJECTS)
-  private readonly projectErrors = new Map<string, string>()
-  private dirty = false
+  packages: PackageInfo[] | null
+  readonly projectCache: LruCache<string, CachedProject>
+  readonly projectErrors: Map<string, string>
+  dirty: boolean
+}
 
-  constructor(directory: string) {
-    this.rootDirectory = resolve(directory)
+export const createProjectWorkspaceState = (directory: string): ProjectWorkspaceState => ({
+  rootDirectory: resolve(directory),
+  packages: null,
+  projectCache: new LruCache<string, CachedProject>(MAX_CACHED_PROJECTS),
+  projectErrors: new Map<string, string>(),
+  dirty: false,
+})
+
+export const markWorkspaceDirty = (state: ProjectWorkspaceState): void => {
+  state.dirty = true
+}
+
+export const refreshAllProjects = (state: ProjectWorkspaceState): void => {
+  state.projectCache.clear()
+  state.projectErrors.clear()
+}
+
+export const refreshPackageProject = (state: ProjectWorkspaceState, packageName: string): boolean => {
+  const pkg = resolveWorkspacePackage(state, packageName)
+  const deleted = state.projectCache.delete(pkg.tsconfigPath)
+  state.projectErrors.delete(pkg.tsconfigPath)
+  return deleted
+}
+
+export const getWorkspacePackages = (state: ProjectWorkspaceState): readonly PackageInfo[] => {
+  if (!state.packages) {
+    state.packages = [...discoverPackagesSync(state.rootDirectory)]
+  }
+  return state.packages
+}
+
+export const resolveWorkspacePackage = (state: ProjectWorkspaceState, packageName?: string): PackageInfo => {
+  const packages = getWorkspacePackages(state)
+
+  if (!packageName) {
+    const rootPkg = packages.find((pkg) => pkg.name === "(root)")
+    if (rootPkg) return rootPkg
+    if (packages.length === 1) return packages[0]!
+    throw new Error(`Multiple packages found. Please specify a package: ${packages.map((pkg) => pkg.name).join(", ")}`)
   }
 
-  markDirty(): void {
-    this.dirty = true
+  const normalized = packageName.replace(/^\//, "")
+  const pkg = packages.find((candidate) =>
+    candidate.name === packageName || candidate.name === normalized || candidate.path.endsWith(packageName)
+  )
+
+  if (!pkg) {
+    throw new Error(`Package "${packageName}" not found. Available: ${packages.map((item) => item.name).join(", ")}`)
   }
 
-  refreshAll(): void {
-    this.projectCache.clear()
-    this.projectErrors.clear()
+  return pkg
+}
+
+export const getCachedProject = (state: ProjectWorkspaceState, pkg: PackageInfo): Project => {
+  if (state.dirty) {
+    state.projectCache.clear()
+    state.projectErrors.clear()
+    state.dirty = false
   }
 
-  async refreshPackage(packageName: string): Promise<boolean> {
-    const pkg = await this.resolvePackage(packageName)
-    const deleted = this.projectCache.delete(pkg.tsconfigPath)
-    this.projectErrors.delete(pkg.tsconfigPath)
-    return deleted
+  const cached = state.projectCache.get(pkg.tsconfigPath)
+  if (cached !== undefined) {
+    if (Date.now() - cached.timestamp <= CACHE_TTL) return cached.project
+    state.projectCache.delete(pkg.tsconfigPath)
+    state.projectErrors.delete(pkg.tsconfigPath)
   }
 
-  async getPackages(): Promise<PackageInfo[]> {
-    if (!this.packages) {
-      this.packages = [...discoverPackagesSync(this.rootDirectory)]
-    }
-    return this.packages
-  }
+  const cachedError = state.projectErrors.get(pkg.tsconfigPath)
+  if (cachedError !== undefined) throw new Error(cachedError)
 
-  async resolvePackage(packageName?: string): Promise<PackageInfo> {
-    const packages = await this.getPackages()
-
-    if (!packageName) {
-      const rootPkg = packages.find((pkg) => pkg.name === "(root)")
-      if (rootPkg) return rootPkg
-      if (packages.length === 1) return packages[0]!
-      throw new Error(`Multiple packages found. Please specify a package: ${packages.map((pkg) => pkg.name).join(", ")}`)
-    }
-
-    const normalized = packageName.replace(/^\//, "")
-    const pkg = packages.find((candidate) =>
-      candidate.name === packageName || candidate.name === normalized || candidate.path.endsWith(packageName)
-    )
-
-    if (!pkg) {
-      throw new Error(`Package "${packageName}" not found. Available: ${packages.map((item) => item.name).join(", ")}`)
-    }
-
-    return pkg
-  }
-
-  getProject(pkg: PackageInfo): Project {
-    if (this.dirty) {
-      this.projectCache.clear()
-      this.projectErrors.clear()
-      this.dirty = false
-    }
-
-    const cached = this.projectCache.get(pkg.tsconfigPath)
-    if (cached !== undefined) {
-      if (Date.now() - cached.timestamp <= CACHE_TTL) return cached.project
-      this.projectCache.delete(pkg.tsconfigPath)
-      this.projectErrors.delete(pkg.tsconfigPath)
-    }
-
-    const cachedError = this.projectErrors.get(pkg.tsconfigPath)
-    if (cachedError !== undefined) throw new Error(cachedError)
-
-    try {
-      const project = new Project({
-        tsConfigFilePath: pkg.tsconfigPath,
-        skipAddingFilesFromTsConfig: false,
-      })
-      this.projectCache.set(pkg.tsconfigPath, { project, packageInfo: pkg, timestamp: Date.now() })
-      return project
-    } catch (cause) {
-      const message = `Failed to initialize TypeScript project for ${pkg.name}: ${
-        cause instanceof Error ? cause.message : String(cause)
-      }`
-      this.projectErrors.set(pkg.tsconfigPath, message)
-      throw new Error(message)
-    }
-  }
-
-  getSourceFiles(project: Project, pkg: PackageInfo): SourceFile[] {
-    return project.getSourceFiles().filter((sourceFile) => {
-      if (sourceFile.isInNodeModules()) return false
-      return sourceFile.getFilePath().startsWith(pkg.path)
+  try {
+    const project = new Project({
+      tsConfigFilePath: pkg.tsconfigPath,
+      skipAddingFilesFromTsConfig: false,
     })
+    state.projectCache.set(pkg.tsconfigPath, { project, packageInfo: pkg, timestamp: Date.now() })
+    return project
+  } catch (cause) {
+    const message = `Failed to initialize TypeScript project for ${pkg.name}: ${
+      cause instanceof Error ? cause.message : String(cause)
+    }`
+    state.projectErrors.set(pkg.tsconfigPath, message)
+    throw new Error(message)
   }
+}
 
-  getCachedProjects(): readonly CachedProject[] {
-    return [...this.projectCache.values()]
-  }
+export const getWorkspaceSourceFiles = (project: Project, pkg: PackageInfo): SourceFile[] =>
+  project.getSourceFiles().filter((sourceFile) => {
+    if (sourceFile.isInNodeModules()) return false
+    return sourceFile.getFilePath().startsWith(pkg.path)
+  })
 
-  relativePath(absolutePath: string): string {
-    if (absolutePath.startsWith(this.rootDirectory)) {
-      return absolutePath.slice(this.rootDirectory.length + 1)
-    }
-    return absolutePath
+export const getWorkspaceCachedProjects = (state: ProjectWorkspaceState): readonly CachedProject[] => [
+  ...state.projectCache.values(),
+]
+
+export const workspaceRelativePath = (state: ProjectWorkspaceState, absolutePath: string): string => {
+  if (absolutePath.startsWith(state.rootDirectory)) {
+    return absolutePath.slice(state.rootDirectory.length + 1)
   }
+  return absolutePath
 }
 
 export const kindToString = (kind: SyntaxKind): string => {

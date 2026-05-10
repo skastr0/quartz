@@ -11,7 +11,11 @@ import {
 } from "ts-morph"
 import { getDeclarationName } from "./declarations"
 import type { PackageInfo } from "./discovery"
-import type { ProjectWorkspace } from "./project-workspace"
+import {
+  getWorkspaceSourceFiles,
+  type ProjectWorkspaceState,
+  workspaceRelativePath,
+} from "./project-workspace"
 
 interface SymbolMatch {
   readonly node: Node
@@ -22,7 +26,7 @@ interface SymbolMatch {
 }
 
 export class SymbolLookup {
-  constructor(private readonly workspace: ProjectWorkspace) {}
+  constructor(private readonly workspace: ProjectWorkspaceState) {}
 
   findSymbol(symbolName: string, project: Project, pkg: PackageInfo): { node: Node; symbol: Symbol } | null {
     const fileRef = parseFileReference(symbolName)
@@ -57,7 +61,7 @@ export class SymbolLookup {
     const sourceFile = project.getSourceFile(targetPath)
     if (sourceFile !== undefined) return sourceFile
 
-    return this.workspace.getSourceFiles(project, pkg).find((candidate) => {
+    return getWorkspaceSourceFiles(project, pkg).find((candidate) => {
       const candidatePath = candidate.getFilePath()
       return candidatePath.endsWith(filePath) || candidatePath.includes(filePath)
     }) ?? null
@@ -98,7 +102,7 @@ export class SymbolLookup {
   private findExportedSymbolMatches(rootName: string, project: Project, pkg: PackageInfo): SymbolMatch[] {
     const matches: SymbolMatch[] = []
 
-    for (const sourceFile of this.workspace.getSourceFiles(project, pkg)) {
+    for (const sourceFile of getWorkspaceSourceFiles(project, pkg)) {
       const exports = sourceFile.getExportedDeclarations()
       addNamedExportMatch(matches, sourceFile, exports.get(rootName), this.workspace)
       addDefaultExportMatches(matches, sourceFile, rootName, exports.get("default"), this.workspace)
@@ -201,7 +205,7 @@ const addNamedExportMatch = (
   matches: SymbolMatch[],
   sourceFile: SourceFile,
   declarations: Node[] | undefined,
-  workspace: ProjectWorkspace,
+  workspace: ProjectWorkspaceState,
 ): void => {
   const node = declarations?.[0]
   const symbol = node?.getSymbol()
@@ -215,7 +219,7 @@ const addDefaultExportMatches = (
   sourceFile: SourceFile,
   rootName: string,
   declarations: Node[] | undefined,
-  workspace: ProjectWorkspace,
+  workspace: ProjectWorkspaceState,
 ): void => {
   for (const declaration of declarations ?? []) {
     if (getDeclarationName(declaration) !== rootName) continue
@@ -229,11 +233,11 @@ const toSymbolMatch = (
   symbol: Symbol,
   sourceFile: SourceFile,
   isDefault: boolean,
-  workspace: ProjectWorkspace,
+  workspace: ProjectWorkspaceState,
 ): SymbolMatch => ({
   node,
   symbol,
-  file: workspace.relativePath(sourceFile.getFilePath()),
+  file: workspaceRelativePath(workspace, sourceFile.getFilePath()),
   line: node.getStartLineNumber(),
   isDefault,
 })

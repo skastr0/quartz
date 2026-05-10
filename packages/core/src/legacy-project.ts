@@ -13,7 +13,20 @@ import type { PackageInfo } from "./discovery";
 import { getDisplayPropertySymbols } from "./display-properties";
 import { inspectSourceFile } from "./file-inspection";
 import { collectLoadedPackageDiagnostics, collectPackageDiagnostics } from "./project-diagnostics";
-import { kindToString, ProjectWorkspace } from "./project-workspace";
+import {
+  createProjectWorkspaceState,
+  getCachedProject,
+  getWorkspacePackages,
+  getWorkspaceCachedProjects,
+  getWorkspaceSourceFiles,
+  kindToString,
+  markWorkspaceDirty,
+  refreshAllProjects,
+  refreshPackageProject,
+  resolveWorkspacePackage,
+  type ProjectWorkspaceState,
+  workspaceRelativePath,
+} from "./project-workspace";
 import { previewRenameRefactor } from "./refactor-preview";
 import type {
   CompatibilityResult,
@@ -64,14 +77,14 @@ export type {
 } from "./project-types";
 
 export class ProjectManager {
-  private readonly workspace: ProjectWorkspace;
+  private readonly workspace: ProjectWorkspaceState;
   private readonly symbolLookup: SymbolLookup;
   private readonly snippetEvaluator: SnippetEvaluator;
   private readonly typeRelations: TypeRelationExplorer;
   private readonly typeExplainer: TypeExplainer;
 
-  constructor(directory: string) {
-    this.workspace = new ProjectWorkspace(directory);
+  constructor(directory: string, workspace: ProjectWorkspaceState = createProjectWorkspaceState(directory)) {
+    this.workspace = workspace;
     this.symbolLookup = new SymbolLookup(this.workspace);
     this.snippetEvaluator = new SnippetEvaluator();
     this.typeRelations = new TypeRelationExplorer({
@@ -94,37 +107,37 @@ export class ProjectManager {
    * Called by plugin hook after edit/write tool executions.
    */
   markDirty(): void {
-    this.workspace.markDirty();
+    markWorkspaceDirty(this.workspace);
   }
 
   /**
    * Clear all cached projects. Use when files were modified outside of opencode tools.
    */
   refreshAll(): void {
-    this.workspace.refreshAll();
+    refreshAllProjects(this.workspace);
   }
 
   /**
    * Clear cached project for a specific package.
    */
   async refreshPackage(packageName: string): Promise<boolean> {
-    return this.workspace.refreshPackage(packageName);
+    return refreshPackageProject(this.workspace, packageName);
   }
 
   async getPackages(): Promise<PackageInfo[]> {
-    return this.workspace.getPackages();
+    return [...getWorkspacePackages(this.workspace)];
   }
 
   private async resolvePackage(packageName?: string): Promise<PackageInfo> {
-    return this.workspace.resolvePackage(packageName);
+    return resolveWorkspacePackage(this.workspace, packageName);
   }
 
   private getProject(pkg: PackageInfo): Project {
-    return this.workspace.getProject(pkg);
+    return getCachedProject(this.workspace, pkg);
   }
 
   private getSourceFiles(project: Project, pkg: PackageInfo): SourceFile[] {
-    return this.workspace.getSourceFiles(project, pkg);
+    return getWorkspaceSourceFiles(project, pkg);
   }
 
   private kindToString(kind: SyntaxKind): string {
@@ -132,7 +145,7 @@ export class ProjectManager {
   }
 
   private relativePath(absolutePath: string): string {
-    return this.workspace.relativePath(absolutePath);
+    return workspaceRelativePath(this.workspace, absolutePath);
   }
 
   async listSymbols(options: ListSymbolsOptions = {}): Promise<SymbolListResult> {
@@ -792,7 +805,7 @@ export class ProjectManager {
       Array<{ file: string; line: number; column: number; message: string; code: number }>
     >
   > {
-    return collectLoadedPackageDiagnostics(this.workspace.getCachedProjects(), {
+    return collectLoadedPackageDiagnostics(getWorkspaceCachedProjects(this.workspace), {
       relativePath: this.relativePath.bind(this),
     });
   }
