@@ -15,9 +15,6 @@ export {
   TypeExplainer,
   TypeGraph,
   TypeRelations,
-  createTypeAnalyzerRuntime,
-  effectRewriteDeletionLedger,
-  type TypeAnalyzerRuntime,
 } from "./service-spine"
 export type {
   DiagnosticInfo,

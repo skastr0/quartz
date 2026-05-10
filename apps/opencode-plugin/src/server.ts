@@ -1,7 +1,7 @@
 import type { Plugin } from "@opencode-ai/plugin"
 import { tool } from "@opencode-ai/plugin"
-import { Effect } from "effect"
-import { createTypeAnalyzerRuntime } from "@skastr0/quartz-core"
+import { Effect, ManagedRuntime } from "effect"
+import { CoreLayer, TypeAnalyzerService } from "@skastr0/quartz-core"
 import type { TypeAnalyzer } from "@skastr0/quartz-core"
 
 const run = <A>(effect: Effect.Effect<A, unknown>) =>
@@ -333,8 +333,8 @@ const createToolDefinitions = (analyzer: TypeAnalyzer) => ({
 })
 
 export const QuartzPlugin: Plugin = async (ctx) => {
-  const analyzerRuntime = createTypeAnalyzerRuntime(ctx.directory)
-  const analyzer = analyzerRuntime.analyzer
+  const runtime = ManagedRuntime.make(CoreLayer(ctx.directory))
+  const analyzer = runtime.runSync(TypeAnalyzerService)
   const client = ctx.client as { app?: { log?: (input: unknown) => Promise<unknown> } }
 
   return {
@@ -352,7 +352,7 @@ export const QuartzPlugin: Plugin = async (ctx) => {
     },
     "tool.execute.after": async (input) => {
       if (FILE_MODIFYING_TOOLS.has(input.tool)) {
-        analyzer.markDirty()
+        await run(analyzer.markDirty())
       }
     },
     tool: createToolDefinitions(analyzer),

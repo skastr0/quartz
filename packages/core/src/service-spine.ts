@@ -1,7 +1,8 @@
 import { resolve } from "node:path"
 import type { Project, SourceFile } from "ts-morph"
-import { Context, Effect, Layer, ManagedRuntime, Ref } from "effect"
-import { createLegacyTypeAnalyzerWithWorkspace, type DiagnosticOptions, type SearchTypesOptions, type TypeAnalyzer } from "./analyzer"
+import { Context, Effect, Layer, Ref } from "effect"
+import type { DiagnosticOptions, ListSymbolsOptions, SearchTypesOptions, SymbolInfo, TypeAnalyzer } from "./analyzer"
+import { getDeclarationName } from "./declarations"
 import { discoverPackages, type PackageInfo } from "./discovery"
 import { QuartzError } from "./errors"
 import { inspectSourceFile, type FileInspectionOptions } from "./file-inspection"
@@ -398,7 +399,6 @@ export class TypeAnalyzerService extends Effect.Service<TypeAnalyzerService>()("
     const typeGraph = yield* TypeGraph
     const transformSearch = yield* TransformSearch
     const state = yield* Ref.get(workspace.state)
-    const legacyAnalyzer = createLegacyTypeAnalyzerWithWorkspace(config.rootDirectory, state)
     const context: SymbolAnalysisContext = {
       rootDirectory: config.rootDirectory,
       kindToString,
@@ -422,10 +422,63 @@ export class TypeAnalyzerService extends Effect.Service<TypeAnalyzerService>()("
         catch: toQuartzError("Could not get type info"),
       })
     })
+    const listSymbols = Effect.fnUntraced(function* (options: ListSymbolsOptions = {}) {
+      const { pattern, kind, packageName, file, limit = 100, indexOnly = false } = options
+      const { pkg, project, sourceFiles } = yield* resolveTarget(packageName)
+      const symbols: SymbolInfo[] = []
+      const regex = pattern ? new RegExp(pattern, "i") : null
+      const fileRegex = file ? new RegExp(file, "i") : null
+
+      for (const sourceFile of sourceFiles) {
+        const filePath = workspaceRelativePath(state, sourceFile.getFilePath())
+        const isIndexFile =
+          filePath.endsWith("/index") ||
+          filePath.endsWith("/index.tsx") ||
+          filePath === "index" ||
+          filePath === "index.tsx"
+
+        if (indexOnly && !isIndexFile) continue
+        if (fileRegex && !fileRegex.test(filePath)) continue
+
+        for (const [exportName, declarations] of sourceFile.getExportedDeclarations()) {
+          for (const declaration of declarations) {
+            const name = exportName === "default" ? (getDeclarationName(declaration) ?? "default") : exportName
+            const symbolKind = kindToString(declaration.getKind())
+
+            if (kind && kind !== "all" && symbolKind !== kind) continue
+            if (regex && !regex.test(name)) continue
+
+            symbols.push({
+              name,
+              kind: symbolKind,
+              file: filePath,
+              line: declaration.getStartLineNumber(),
+              package: pkg.name,
+              isIndexExport: isIndexFile,
+            })
+          }
+        }
+      }
+
+      symbols.sort((left, right) => {
+        if (left.isIndexExport && !right.isIndexExport) return -1
+        if (!left.isIndexExport && right.isIndexExport) return 1
+        return left.name.localeCompare(right.name)
+      })
+
+      const total = symbols.length
+      const truncated = total > limit
+      return {
+        symbols: truncated ? symbols.slice(0, limit) : symbols,
+        total,
+        truncated,
+        package: pkg.name,
+      }
+    })
 
     const analyzer: TypeAnalyzer = {
-      ...legacyAnalyzer,
       getPackages: workspace.getPackages,
+      listSymbols,
       getTypeInfo,
       expandType: Effect.fnUntraced(function* (symbolName: string, packageName?: string) {
         const { pkg, project } = yield* resolveTarget(packageName)
@@ -445,7 +498,7 @@ export class TypeAnalyzerService extends Effect.Service<TypeAnalyzerService>()("
           ...(options.extends === undefined ? {} : { extends: options.extends }),
           ...(options.packageName === undefined ? {} : { packageName: options.packageName }),
         }
-        const symbols = yield* legacyAnalyzer.listSymbols({ ...symbolOptions, kind: "all", limit: 1000 })
+        const symbols = yield* listSymbols({ ...symbolOptions, kind: "all", limit: 1000 })
         const filteredSymbols =
           options.hasProperty === undefined && options.extends === undefined
             ? symbols.symbols.slice(0, options.limit ?? 25)
@@ -546,6 +599,17 @@ export class TypeAnalyzerService extends Effect.Service<TypeAnalyzerService>()("
       explainError: typeExplainer.explainError,
       explainType: typeExplainer.explainType,
       transformSearch: transformSearch.search,
+      refresh: Effect.fnUntraced(function* (packageName?: string) {
+        if (packageName !== undefined) {
+          yield* cache.refreshPackage(packageName)
+          yield* transformSearch.clear()
+          return `Refreshed TypeScript project for "${packageName}". Next type query will use fresh AST.`
+        }
+        yield* cache.refreshAll()
+        yield* transformSearch.clear()
+        return "Refreshed all TypeScript projects. Next type queries will use fresh AST."
+      }),
+      markDirty: () => cache.markDirty().pipe(Effect.zipRight(transformSearch.clear())),
     }
     return analyzer
   }),
@@ -627,41 +691,3 @@ export const CoreLayer = (rootDirectory: string): Layer.Layer<CoreServices> => {
 }
 
 export const AppLayer = CoreLayer
-
-export interface TypeAnalyzerRuntime {
-  readonly analyzer: TypeAnalyzer
-  readonly runtime: ManagedRuntime.ManagedRuntime<CoreServices, never>
-  readonly dispose: () => Promise<void>
-}
-
-export const createTypeAnalyzerRuntime = (rootDirectory: string): TypeAnalyzerRuntime => {
-  const runtime = ManagedRuntime.make(CoreLayer(rootDirectory))
-  return {
-    analyzer: runtime.runSync(TypeAnalyzerService),
-    runtime,
-    dispose: runtime.dispose,
-  }
-}
-
-export const effectRewriteDeletionLedger = [
-  {
-    symbol: "ProjectManager",
-    ownerGlyph: "QZ-007",
-    reason: "Old object coordinator. Domain services replace it and then delete it.",
-  },
-  {
-    symbol: "fromProjectPromise",
-    ownerGlyph: "QZ-007",
-    reason: "Promise bridge kept only until all analyzer operations are service-native.",
-  },
-  {
-    symbol: "removed promise-shaped discovery helpers",
-    ownerGlyph: "QZ-003",
-    reason: "Package discovery becomes Effect-native only.",
-  },
-  {
-    symbol: "direct new service wiring",
-    ownerGlyph: "QZ-003..QZ-006",
-    reason: "Direct construction moves into Layer-owned service implementations.",
-  },
-] as const

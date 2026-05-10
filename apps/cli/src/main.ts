@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 import { mkdir, writeFile } from "node:fs/promises"
 import { isAbsolute, join, relative, resolve } from "node:path"
-import { Either, Effect, JSONSchema, ParseResult, Schema } from "effect"
-import { createTypeAnalyzerRuntime, QuartzError } from "@skastr0/quartz-core"
-import type { ListSymbolsOptions, SearchTypesOptions, TypeAnalyzer, TypeAnalyzerRuntime } from "@skastr0/quartz-core"
+import { Either, Effect, JSONSchema, ManagedRuntime, ParseResult, Schema } from "effect"
+import { CoreLayer, QuartzError, TypeAnalyzerService } from "@skastr0/quartz-core"
+import type { ListSymbolsOptions, SearchTypesOptions, TypeAnalyzer } from "@skastr0/quartz-core"
 
 const VERSION = "0.1.0"
 const DEFAULT_CONCURRENCY = 5
@@ -274,14 +274,27 @@ interface PayloadWithPackage {
 const packageNameOf = (payload: PayloadWithPackage): string | undefined => payload.package
 const rootOf = (payload: PayloadWithRoot): string => payload.root ?? process.cwd()
 const cacheRootOf = (payload: PayloadWithRoot): string => resolve(rootOf(payload))
-const analyzersByRoot = new Map<string, TypeAnalyzerRuntime>()
+interface CachedAnalyzer {
+  readonly analyzer: TypeAnalyzer
+  readonly dispose: () => Promise<void>
+}
+
+const createCliAnalyzerRuntime = (root: string): CachedAnalyzer => {
+  const runtime = ManagedRuntime.make(CoreLayer(root))
+  return {
+    analyzer: runtime.runSync(TypeAnalyzerService),
+    dispose: runtime.dispose,
+  }
+}
+
+const analyzersByRoot = new Map<string, CachedAnalyzer>()
 
 const analyzerFor = (payload: PayloadWithRoot): TypeAnalyzer => {
   const root = cacheRootOf(payload)
   const cached = analyzersByRoot.get(root)
   if (cached !== undefined) return cached.analyzer
 
-  const runtime = createTypeAnalyzerRuntime(root)
+  const runtime = createCliAnalyzerRuntime(root)
   analyzersByRoot.set(root, runtime)
   return runtime.analyzer
 }

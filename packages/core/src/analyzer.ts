@@ -1,8 +1,6 @@
-import { resolve } from "node:path"
 import { Effect } from "effect"
 import type { PackageInfo } from "./discovery"
 import { QuartzError } from "./errors"
-import type { ProjectWorkspaceState } from "./project-workspace"
 import type {
   CompatibilityResult,
   ErrorExplanationResult,
@@ -13,9 +11,6 @@ import type {
   SnippetCheckResult,
   TypeExplanationResult,
 } from "./project-types"
-import {
-  ProjectManager,
-} from "./legacy-project"
 import type { TransformSearchOptions } from "./transform-search"
 
 export interface SymbolInfo {
@@ -159,62 +154,5 @@ export interface TypeAnalyzer {
     options: TransformSearchOptions & { readonly packageName?: string },
   ) => Effect.Effect<string, QuartzError>
   readonly refresh: (packageName?: string) => Effect.Effect<string, QuartzError>
-  readonly markDirty: () => void
+  readonly markDirty: () => Effect.Effect<void, QuartzError>
 }
-
-const fromProjectPromise = <A>(try_: () => Promise<A>): Effect.Effect<A, QuartzError> =>
-  Effect.tryPromise({
-    try: try_,
-    catch: (cause) =>
-      new QuartzError({
-        message: cause instanceof Error ? cause.message : String(cause),
-        cause,
-      }),
-  })
-
-type ServiceOwnedAnalyzerKey =
-  | "getPackages"
-  | "getTypeInfo"
-  | "expandType"
-  | "searchTypes"
-  | "evalType"
-  | "checkSnippet"
-  | "getFileDeclarations"
-  | "getTypeAtPosition"
-  | "findRelated"
-  | "checkCompatibility"
-  | "generateGraph"
-  | "previewRefactor"
-  | "getDiagnostics"
-  | "explainError"
-  | "explainType"
-  | "transformSearch"
-
-export type LegacyProjectAnalyzer = Omit<TypeAnalyzer, ServiceOwnedAnalyzerKey>
-
-export const createLegacyTypeAnalyzerWithWorkspace = (
-  rootDirectory: string,
-  workspace?: ProjectWorkspaceState,
-): LegacyProjectAnalyzer => {
-  const absoluteRootDirectory = resolve(rootDirectory)
-  const projectManager = new ProjectManager(absoluteRootDirectory, workspace)
-
-  return {
-    listSymbols: (options = {}) => fromProjectPromise(() => projectManager.listSymbols({ limit: 100, ...options })),
-    refresh: (packageName) => refreshAnalyzer(projectManager, packageName),
-    markDirty: () => projectManager.markDirty(),
-  }
-}
-
-const refreshAnalyzer = (
-  projectManager: ProjectManager,
-  packageName?: string,
-): Effect.Effect<string, QuartzError> =>
-  fromProjectPromise(async () => {
-    if (packageName !== undefined) {
-      await projectManager.refreshPackage(packageName)
-      return `Refreshed TypeScript project for "${packageName}". Next type query will use fresh AST.`
-    }
-    projectManager.refreshAll()
-    return "Refreshed all TypeScript projects. Next type queries will use fresh AST."
-  })
