@@ -34,6 +34,7 @@ import { SymbolLookup as SymbolLookupImplementation } from "./symbol-lookup"
 import { generateTypeGraph } from "./type-graph"
 import { TypeExplainer as TypeExplainerImplementation } from "./type-explanations"
 import { checkResolvedTypeCompatibility, TypeRelationExplorer } from "./type-relations"
+import { formatResults, TransformSearchEngine, type TransformSearchOptions } from "./transform-search"
 
 const toQuartzError = (message: string) => (cause: unknown) =>
   new QuartzError({
@@ -348,12 +349,38 @@ export class TypeGraph extends Effect.Service<TypeGraph>()("@skastr0/quartz/Type
   }),
 }) {}
 
-export class TransformSearch extends Context.Tag("@skastr0/quartz/TransformSearch")<
-  TransformSearch,
-  {
-    readonly _service: "TransformSearch"
-  }
->() {}
+export class TransformSearch extends Effect.Service<TransformSearch>()("@skastr0/quartz/TransformSearch", {
+  accessors: true,
+  effect: Effect.gen(function* () {
+    const workspace = yield* ProjectWorkspace
+    const cache = yield* SourceProjectCache
+    const engines = yield* Ref.make(new Map<string, TransformSearchEngine>())
+    return {
+      search: Effect.fnUntraced(function* (options: TransformSearchOptions & { readonly packageName?: string }) {
+        const pkg = yield* workspace.resolvePackage(options.packageName)
+        const project = yield* cache.getProject(pkg)
+        const sourceFiles = yield* cache.getSourceFiles(project, pkg)
+        const engine = yield* Ref.modify(engines, (current) => {
+          const cached = current.get(pkg.tsconfigPath)
+          if (cached !== undefined) return [cached, current] as const
+          const next = new Map(current)
+          const created = new TransformSearchEngine(project, pkg.path, [...sourceFiles])
+          next.set(pkg.tsconfigPath, created)
+          return [created, next] as const
+        })
+        const result = yield* Effect.tryPromise({
+          try: () => engine.search(options),
+          catch: toQuartzError("Could not search transforms"),
+        })
+        return formatResults(result)
+      }),
+      clear: () => Ref.update(engines, (current) => {
+        if (current.size === 0) return current
+        return new Map()
+      }),
+    }
+  }),
+}) {}
 
 export class TypeAnalyzerService extends Effect.Service<TypeAnalyzerService>()("@skastr0/quartz/TypeAnalyzer", {
   accessors: true,
@@ -369,6 +396,7 @@ export class TypeAnalyzerService extends Effect.Service<TypeAnalyzerService>()("
     const typeExplainer = yield* TypeExplainer
     const refactorPreview = yield* RefactorPreview
     const typeGraph = yield* TypeGraph
+    const transformSearch = yield* TransformSearch
     const state = yield* Ref.get(workspace.state)
     const legacyAnalyzer = createLegacyTypeAnalyzerWithWorkspace(config.rootDirectory, state)
     const context: SymbolAnalysisContext = {
@@ -517,6 +545,7 @@ export class TypeAnalyzerService extends Effect.Service<TypeAnalyzerService>()("
       }),
       explainError: typeExplainer.explainError,
       explainType: typeExplainer.explainType,
+      transformSearch: transformSearch.search,
     }
     return analyzer
   }),
@@ -535,6 +564,7 @@ export type CoreServices =
   | TypeExplainer
   | RefactorPreview
   | TypeGraph
+  | TransformSearch
   | TypeAnalyzerService
 
 export const CoreLayer = (rootDirectory: string): Layer.Layer<CoreServices> => {
@@ -559,6 +589,7 @@ export const CoreLayer = (rootDirectory: string): Layer.Layer<CoreServices> => {
   const typeGraphLayer = TypeGraph.Default.pipe(
     Layer.provide(Layer.mergeAll(workspaceLayer, cacheLayer, symbolLookupLayer, typeRelationsLayer)),
   )
+  const transformSearchLayer = TransformSearch.Default.pipe(Layer.provide(Layer.mergeAll(workspaceLayer, cacheLayer)))
   const typeAnalyzerLayer = TypeAnalyzerService.Default.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -573,6 +604,7 @@ export const CoreLayer = (rootDirectory: string): Layer.Layer<CoreServices> => {
         typeExplainerLayer,
         refactorPreviewLayer,
         typeGraphLayer,
+        transformSearchLayer,
       ),
     ),
   )
@@ -589,6 +621,7 @@ export const CoreLayer = (rootDirectory: string): Layer.Layer<CoreServices> => {
     typeExplainerLayer,
     refactorPreviewLayer,
     typeGraphLayer,
+    transformSearchLayer,
     typeAnalyzerLayer,
   )
 }

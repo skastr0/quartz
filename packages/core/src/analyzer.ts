@@ -16,7 +16,7 @@ import type {
 import {
   ProjectManager,
 } from "./legacy-project"
-import { TransformSearchEngine, formatResults, type TransformSearchOptions } from "./transform-search"
+import type { TransformSearchOptions } from "./transform-search"
 
 export interface SymbolInfo {
   readonly name: string
@@ -188,6 +188,7 @@ type ServiceOwnedAnalyzerKey =
   | "getDiagnostics"
   | "explainError"
   | "explainType"
+  | "transformSearch"
 
 export type LegacyProjectAnalyzer = Omit<TypeAnalyzer, ServiceOwnedAnalyzerKey>
 
@@ -200,24 +201,10 @@ export const createLegacyTypeAnalyzerWithWorkspace = (
 
   return {
     listSymbols: (options = {}) => fromProjectPromise(() => projectManager.listSymbols({ limit: 100, ...options })),
-    transformSearch: (options) => transformSearch(projectManager, options),
     refresh: (packageName) => refreshAnalyzer(projectManager, packageName),
     markDirty: () => projectManager.markDirty(),
   }
 }
-
-const transformSearch = (
-  projectManager: ProjectManager,
-  options: TransformSearchOptions & { readonly packageName?: string },
-): Effect.Effect<string, QuartzError> =>
-  fromProjectPromise(async () => {
-    const pkg = await projectManager.resolvePackagePublic(options.packageName)
-    const project = projectManager.getProjectPublic(pkg)
-    const sourceFiles = projectManager.getSourceFilesPublic(project, pkg)
-    const engine = new TransformSearchEngine(project, pkg.path, sourceFiles)
-    const result = await engine.search(options)
-    return formatResults(result)
-  })
 
 const refreshAnalyzer = (
   projectManager: ProjectManager,

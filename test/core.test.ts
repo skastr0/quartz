@@ -13,6 +13,7 @@ import {
   TypeExplainer,
   TypeGraph,
   TypeRelations,
+  TransformSearch,
   createTypeAnalyzerRuntime,
 } from "@skastr0/quartz-core"
 import { createFixtureAnalyzer, fixturesPath } from "./helpers/analyzer"
@@ -85,6 +86,7 @@ describe("type analyzer core", () => {
     const typeGraphLayer = TypeGraph.Default.pipe(
       Layer.provide(Layer.mergeAll(workspaceLayer, cacheLayer, symbolLookupLayer, typeRelationsLayer)),
     )
+    const transformSearchLayer = TransformSearch.Default.pipe(Layer.provide(Layer.mergeAll(workspaceLayer, cacheLayer)))
     const analyzerLayer = TypeAnalyzerService.Default.pipe(
       Layer.provide(
         Layer.mergeAll(
@@ -99,6 +101,7 @@ describe("type analyzer core", () => {
           typeExplainerLayer,
           refactorPreviewLayer,
           typeGraphLayer,
+          transformSearchLayer,
         ),
       ),
     )
