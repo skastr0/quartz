@@ -1,6 +1,6 @@
 import { resolve } from "node:path"
 import { Project, type SourceFile, SyntaxKind } from "ts-morph"
-import { discoverPackagesPromise, type PackageInfo } from "./discovery"
+import { discoverPackagesSync, type PackageInfo } from "./discovery"
 
 export interface CachedProject {
   readonly project: Project
@@ -77,7 +77,7 @@ export class ProjectWorkspace {
 
   async getPackages(): Promise<PackageInfo[]> {
     if (!this.packages) {
-      this.packages = [...(await discoverPackagesPromise(this.rootDirectory))]
+      this.packages = [...discoverPackagesSync(this.rootDirectory)]
     }
     return this.packages
   }
