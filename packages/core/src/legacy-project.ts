@@ -1,7 +1,6 @@
 import {
   Project,
   type SourceFile,
-  type Symbol,
   SyntaxKind,
   Node,
 } from "ts-morph";
@@ -9,12 +8,10 @@ import { isAbsolute, join, relative } from "path";
 
 import { getDeclarationName } from "./declarations";
 import type { PackageInfo } from "./discovery";
-import { collectLoadedPackageDiagnostics, collectPackageDiagnostics } from "./project-diagnostics";
 import {
   createProjectWorkspaceState,
   getCachedProject,
   getWorkspacePackages,
-  getWorkspaceCachedProjects,
   getWorkspaceSourceFiles,
   kindToString,
   markWorkspaceDirty,
@@ -24,23 +21,11 @@ import {
   type ProjectWorkspaceState,
   workspaceRelativePath,
 } from "./project-workspace";
-import { previewRenameRefactor } from "./refactor-preview";
 import type {
-  CompatibilityResult,
-  ErrorExplanationIssue,
-  ErrorExplanationResult,
-  GraphResult,
   ListSymbolsOptions,
-  RefactorPreviewResult,
-  RelatedInfo,
   SymbolInfo,
   SymbolListResult,
-  TypeExplanationResult,
 } from "./project-types";
-import { findSymbolInWorkspace } from "./symbol-lookup";
-import { generateTypeGraph } from "./type-graph";
-import { TypeExplainer } from "./type-explanations";
-import { TypeRelationExplorer } from "./type-relations";
 
 export type {
   CompatibilityResult,
@@ -69,20 +54,9 @@ export type {
 
 export class ProjectManager {
   private readonly workspace: ProjectWorkspaceState;
-  private readonly typeRelations: TypeRelationExplorer;
-  private readonly typeExplainer: TypeExplainer;
 
   constructor(directory: string, workspace: ProjectWorkspaceState = createProjectWorkspaceState(directory)) {
     this.workspace = workspace;
-    this.typeRelations = new TypeRelationExplorer({
-      relativePath: this.relativePath.bind(this),
-    });
-    this.typeExplainer = new TypeExplainer({
-      getPackageDiagnostics: this.getPackageDiagnostics.bind(this),
-      checkCompatibility: this.checkCompatibility.bind(this),
-      findSymbol: this.findSymbol.bind(this),
-      evalType: async () => ({ error: "Type expression evaluation is owned by TypeAnalyzerService" }),
-    });
   }
 
   private get rootDirectory(): string {
@@ -216,226 +190,6 @@ export class ProjectManager {
     return getDeclarationName(node);
   }
 
-  private findSymbol(
-    symbolName: string,
-    project: Project,
-    pkg: PackageInfo,
-  ): { node: Node; symbol: Symbol } | null {
-    return findSymbolInWorkspace(this.workspace, symbolName, project, pkg);
-  }
-
-  async findRelated(symbolName: string, packageName?: string): Promise<RelatedInfo | null> {
-    const pkg = await this.resolvePackage(packageName);
-    const project = this.getProject(pkg);
-    const found = this.findSymbol(symbolName, project, pkg);
-
-    if (!found) {
-      return null;
-    }
-
-    return this.typeRelations.findRelated(symbolName, project, found);
-  }
-
-  async searchTypes(
-    options: { pattern?: string; hasProperty?: string; extends?: string; limit?: number },
-    packageName?: string,
-  ): Promise<SymbolListResult> {
-    const limit = options.limit ?? 50;
-    const listOptions: ListSymbolsOptions = { kind: "all", limit: 1000 };
-    if (options.pattern !== undefined) listOptions.pattern = options.pattern;
-    if (packageName !== undefined) listOptions.packageName = packageName;
-    const listResult = await this.listSymbols(listOptions);
-
-    const pkg = await this.resolvePackage(packageName);
-    const project = this.getProject(pkg);
-    const results: SymbolInfo[] = [];
-
-    for (const sym of listResult.symbols) {
-      const found = this.findSymbol(sym.name, project, pkg);
-      if (!found) continue;
-
-      const { node } = found;
-      const type = node.getType();
-
-      if (options.hasProperty) {
-        const prop = type.getProperty(options.hasProperty);
-        if (!prop) continue;
-      }
-
-      if (options.extends) {
-        const baseTypes = type.getBaseTypes();
-        const hasBase = baseTypes.some((bt) => {
-          const baseSymbol = bt.getSymbol();
-          return baseSymbol && baseSymbol.getName() === options.extends;
-        });
-        if (!hasBase) continue;
-      }
-
-      results.push(sym);
-
-      if (results.length >= limit) break;
-    }
-
-    return {
-      symbols: results,
-      total: results.length,
-      truncated: results.length >= limit,
-      package: pkg.name,
-    };
-  }
-
-  async checkCompatibility(
-    fromSymbol: string,
-    toSymbol: string,
-    packageName?: string,
-  ): Promise<CompatibilityResult> {
-    const pkg = await this.resolvePackage(packageName);
-    const project = this.getProject(pkg);
-
-    const fromFound = this.findSymbol(fromSymbol, project, pkg);
-    const toFound = this.findSymbol(toSymbol, project, pkg);
-
-    if (!fromFound) {
-      const message = `Symbol "${fromSymbol}" not found`;
-      return {
-        compatible: false,
-        from: fromSymbol,
-        to: toSymbol,
-        reason: message,
-        issues: [{ kind: "other", message }],
-      };
-    }
-
-    if (!toFound) {
-      const message = `Symbol "${toSymbol}" not found`;
-      return {
-        compatible: false,
-        from: fromSymbol,
-        to: toSymbol,
-        reason: message,
-        issues: [{ kind: "other", message }],
-      };
-    }
-
-    const fromType = fromFound.node.getType();
-    const toType = toFound.node.getType();
-
-    const fromTypeText = fromType.getText(fromFound.node);
-    const toTypeText = toType.getText(toFound.node);
-
-    // Check assignability using ts-morph's isAssignableTo
-    const isAssignable = fromType.isAssignableTo(toType);
-
-    if (isAssignable) {
-      return {
-        compatible: true,
-        from: fromTypeText,
-        to: toTypeText,
-      };
-    }
-
-    const reasons: string[] = [];
-    const issues: ErrorExplanationIssue[] = [];
-
-    const toProperties = toType.getProperties();
-    const fromProperties = fromType.getProperties();
-    const fromPropNames = new Set(fromProperties.map((p) => p.getName()));
-
-    for (const toProp of toProperties) {
-      const propName = toProp.getName();
-      if (!toProp.isOptional() && !fromPropNames.has(propName)) {
-        const propType = toProp.getTypeAtLocation(toFound.node).getText(toFound.node);
-        const message = `Property '${propName}' is missing in type '${fromTypeText}' but required in type '${toTypeText}' (expected: ${propType})`;
-        reasons.push(message);
-        issues.push({
-          kind: "missing_property",
-          property: propName,
-          expectedType: propType,
-          message,
-        });
-      }
-    }
-
-    for (const fromProp of fromProperties) {
-      const propName = fromProp.getName();
-      const toProp = toType.getProperty(propName);
-
-      if (toProp) {
-        const fromPropType = fromProp.getTypeAtLocation(fromFound.node);
-        const toPropType = toProp.getTypeAtLocation(toFound.node);
-
-        if (!fromPropType.isAssignableTo(toPropType)) {
-          const fromPropText = fromPropType.getText(fromFound.node);
-          const toPropText = toPropType.getText(toFound.node);
-          const message = `Property '${propName}' has incompatible types: '${fromPropText}' is not assignable to '${toPropText}'`;
-          reasons.push(message);
-          issues.push({
-            kind: "type_mismatch",
-            property: propName,
-            actualType: fromPropText,
-            expectedType: toPropText,
-            message,
-          });
-        }
-      }
-    }
-
-    const fromCallSigs = fromType.getCallSignatures();
-    const toCallSigs = toType.getCallSignatures();
-
-    if (toCallSigs.length > 0 && fromCallSigs.length === 0) {
-      const message = `Type '${fromTypeText}' is not callable but '${toTypeText}' requires call signatures`;
-      reasons.push(message);
-      issues.push({ kind: "not_callable", message });
-    }
-
-    if (reasons.length === 0) {
-      const message = `Type '${fromTypeText}' is not assignable to type '${toTypeText}'`;
-      reasons.push(message);
-      issues.push({ kind: "other", message });
-    }
-
-    return {
-      compatible: false,
-      from: fromTypeText,
-      to: toTypeText,
-      reason: reasons.join("; "),
-      issues,
-    };
-  }
-
-  async generateGraph(
-    symbolName: string,
-    options: { depth?: number; format?: "mermaid" | "dot"; packageName?: string } = {},
-  ): Promise<GraphResult | null> {
-    const { packageName } = options;
-    const pkg = await this.resolvePackage(packageName);
-    const project = this.getProject(pkg);
-    return generateTypeGraph(symbolName, options, project, pkg, {
-      findSymbol: this.findSymbol.bind(this),
-      findRelated: this.findRelated.bind(this),
-    });
-  }
-
-  async previewRefactor(options: {
-    action: "rename";
-    symbol: string;
-    to: string;
-    packageName?: string;
-  }): Promise<RefactorPreviewResult> {
-    const pkg = await this.resolvePackage(options.packageName);
-    const project = this.getProject(pkg);
-
-    const found = this.findSymbol(options.symbol, project, pkg);
-    if (!found) {
-      throw new Error(`Symbol "${options.symbol}" not found`);
-    }
-
-    return previewRenameRefactor(options, project, pkg, found, {
-      relativePath: this.relativePath.bind(this),
-    });
-  }
-
   // === Public API for Transform Search ===
 
   /**
@@ -480,58 +234,4 @@ export class ProjectManager {
     return undefined;
   }
 
-  /**
-   * Get all pre-emit diagnostics (type errors) for a specific package.
-   * Returns an array of diagnostic info with file, line, and message.
-   */
-  async getPackageDiagnostics(
-    packageName?: string,
-  ): Promise<Array<{ file: string; line: number; column: number; message: string; code: number }>> {
-    const pkg = await this.resolvePackage(packageName);
-    const project = this.getProject(pkg);
-    return collectPackageDiagnostics(project, pkg, {
-      relativePath: this.relativePath.bind(this),
-    });
-  }
-
-  /**
-   * Get diagnostics for all loaded/touched packages.
-   * Only checks packages that have been loaded into the cache.
-   */
-  async getDiagnosticsForLoadedPackages(): Promise<
-    Map<
-      string,
-      Array<{ file: string; line: number; column: number; message: string; code: number }>
-    >
-  > {
-    return collectLoadedPackageDiagnostics(getWorkspaceCachedProjects(this.workspace), {
-      relativePath: this.relativePath.bind(this),
-    });
-  }
-
-  /**
-   * Explain a TypeScript error in human terms.
-   * Provides context about what went wrong, why, and how to fix it.
-   */
-  async explainError(options: {
-    code?: number;
-    message?: string;
-    file?: string;
-    line?: number;
-    packageName?: string;
-  }): Promise<ErrorExplanationResult | null> {
-    const pkg = await this.resolvePackage(options.packageName);
-    const project = this.getProject(pkg);
-    return this.typeExplainer.explainError(options, project, pkg);
-  }
-
-  /**
-   * Explain a complex type expression step by step.
-   * Shows how utility types and generics are resolved.
-   */
-  async explainType(expression: string, packageName?: string): Promise<TypeExplanationResult> {
-    const _pkg = await this.resolvePackage(packageName);
-    this.getProject(_pkg); // Ensure project is loaded for evalType
-    return this.typeExplainer.explainType(expression, packageName);
-  }
 }

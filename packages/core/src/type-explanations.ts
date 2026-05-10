@@ -1,4 +1,5 @@
 import { Node, type Project, type Symbol, TypeFormatFlags } from "ts-morph";
+import { Effect } from "effect";
 import type { PackageInfo } from "./discovery";
 import type {
   CompatibilityResult,
@@ -25,219 +26,245 @@ export interface DiagnosticRecord {
 }
 
 export interface TypeExplanationContext {
-  readonly getPackageDiagnostics: (packageName?: string) => Promise<readonly DiagnosticRecord[]>;
-  readonly checkCompatibility: (from: string, to: string, packageName?: string) => Promise<CompatibilityResult>;
-  readonly findSymbol: (symbolName: string, project: Project, pkg: PackageInfo) => { node: Node; symbol: Symbol } | null;
+  readonly getPackageDiagnostics: (packageName?: string) => Effect.Effect<readonly DiagnosticRecord[], unknown>;
+  readonly checkCompatibility: (
+    from: string,
+    to: string,
+    packageName?: string,
+  ) => Effect.Effect<CompatibilityResult, unknown>;
+  readonly findSymbol: (
+    symbolName: string,
+    project: Project,
+    pkg: PackageInfo,
+  ) => Effect.Effect<{ node: Node; symbol: Symbol } | null, unknown>;
   readonly evalType: (
     expression: string,
     packageName?: string,
-  ) => Promise<{ result: string; expanded: string } | { error: string }>;
+  ) => Effect.Effect<{ result: string; expanded: string } | { error: string }, unknown>;
 }
 
 export class TypeExplainer {
   constructor(private readonly context: TypeExplanationContext) {}
 
-  async explainError(
+  explainError(
     options: ErrorExplanationOptions,
     project: Project,
     pkg: PackageInfo,
-  ): Promise<ErrorExplanationResult | null> {
-    let errorCode = options.code;
-    let errorMessage = options.message ?? "";
+  ): Effect.Effect<ErrorExplanationResult | null, unknown> {
+    return Effect.gen(this, function* () {
+      let errorCode = options.code;
+      let errorMessage = options.message ?? "";
 
-    if (options.file !== undefined && options.line !== undefined && !errorMessage) {
-      const diagnostics = await this.context.getPackageDiagnostics(options.packageName);
-      const matchingDiagnostic = diagnostics.find(
-        (diagnostic) => diagnostic.file.endsWith(options.file!) && diagnostic.line === options.line,
-      );
-      if (matchingDiagnostic !== undefined) {
-        errorCode = matchingDiagnostic.code;
-        errorMessage = matchingDiagnostic.message;
+      if (options.file !== undefined && options.line !== undefined && !errorMessage) {
+        const diagnostics = yield* this.context.getPackageDiagnostics(options.packageName);
+        const matchingDiagnostic = diagnostics.find(
+          (diagnostic) => diagnostic.file.endsWith(options.file!) && diagnostic.line === options.line,
+        );
+        if (matchingDiagnostic !== undefined) {
+          errorCode = matchingDiagnostic.code;
+          errorMessage = matchingDiagnostic.message;
+        }
       }
-    }
 
-    if (!errorMessage) return null;
+      if (!errorMessage) return null;
 
-    const extracted = extractTypesFromError(errorMessage);
-    const result: ErrorExplanationResult = {
-      error: { code: errorCode ?? 0, message: errorMessage },
-      explanation: "",
-      issues: [],
-      suggestions: [],
-    };
+      const extracted = extractTypesFromError(errorMessage);
+      const result: ErrorExplanationResult = {
+        error: { code: errorCode ?? 0, message: errorMessage },
+        explanation: "",
+        issues: [],
+        suggestions: [],
+      };
 
-    switch (errorCode) {
-      case 2322:
-      case 2345:
-        await this.explainAssignabilityError(result, extracted, project, pkg, options.packageName);
-        break;
-      case 2339:
-        await this.explainMissingMemberError(result, extracted, project, pkg);
-        break;
-      case 2741:
-        await this.explainMissingRequiredPropertyError(result, extracted, project, pkg);
-        break;
-      case 2551:
-        await this.explainSuggestedPropertyError(result, extracted, project, pkg);
-        break;
-      default:
-        await this.explainGenericError(result, extracted, errorMessage, project, pkg);
-        break;
-    }
+      switch (errorCode) {
+        case 2322:
+        case 2345:
+          yield* this.explainAssignabilityError(result, extracted, project, pkg, options.packageName);
+          break;
+        case 2339:
+          yield* this.explainMissingMemberError(result, extracted, project, pkg);
+          break;
+        case 2741:
+          yield* this.explainMissingRequiredPropertyError(result, extracted, project, pkg);
+          break;
+        case 2551:
+          yield* this.explainSuggestedPropertyError(result, extracted, project, pkg);
+          break;
+        default:
+          yield* this.explainGenericError(result, extracted, errorMessage, project, pkg);
+          break;
+      }
 
-    return result;
+      return result;
+    });
   }
 
-  async explainType(expression: string, packageName?: string): Promise<TypeExplanationResult> {
-    const finalResult = await this.evaluateTypeExplanationFinal(expression, packageName);
-    const components = parseTypeExpression(expression);
-    const steps = await this.buildTypeExplanationSteps(expression, components, finalResult, packageName);
+  explainType(expression: string, packageName?: string): Effect.Effect<TypeExplanationResult, unknown> {
+    return Effect.gen(this, function* () {
+      const finalResult = yield* this.evaluateTypeExplanationFinal(expression, packageName);
+      const components = parseTypeExpression(expression);
+      const steps = yield* this.buildTypeExplanationSteps(expression, components, finalResult, packageName);
 
-    return { expression, steps, final: finalResult };
+      return { expression, steps, final: finalResult };
+    });
   }
 
-  private async explainAssignabilityError(
+  private explainAssignabilityError(
     result: ErrorExplanationResult,
     extracted: { types: string[]; properties: string[] },
     project: Project,
     pkg: PackageInfo,
     packageName?: string,
-  ): Promise<void> {
-    if (extracted.types.length < 2) return;
+  ): Effect.Effect<void, unknown> {
+    return Effect.gen(this, function* () {
+      if (extracted.types.length < 2) return;
 
-    const [fromType, toType] = extracted.types;
-    await this.expandResultTypes(result, [fromType!, toType!], project, pkg);
+      const [fromType, toType] = extracted.types;
+      yield* this.expandResultTypes(result, [fromType!, toType!], project, pkg);
 
-    const compatibility = await this.context.checkCompatibility(fromType!, toType!, packageName);
-    if (!compatibility.compatible) {
-      result.issues.push(
-        ...(compatibility.issues ?? [
-          { kind: "other", message: compatibility.reason ?? "Types are not compatible" },
-        ]),
-      );
-    }
+      const compatibility = yield* this.context.checkCompatibility(fromType!, toType!, packageName);
+      if (!compatibility.compatible) {
+        result.issues.push(
+          ...(compatibility.issues ?? [
+            { kind: "other", message: compatibility.reason ?? "Types are not compatible" },
+          ]),
+        );
+      }
 
-    result.explanation = `You're trying to use a value of type '${fromType}' where a value of type '${toType}' is expected. These types are not compatible.`;
-    addAssignabilitySuggestions(result, toType!);
+      result.explanation = `You're trying to use a value of type '${fromType}' where a value of type '${toType}' is expected. These types are not compatible.`;
+      addAssignabilitySuggestions(result, toType!);
+    });
   }
 
-  private async explainMissingMemberError(
+  private explainMissingMemberError(
     result: ErrorExplanationResult,
     extracted: { types: string[]; properties: string[] },
     project: Project,
     pkg: PackageInfo,
-  ): Promise<void> {
-    if (extracted.properties.length === 0 || extracted.types.length === 0) return;
+  ): Effect.Effect<void, unknown> {
+    return Effect.gen(this, function* () {
+      if (extracted.properties.length === 0 || extracted.types.length === 0) return;
 
-    const [targetType] = extracted.types;
-    const [missingProperty] = extracted.properties;
-    await this.expandTargetType(result, targetType!, project, pkg);
+      const [targetType] = extracted.types;
+      const [missingProperty] = extracted.properties;
+      yield* this.expandTargetType(result, targetType!, project, pkg);
 
-    result.issues.push({
-      kind: "missing_property",
-      ...(missingProperty === undefined ? {} : { property: missingProperty }),
-      message: `Property '${missingProperty}' does not exist on type '${targetType}'`,
+      result.issues.push({
+        kind: "missing_property",
+        ...(missingProperty === undefined ? {} : { property: missingProperty }),
+        message: `Property '${missingProperty}' does not exist on type '${targetType}'`,
+      });
+      result.explanation = `You're trying to access property '${missingProperty}' on type '${targetType}', but this property doesn't exist.`;
+      result.suggestions.push(`Add property '${missingProperty}' to the ${targetType} type`);
+      result.suggestions.push("Check for typos in the property name");
+      result.suggestions.push("Use optional chaining (?.) if the property might not exist");
     });
-    result.explanation = `You're trying to access property '${missingProperty}' on type '${targetType}', but this property doesn't exist.`;
-    result.suggestions.push(`Add property '${missingProperty}' to the ${targetType} type`);
-    result.suggestions.push("Check for typos in the property name");
-    result.suggestions.push("Use optional chaining (?.) if the property might not exist");
   }
 
-  private async explainMissingRequiredPropertyError(
+  private explainMissingRequiredPropertyError(
     result: ErrorExplanationResult,
     extracted: { types: string[]; properties: string[] },
     project: Project,
     pkg: PackageInfo,
-  ): Promise<void> {
-    if (extracted.properties.length === 0 || extracted.types.length < 2) return;
+  ): Effect.Effect<void, unknown> {
+    return Effect.gen(this, function* () {
+      if (extracted.properties.length === 0 || extracted.types.length < 2) return;
 
-    const [fromType, toType] = extracted.types;
-    const [missingProperty] = extracted.properties;
-    await this.expandResultTypes(result, [fromType!, toType!], project, pkg);
+      const [fromType, toType] = extracted.types;
+      const [missingProperty] = extracted.properties;
+      yield* this.expandResultTypes(result, [fromType!, toType!], project, pkg);
 
-    result.issues.push({
-      kind: "missing_property",
-      ...(missingProperty === undefined ? {} : { property: missingProperty }),
-      message: `Property '${missingProperty}' is required but missing`,
+      result.issues.push({
+        kind: "missing_property",
+        ...(missingProperty === undefined ? {} : { property: missingProperty }),
+        message: `Property '${missingProperty}' is required but missing`,
+      });
+      result.explanation = `Type '${fromType}' is missing required property '${missingProperty}' that '${toType}' expects.`;
+      result.suggestions.push(`Add property '${missingProperty}' to your object`);
+      result.suggestions.push(`Make '${missingProperty}' optional in ${toType} using '${missingProperty}?:'`);
     });
-    result.explanation = `Type '${fromType}' is missing required property '${missingProperty}' that '${toType}' expects.`;
-    result.suggestions.push(`Add property '${missingProperty}' to your object`);
-    result.suggestions.push(`Make '${missingProperty}' optional in ${toType} using '${missingProperty}?:'`);
   }
 
-  private async explainSuggestedPropertyError(
+  private explainSuggestedPropertyError(
     result: ErrorExplanationResult,
     extracted: { types: string[]; properties: string[] },
     project: Project,
     pkg: PackageInfo,
-  ): Promise<void> {
-    if (extracted.properties.length < 2 || extracted.types.length === 0) return;
+  ): Effect.Effect<void, unknown> {
+    return Effect.gen(this, function* () {
+      if (extracted.properties.length < 2 || extracted.types.length === 0) return;
 
-    const [targetType] = extracted.types;
-    const [wrongProperty, suggestedProperty] = extracted.properties;
-    await this.expandTargetType(result, targetType!, project, pkg);
+      const [targetType] = extracted.types;
+      const [wrongProperty, suggestedProperty] = extracted.properties;
+      yield* this.expandTargetType(result, targetType!, project, pkg);
 
-    result.issues.push({
-      kind: "missing_property",
-      ...(wrongProperty === undefined ? {} : { property: wrongProperty }),
-      message: `Property '${wrongProperty}' doesn't exist, did you mean '${suggestedProperty}'?`,
+      result.issues.push({
+        kind: "missing_property",
+        ...(wrongProperty === undefined ? {} : { property: wrongProperty }),
+        message: `Property '${wrongProperty}' doesn't exist, did you mean '${suggestedProperty}'?`,
+      });
+      result.explanation = `You typed '${wrongProperty}' but this property doesn't exist on '${targetType}'. TypeScript suggests '${suggestedProperty}' instead.`;
+      result.suggestions.push(`Replace '${wrongProperty}' with '${suggestedProperty}'`);
     });
-    result.explanation = `You typed '${wrongProperty}' but this property doesn't exist on '${targetType}'. TypeScript suggests '${suggestedProperty}' instead.`;
-    result.suggestions.push(`Replace '${wrongProperty}' with '${suggestedProperty}'`);
   }
 
-  private async explainGenericError(
+  private explainGenericError(
     result: ErrorExplanationResult,
     extracted: { types: string[]; properties: string[] },
     errorMessage: string,
     project: Project,
     pkg: PackageInfo,
-  ): Promise<void> {
-    if (extracted.types.length > 0) {
-      await this.expandResultTypes(result, extracted.types.slice(0, 2), project, pkg);
-    }
-    result.explanation = errorMessage;
-    result.issues.push({ kind: "other", message: errorMessage });
-    result.suggestions.push("Review the types involved using type_expand");
-    result.suggestions.push("Check type compatibility using type_compatible");
+  ): Effect.Effect<void, unknown> {
+    return Effect.gen(this, function* () {
+      if (extracted.types.length > 0) {
+        yield* this.expandResultTypes(result, extracted.types.slice(0, 2), project, pkg);
+      }
+      result.explanation = errorMessage;
+      result.issues.push({ kind: "other", message: errorMessage });
+      result.suggestions.push("Review the types involved using type_expand");
+      result.suggestions.push("Check type compatibility using type_compatible");
+    });
   }
 
-  private async expandResultTypes(
+  private expandResultTypes(
     result: ErrorExplanationResult,
     typeNames: readonly string[],
     project: Project,
     pkg: PackageInfo,
-  ): Promise<void> {
-    for (let index = 0; index < Math.min(typeNames.length, 2); index++) {
-      const typeName = typeNames[index]!;
-      const expanded = this.safeExpandType(typeName, project, pkg);
-      if (expanded === null) continue;
-      result.types ??= {};
-      if (index === 0) {
-        result.types.from = { name: typeName, expanded };
-      } else {
-        result.types.to = { name: typeName, expanded };
+  ): Effect.Effect<void, unknown> {
+    return Effect.gen(this, function* () {
+      for (let index = 0; index < Math.min(typeNames.length, 2); index++) {
+        const typeName = typeNames[index]!;
+        const expanded = yield* this.safeExpandType(typeName, project, pkg);
+        if (expanded === null) continue;
+        result.types ??= {};
+        if (index === 0) {
+          result.types.from = { name: typeName, expanded };
+        } else {
+          result.types.to = { name: typeName, expanded };
+        }
       }
-    }
+    });
   }
 
-  private async expandTargetType(
+  private expandTargetType(
     result: ErrorExplanationResult,
     typeName: string,
     project: Project,
     pkg: PackageInfo,
-  ): Promise<void> {
-    const expanded = this.safeExpandType(typeName, project, pkg);
-    if (expanded !== null) {
-      result.types ??= {};
-      result.types.target = { name: typeName, expanded };
-    }
+  ): Effect.Effect<void, unknown> {
+    return Effect.gen(this, function* () {
+      const expanded = yield* this.safeExpandType(typeName, project, pkg);
+      if (expanded !== null) {
+        result.types ??= {};
+        result.types.target = { name: typeName, expanded };
+      }
+    });
   }
 
-  private safeExpandType(typeName: string, project: Project, pkg: PackageInfo): string | null {
-    try {
-      const found = this.context.findSymbol(typeName, project, pkg);
+  private safeExpandType(typeName: string, project: Project, pkg: PackageInfo): Effect.Effect<string | null, unknown> {
+    return Effect.gen(this, function* () {
+      const found = yield* this.context.findSymbol(typeName, project, pkg);
       if (found === null) return null;
 
       const { node } = found;
@@ -271,52 +298,54 @@ export class TypeExplainer {
       }
 
       return expanded;
-    } catch {
-      return null;
-    }
+    }).pipe(Effect.catchAll(() => Effect.succeed(null)));
   }
 
-  private async evaluateTypeExplanationFinal(expression: string, packageName?: string): Promise<string> {
-    const evalResult = await this.context.evalType(expression, packageName);
-    return "error" in evalResult ? `Error: ${evalResult.error}` : evalResult.expanded;
+  private evaluateTypeExplanationFinal(expression: string, packageName?: string): Effect.Effect<string, unknown> {
+    return this.context.evalType(expression, packageName).pipe(
+      Effect.map((evalResult) => ("error" in evalResult ? `Error: ${evalResult.error}` : evalResult.expanded)),
+    );
   }
 
-  private async buildTypeExplanationSteps(
+  private buildTypeExplanationSteps(
     expression: string,
     components: readonly TypeExpressionComponent[],
     finalResult: string,
     packageName?: string,
-  ): Promise<TypeExplanationStep[]> {
-    if (components.length === 0) {
-      return [{ step: 1, description: `Expand ${expression}`, expression, result: finalResult }];
-    }
+  ): Effect.Effect<TypeExplanationStep[], unknown> {
+    return Effect.gen(this, function* () {
+      if (components.length === 0) {
+        return [{ step: 1, description: `Expand ${expression}`, expression, result: finalResult }];
+      }
 
-    const steps: TypeExplanationStep[] = [];
-    for (const component of components) {
-      steps.push(await this.explainTypeComponent(component, steps.length + 1, packageName));
-    }
+      const steps: TypeExplanationStep[] = [];
+      for (const component of components) {
+        steps.push(yield* this.explainTypeComponent(component, steps.length + 1, packageName));
+      }
 
-    if (steps.length > 0 && steps[steps.length - 1]!.result !== finalResult) {
-      steps.push({ step: steps.length + 1, description: "Final result", expression, result: finalResult });
-    }
+      if (steps.length > 0 && steps[steps.length - 1]!.result !== finalResult) {
+        steps.push({ step: steps.length + 1, description: "Final result", expression, result: finalResult });
+      }
 
-    return steps.length === 0
-      ? [{ step: 1, description: "Evaluate expression", expression, result: finalResult }]
-      : steps;
+      return steps.length === 0
+        ? [{ step: 1, description: "Evaluate expression", expression, result: finalResult }]
+        : steps;
+    });
   }
 
-  private async explainTypeComponent(
+  private explainTypeComponent(
     component: TypeExpressionComponent,
     step: number,
     packageName?: string,
-  ): Promise<TypeExplanationStep> {
+  ): Effect.Effect<TypeExplanationStep, unknown> {
+    return Effect.gen(this, function* () {
     if (component.type === "keyof") {
       const expression = `keyof ${component.target}`;
       return {
         step,
         description: `Resolve ${expression}`,
         expression,
-        result: await this.evaluateTypeExplanationFinal(expression, packageName),
+        result: yield* this.evaluateTypeExplanationFinal(expression, packageName),
       };
     }
 
@@ -326,7 +355,7 @@ export class TypeExplainer {
         step,
         description: describeUtilityType(component.utility, component.args),
         expression,
-        result: await this.evaluateTypeExplanationFinal(expression, packageName),
+        result: yield* this.evaluateTypeExplanationFinal(expression, packageName),
       };
     }
 
@@ -334,8 +363,9 @@ export class TypeExplainer {
       step,
       description: `Resolve ${component.name}`,
       expression: component.name,
-      result: await this.evaluateTypeExplanationFinal(component.name, packageName),
+      result: yield* this.evaluateTypeExplanationFinal(component.name, packageName),
     };
+    });
   }
 }
 

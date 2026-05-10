@@ -1,6 +1,7 @@
 import type { Node, Project, Symbol } from "ts-morph";
 import { SyntaxKind } from "ts-morph";
-import type { RelatedInfo } from "./project-types";
+import type { PackageInfo } from "./discovery";
+import type { CompatibilityResult, ErrorExplanationIssue, RelatedInfo } from "./project-types";
 
 export interface TypeRelationContext {
   readonly relativePath: (absolutePath: string) => string;
@@ -84,6 +85,130 @@ export class TypeRelationExplorer {
     ];
   }
 }
+
+export const checkTypeCompatibility = (
+  fromSymbol: string,
+  toSymbol: string,
+  project: Project,
+  pkg: PackageInfo,
+  findSymbol: (symbolName: string, project: Project, pkg: PackageInfo) => { node: Node; symbol: Symbol } | null,
+): CompatibilityResult => {
+  const fromFound = findSymbol(fromSymbol, project, pkg);
+  const toFound = findSymbol(toSymbol, project, pkg);
+  return checkResolvedTypeCompatibility(fromSymbol, toSymbol, fromFound, toFound);
+};
+
+export const checkResolvedTypeCompatibility = (
+  fromSymbol: string,
+  toSymbol: string,
+  fromFound: { node: Node; symbol: Symbol } | null,
+  toFound: { node: Node; symbol: Symbol } | null,
+): CompatibilityResult => {
+  if (!fromFound) {
+    const message = `Symbol "${fromSymbol}" not found`;
+    return {
+      compatible: false,
+      from: fromSymbol,
+      to: toSymbol,
+      reason: message,
+      issues: [{ kind: "other", message }],
+    };
+  }
+
+  if (!toFound) {
+    const message = `Symbol "${toSymbol}" not found`;
+    return {
+      compatible: false,
+      from: fromSymbol,
+      to: toSymbol,
+      reason: message,
+      issues: [{ kind: "other", message }],
+    };
+  }
+
+  const fromType = fromFound.node.getType();
+  const toType = toFound.node.getType();
+
+  const fromTypeText = fromType.getText(fromFound.node);
+  const toTypeText = toType.getText(toFound.node);
+
+  if (fromType.isAssignableTo(toType)) {
+    return {
+      compatible: true,
+      from: fromTypeText,
+      to: toTypeText,
+    };
+  }
+
+  const reasons: string[] = [];
+  const issues: ErrorExplanationIssue[] = [];
+
+  const toProperties = toType.getProperties();
+  const fromProperties = fromType.getProperties();
+  const fromPropNames = new Set(fromProperties.map((property) => property.getName()));
+
+  for (const toProperty of toProperties) {
+    const propertyName = toProperty.getName();
+    if (!toProperty.isOptional() && !fromPropNames.has(propertyName)) {
+      const propertyType = toProperty.getTypeAtLocation(toFound.node).getText(toFound.node);
+      const message = `Property '${propertyName}' is missing in type '${fromTypeText}' but required in type '${toTypeText}' (expected: ${propertyType})`;
+      reasons.push(message);
+      issues.push({
+        kind: "missing_property",
+        property: propertyName,
+        expectedType: propertyType,
+        message,
+      });
+    }
+  }
+
+  for (const fromProperty of fromProperties) {
+    const propertyName = fromProperty.getName();
+    const toProperty = toType.getProperty(propertyName);
+
+    if (toProperty !== undefined) {
+      const fromPropertyType = fromProperty.getTypeAtLocation(fromFound.node);
+      const toPropertyType = toProperty.getTypeAtLocation(toFound.node);
+
+      if (!fromPropertyType.isAssignableTo(toPropertyType)) {
+        const fromPropertyText = fromPropertyType.getText(fromFound.node);
+        const toPropertyText = toPropertyType.getText(toFound.node);
+        const message = `Property '${propertyName}' has incompatible types: '${fromPropertyText}' is not assignable to '${toPropertyText}'`;
+        reasons.push(message);
+        issues.push({
+          kind: "type_mismatch",
+          property: propertyName,
+          actualType: fromPropertyText,
+          expectedType: toPropertyText,
+          message,
+        });
+      }
+    }
+  }
+
+  const fromCallSignatures = fromType.getCallSignatures();
+  const toCallSignatures = toType.getCallSignatures();
+
+  if (toCallSignatures.length > 0 && fromCallSignatures.length === 0) {
+    const message = `Type '${fromTypeText}' is not callable but '${toTypeText}' requires call signatures`;
+    reasons.push(message);
+    issues.push({ kind: "not_callable", message });
+  }
+
+  if (reasons.length === 0) {
+    const message = `Type '${fromTypeText}' is not assignable to type '${toTypeText}'`;
+    reasons.push(message);
+    issues.push({ kind: "other", message });
+  }
+
+  return {
+    compatible: false,
+    from: fromTypeText,
+    to: toTypeText,
+    reason: reasons.join("; "),
+    issues,
+  };
+};
 
 const classifyReferenceContext = (parent: Node): string => {
   const parentKind = parent.getKind();

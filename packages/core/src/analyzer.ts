@@ -181,6 +181,13 @@ type ServiceOwnedAnalyzerKey =
   | "checkSnippet"
   | "getFileDeclarations"
   | "getTypeAtPosition"
+  | "findRelated"
+  | "checkCompatibility"
+  | "generateGraph"
+  | "previewRefactor"
+  | "getDiagnostics"
+  | "explainError"
+  | "explainType"
 
 export type LegacyProjectAnalyzer = Omit<TypeAnalyzer, ServiceOwnedAnalyzerKey>
 
@@ -193,52 +200,9 @@ export const createLegacyTypeAnalyzerWithWorkspace = (
 
   return {
     listSymbols: (options = {}) => fromProjectPromise(() => projectManager.listSymbols({ limit: 100, ...options })),
-    findRelated: (symbolName, packageName) => fromProjectPromise(() => projectManager.findRelated(symbolName, packageName)),
-    checkCompatibility: (from, to, packageName) =>
-      fromProjectPromise(() => projectManager.checkCompatibility(from, to, packageName)),
-    generateGraph: (symbol, options = {}) => fromProjectPromise(() => projectManager.generateGraph(symbol, options)),
-    previewRefactor: (options) => fromProjectPromise(() => projectManager.previewRefactor(options)),
-    getDiagnostics: (packageNameOrOptions) => getDiagnostics(projectManager, packageNameOrOptions),
-    explainError: (options) => fromProjectPromise(() => projectManager.explainError(options)),
-    explainType: (expression, packageName) => fromProjectPromise(() => projectManager.explainType(expression, packageName)),
     transformSearch: (options) => transformSearch(projectManager, options),
     refresh: (packageName) => refreshAnalyzer(projectManager, packageName),
     markDirty: () => projectManager.markDirty(),
-  }
-}
-
-const getDiagnostics = (
-  projectManager: ProjectManager,
-  packageNameOrOptions?: string | DiagnosticOptions,
-): Effect.Effect<readonly DiagnosticInfo[] | unknown, QuartzError> =>
-  fromProjectPromise(() =>
-    typeof packageNameOrOptions === "object" && packageNameOrOptions?.explain === true
-      ? getExplainedDiagnostics(projectManager, packageNameOrOptions)
-      : projectManager.getPackageDiagnostics(
-          typeof packageNameOrOptions === "string" ? packageNameOrOptions : packageNameOrOptions?.packageName,
-        ),
-  )
-
-const getExplainedDiagnostics = async (
-  projectManager: ProjectManager,
-  options: DiagnosticOptions,
-): Promise<unknown> => {
-  const diagnostics = await projectManager.getPackageDiagnostics(options.packageName)
-  const errors = await Promise.all(
-    diagnostics.slice(0, 10).map(async (diagnostic) => ({
-      ...diagnostic,
-      explanation: await projectManager.explainError({
-        code: diagnostic.code,
-        message: diagnostic.message,
-        ...(options.packageName === undefined ? {} : { packageName: options.packageName }),
-      }),
-    })),
-  )
-  return {
-    totalErrors: diagnostics.length,
-    explained: errors.length,
-    truncated: diagnostics.length > 10,
-    errors,
   }
 }
 

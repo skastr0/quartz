@@ -3,11 +3,16 @@ import { Effect, Layer } from "effect"
 import {
   AnalyzerConfig,
   FileInspection,
+  Diagnostics,
   ProjectWorkspace,
+  RefactorPreview,
   SnippetEvaluation,
   SourceProjectCache,
   SymbolLookup,
   TypeAnalyzerService,
+  TypeExplainer,
+  TypeGraph,
+  TypeRelations,
   createTypeAnalyzerRuntime,
 } from "@skastr0/quartz-core"
 import { createFixtureAnalyzer, fixturesPath } from "./helpers/analyzer"
@@ -58,6 +63,28 @@ describe("type analyzer core", () => {
       _tag: "@skastr0/quartz/SymbolLookup",
       findSymbol: () => Effect.succeed(null),
     } as SymbolLookup)
+    const diagnosticsLayer = Diagnostics.Default.pipe(Layer.provide(Layer.mergeAll(workspaceLayer, cacheLayer)))
+    const typeRelationsLayer = TypeRelations.Default.pipe(
+      Layer.provide(Layer.mergeAll(workspaceLayer, cacheLayer, symbolLookupLayer)),
+    )
+    const typeExplainerLayer = TypeExplainer.Default.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          workspaceLayer,
+          cacheLayer,
+          diagnosticsLayer,
+          typeRelationsLayer,
+          symbolLookupLayer,
+          SnippetEvaluation.Default,
+        ),
+      ),
+    )
+    const refactorPreviewLayer = RefactorPreview.Default.pipe(
+      Layer.provide(Layer.mergeAll(workspaceLayer, cacheLayer, symbolLookupLayer)),
+    )
+    const typeGraphLayer = TypeGraph.Default.pipe(
+      Layer.provide(Layer.mergeAll(workspaceLayer, cacheLayer, symbolLookupLayer, typeRelationsLayer)),
+    )
     const analyzerLayer = TypeAnalyzerService.Default.pipe(
       Layer.provide(
         Layer.mergeAll(
@@ -67,6 +94,11 @@ describe("type analyzer core", () => {
           fileInspectionLayer,
           symbolLookupLayer,
           SnippetEvaluation.Default,
+          diagnosticsLayer,
+          typeRelationsLayer,
+          typeExplainerLayer,
+          refactorPreviewLayer,
+          typeGraphLayer,
         ),
       ),
     )

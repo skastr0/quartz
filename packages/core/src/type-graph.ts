@@ -1,52 +1,58 @@
 import type { Project, Symbol, Node } from "ts-morph";
+import { Effect } from "effect";
 import type { PackageInfo } from "./discovery";
 import type { GraphEdge, GraphResult, RelatedInfo } from "./project-types";
 
 export interface TypeGraphContext {
-  readonly findSymbol: (symbolName: string, project: Project, pkg: PackageInfo) => { node: Node; symbol: Symbol } | null;
-  readonly findRelated: (symbolName: string, packageName?: string) => Promise<RelatedInfo | null>;
+  readonly findSymbol: (
+    symbolName: string,
+    project: Project,
+    pkg: PackageInfo,
+  ) => Effect.Effect<{ node: Node; symbol: Symbol } | null, unknown>;
+  readonly findRelated: (symbolName: string, packageName?: string) => Effect.Effect<RelatedInfo | null, unknown>;
 }
 
-export const generateTypeGraph = async (
+export const generateTypeGraph = (
   symbolName: string,
   options: { readonly depth?: number; readonly format?: "mermaid" | "dot"; readonly packageName?: string },
   project: Project,
   pkg: PackageInfo,
   context: TypeGraphContext,
-): Promise<GraphResult | null> => {
+): Effect.Effect<GraphResult | null, unknown> => Effect.gen(function* () {
   const { depth = 2, format = "mermaid", packageName } = options;
   const maxDepth = Math.min(depth, 4);
 
-  const found = context.findSymbol(symbolName, project, pkg);
+  const found = yield* context.findSymbol(symbolName, project, pkg);
   if (found === null) return null;
 
   const edges: GraphEdge[] = [];
   const visited = new Set<string>();
   const nodes = new Set<string>();
 
-  const traverse = async (symbol: string, currentDepth: number): Promise<void> => {
+  const traverse = (symbol: string, currentDepth: number): Effect.Effect<void, unknown> => Effect.gen(function* () {
     if (currentDepth > maxDepth || visited.has(symbol)) return;
     visited.add(symbol);
     nodes.add(symbol);
 
-    const related = await context.findRelated(symbol, packageName);
+    const related = yield* context.findRelated(symbol, packageName);
     if (related === null) return;
 
     for (const ref of related.references) {
       const targetSymbol = ref.symbol;
       if (isPrimitiveOrBuiltin(targetSymbol)) continue;
-      if (context.findSymbol(targetSymbol, project, pkg) === null) continue;
+      const foundTarget = yield* context.findSymbol(targetSymbol, project, pkg);
+      if (foundTarget === null) continue;
 
       nodes.add(targetSymbol);
       edges.push({ from: symbol, to: targetSymbol, label: ref.context });
 
       if (currentDepth < maxDepth) {
-        await traverse(targetSymbol, currentDepth + 1);
+        yield* traverse(targetSymbol, currentDepth + 1);
       }
     }
-  };
+  });
 
-  await traverse(symbolName, 0);
+  yield* traverse(symbolName, 0);
 
   return {
     root: symbolName,
@@ -56,7 +62,7 @@ export const generateTypeGraph = async (
     edges,
     graph: format === "mermaid" ? toMermaid(edges) : toDot(edges),
   };
-};
+});
 
 export const isPrimitiveOrBuiltin = (typeName: string): boolean => {
   const primitives = new Set([
