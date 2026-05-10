@@ -1,6 +1,6 @@
 import { resolve } from "node:path"
 import { Project, type SourceFile, SyntaxKind } from "ts-morph"
-import { discoverPackagesSync, type PackageInfo } from "./discovery"
+import type { PackageInfo } from "./discovery"
 
 export interface CachedProject {
   readonly project: Project
@@ -66,23 +66,29 @@ export const createProjectWorkspaceState = (directory: string): ProjectWorkspace
 
 export const markWorkspaceDirty = (state: ProjectWorkspaceState): void => {
   state.dirty = true
+  state.packages = null
 }
 
 export const refreshAllProjects = (state: ProjectWorkspaceState): void => {
+  state.packages = null
   state.projectCache.clear()
   state.projectErrors.clear()
 }
 
-export const refreshPackageProject = (state: ProjectWorkspaceState, packageName: string): boolean => {
-  const pkg = resolveWorkspacePackage(state, packageName)
+export const refreshPackageProject = (state: ProjectWorkspaceState, pkg: PackageInfo): boolean => {
   const deleted = state.projectCache.delete(pkg.tsconfigPath)
   state.projectErrors.delete(pkg.tsconfigPath)
   return deleted
 }
 
+export const setWorkspacePackages = (state: ProjectWorkspaceState, packages: readonly PackageInfo[]): readonly PackageInfo[] => {
+  state.packages = [...packages]
+  return state.packages
+}
+
 export const getWorkspacePackages = (state: ProjectWorkspaceState): readonly PackageInfo[] => {
   if (!state.packages) {
-    state.packages = [...discoverPackagesSync(state.rootDirectory)]
+    throw new Error("Workspace packages have not been discovered")
   }
   return state.packages
 }

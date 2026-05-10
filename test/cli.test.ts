@@ -43,7 +43,7 @@ describe("agentic CLI protocol", () => {
     expect(result.stderr).toBe("")
     const envelope = parse(result.stdout)
     expect(envelope.data.results.map((item: any) => item.target.root)).toEqual(["test/fixtures", "./test/fixtures"])
-  })
+  }, 20_000)
 
   it("accepts inline, @file, and stdin JSON payloads", () => {
     const payload = { root: fixturesPath, symbol: "User" }

@@ -1,6 +1,6 @@
 # Effect Service Spine
 
-This is the canonical direction for the full Effect rewrite.
+Quartz core is owned by one Layer-composed service graph. Executable and plugin edges create a runtime for that graph; core internals stay inside `Effect`.
 
 ## Service Graph
 
@@ -19,22 +19,22 @@ This is the canonical direction for the full Effect rewrite.
 - `TransformSearch`
 - `TypeAnalyzerService`
 
-New internal services should use `Effect.Service` by default. Use `Context.Tag` plus explicit `Layer` definitions only when a stable exported contract or separate implementation file is clearer.
+Internal services use `Effect.Service` by default. Stable exported contracts may use explicit `Context.Tag` and `Layer` definitions when that keeps the boundary clearer.
 
 ## Runtime Ownership
 
-`createTypeAnalyzerRuntime(root)` creates one `ManagedRuntime.make(CoreLayer(root))` for a root. CLI and plugin code cache that runtime per lifecycle/root instead of repeatedly providing an app layer.
+`CoreLayer(root)` is the canonical composition root for analyzer behavior. The CLI and OpenCode plugin each create `ManagedRuntime.make(CoreLayer(root))` at their lifecycle boundary, reuse that runtime for analyzer operations, and dispose it when the boundary closes.
 
-## Deletion Ledger
+Core code does not create runtimes and does not repeatedly provide the app layer. Public analyzer behavior is reached by running `TypeAnalyzerService` effects through the edge-owned runtime.
 
-- `ProjectManager` dies in QZ-007.
-- `fromProjectPromise` dies in QZ-007.
-- `discoverPackagesPromise`, `findTsconfigsPromise`, and `walkForTsconfigsPromise` die in QZ-003.
-- Direct `new` service wiring dies across QZ-003 through QZ-006 as each domain moves into Layer-owned services.
-- Promise-shaped core analyzer methods die before QZ-008 can pass review.
+## Cache And Mutation Ownership
 
-## Non-Goals
+`SourceProjectCache` owns the mutable ts-morph project instances. Public analyzer methods serialize access through the cache semaphore before reading or mutating cached projects, including snippet evaluation and transform search.
 
-- No compatibility layer is a permitted end state.
-- No old analyzer path survives the full rewrite.
-- No repeated `Effect.provide(AppLayer)` calls should be introduced.
+`PackageDiscovery` owns package enumeration. `ProjectWorkspace` keeps the current discovered package set, invalidates it on dirty/refresh operations, and repopulates through the discovery service.
+
+`TransformSearch` caches engines with the project object they were built from and recreates the engine when the project cache returns a different project instance.
+
+## Consolidation State
+
+The former object coordinator, Promise bridge helpers, and parallel analyzer construction path have been deleted. The remaining accepted path is the Layer service graph plus executable/plugin runtime ownership.

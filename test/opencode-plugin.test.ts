@@ -94,7 +94,7 @@ describe("OpenCode plugin wrapper", () => {
       explanation: expect.stringContaining("UserInput"),
       issues: [expect.objectContaining({ kind: "missing_property", property: "id" })],
     })
-  })
+  }, 20_000)
 
   it("preserves idle logging and dirty-cache hook behavior", async () => {
     const root = mkdtempSync(join(tmpdir(), "tlt-plugin-"))

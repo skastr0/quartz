@@ -64,19 +64,15 @@ const getGitTrackedFiles = (rootDirectory: string): readonly string[] => {
 }
 
 const walkForTsconfigs = (directory: string): readonly string[] => {
-  try {
-    const entries = readdirSync(directory, { withFileTypes: true })
-    const nested = entries.map((entry) => {
-      const path = join(directory, entry.name)
-      if (entry.isDirectory()) {
-        return ignoredDirectories.has(entry.name) ? [] : walkForTsconfigs(path)
-      }
-      return entry.name === "tsconfig.json" ? [path] : []
-    })
-    return nested.flat()
-  } catch {
-    return []
-  }
+  const entries = readdirSync(directory, { withFileTypes: true })
+  const nested = entries.map((entry) => {
+    const path = join(directory, entry.name)
+    if (entry.isDirectory()) {
+      return ignoredDirectories.has(entry.name) ? [] : walkForTsconfigs(path)
+    }
+    return entry.name === "tsconfig.json" ? [path] : []
+  })
+  return nested.flat()
 }
 
 const toPackageInfo = (rootDirectory: string, tsconfigPaths: readonly string[]): readonly PackageInfo[] =>

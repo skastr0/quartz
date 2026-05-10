@@ -18,13 +18,18 @@ export {
 } from "./service-spine"
 export type {
   DiagnosticInfo,
+  EvaluatedTypeResult,
   ExpandedType,
+  ExplainedDiagnosticInfo,
+  ExplainedDiagnosticsResult,
   ListSymbolsOptions,
   SearchTypesOptions,
   SymbolInfo,
   SymbolListResult,
   TypeAnalyzer,
   TypeAtPositionResult,
+  TypeEvaluationError,
+  TypeEvaluationResult,
   TypeInfo,
   TypePropertyInfo,
 } from "./analyzer"

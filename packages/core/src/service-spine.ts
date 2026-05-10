@@ -1,7 +1,14 @@
 import { resolve } from "node:path"
 import type { Project, SourceFile } from "ts-morph"
 import { Context, Effect, Layer, Ref } from "effect"
-import type { DiagnosticOptions, ListSymbolsOptions, SearchTypesOptions, SymbolInfo, TypeAnalyzer } from "./analyzer"
+import type {
+  DiagnosticOptions,
+  ListSymbolsOptions,
+  SearchTypesOptions,
+  SymbolInfo,
+  TypeAnalyzer,
+  TypeEvaluationResult,
+} from "./analyzer"
 import { getDeclarationName } from "./declarations"
 import { discoverPackages, type PackageInfo } from "./discovery"
 import { QuartzError } from "./errors"
@@ -17,6 +24,7 @@ import {
   refreshAllProjects,
   refreshPackageProject,
   resolveWorkspacePackage,
+  setWorkspacePackages,
   type ProjectWorkspaceState,
   workspaceRelativePath,
 } from "./project-workspace"
@@ -69,7 +77,12 @@ export class ProjectWorkspace extends Effect.Service<ProjectWorkspace>()("@skast
   accessors: true,
   effect: Effect.gen(function* () {
     const config = yield* AnalyzerConfig
+    const discovery = yield* PackageDiscovery
     const state = yield* Ref.make(createProjectWorkspaceState(config.rootDirectory))
+    const ensurePackages = (workspace: ProjectWorkspaceState): Effect.Effect<readonly PackageInfo[], QuartzError> =>
+      workspace.packages === null
+        ? discovery.discover().pipe(Effect.map((packages) => setWorkspacePackages(workspace, packages)))
+        : Effect.succeed(getWorkspacePackages(workspace))
     const withState = <A>(f: (workspace: ProjectWorkspaceState) => A, message: string): Effect.Effect<A, QuartzError> =>
       Ref.get(state).pipe(
         Effect.flatMap((workspace) =>
@@ -83,9 +96,23 @@ export class ProjectWorkspace extends Effect.Service<ProjectWorkspace>()("@skast
     return {
       state,
       rootDirectory: config.rootDirectory,
-      getPackages: () => withState(getWorkspacePackages, "Could not read workspace packages"),
+      getPackages: () =>
+        Ref.get(state).pipe(
+          Effect.flatMap(ensurePackages),
+        ),
       resolvePackage: (packageName?: string) =>
-        withState((workspace) => resolveWorkspacePackage(workspace, packageName), "Could not resolve package"),
+        Ref.get(state).pipe(
+          Effect.flatMap((workspace) =>
+            ensurePackages(workspace).pipe(
+              Effect.flatMap(() =>
+                Effect.try({
+                  try: () => resolveWorkspacePackage(workspace, packageName),
+                  catch: toQuartzError("Could not resolve package"),
+                }),
+              ),
+            ),
+          ),
+        ),
       relativePath: (absolutePath: string) =>
         withState((workspace) => workspaceRelativePath(workspace, absolutePath), "Could not resolve relative path"),
     }
@@ -96,6 +123,7 @@ export class SourceProjectCache extends Effect.Service<SourceProjectCache>()("@s
   accessors: true,
   effect: Effect.gen(function* () {
     const workspace = yield* ProjectWorkspace
+    const projectAccess = yield* Effect.makeSemaphore(1)
     const withWorkspace = <A>(
       f: (state: ProjectWorkspaceState) => A,
       message: string,
@@ -116,7 +144,13 @@ export class SourceProjectCache extends Effect.Service<SourceProjectCache>()("@s
       markDirty: () => withWorkspace(markWorkspaceDirty, "Could not mark workspace dirty"),
       refreshAll: () => withWorkspace(refreshAllProjects, "Could not refresh workspace cache"),
       refreshPackage: (packageName: string) =>
-        withWorkspace((state) => refreshPackageProject(state, packageName), "Could not refresh package cache"),
+        workspace.resolvePackage(packageName).pipe(
+          Effect.flatMap((pkg) =>
+            withWorkspace((state) => refreshPackageProject(state, pkg), "Could not refresh package cache"),
+          ),
+        ),
+      withProjectAccess: <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+        projectAccess.withPermits(1)(effect),
     }
   }),
 }) {}
@@ -173,7 +207,7 @@ export class SnippetEvaluation extends Effect.Service<SnippetEvaluation>()("@ska
         project: Project,
         pkg: PackageInfo,
         sourceFiles: readonly SourceFile[],
-      ): Effect.Effect<{ result: string; expanded: string } | { error: string }, QuartzError> =>
+      ): Effect.Effect<TypeEvaluationResult, QuartzError> =>
         Effect.try({
           try: () => evaluator.evalType(expression, project, pkg, sourceFiles),
           catch: toQuartzError("Could not evaluate type"),
@@ -355,7 +389,7 @@ export class TransformSearch extends Effect.Service<TransformSearch>()("@skastr0
   effect: Effect.gen(function* () {
     const workspace = yield* ProjectWorkspace
     const cache = yield* SourceProjectCache
-    const engines = yield* Ref.make(new Map<string, TransformSearchEngine>())
+    const engines = yield* Ref.make(new Map<string, { readonly project: Project; readonly engine: TransformSearchEngine }>())
     return {
       search: Effect.fnUntraced(function* (options: TransformSearchOptions & { readonly packageName?: string }) {
         const pkg = yield* workspace.resolvePackage(options.packageName)
@@ -363,10 +397,10 @@ export class TransformSearch extends Effect.Service<TransformSearch>()("@skastr0
         const sourceFiles = yield* cache.getSourceFiles(project, pkg)
         const engine = yield* Ref.modify(engines, (current) => {
           const cached = current.get(pkg.tsconfigPath)
-          if (cached !== undefined) return [cached, current] as const
+          if (cached !== undefined && cached.project === project) return [cached.engine, current] as const
           const next = new Map(current)
           const created = new TransformSearchEngine(project, pkg.path, [...sourceFiles])
-          next.set(pkg.tsconfigPath, created)
+          next.set(pkg.tsconfigPath, { project, engine: created })
           return [created, next] as const
         })
         const result = yield* Effect.tryPromise({
@@ -413,7 +447,7 @@ export class TypeAnalyzerService extends Effect.Service<TypeAnalyzerService>()("
         const sourceFiles = yield* cache.getSourceFiles(project, pkg)
         return { pkg, project, sourceFiles }
       })
-    const getTypeInfo = Effect.fnUntraced(function* (symbolName: string, packageName?: string) {
+    const getTypeInfoBody = Effect.fnUntraced(function* (symbolName: string, packageName?: string) {
       const { pkg, project } = yield* resolveTarget(packageName)
       const found = yield* symbolLookup.findSymbol(symbolName, project, pkg)
       if (found === null) return null
@@ -422,7 +456,9 @@ export class TypeAnalyzerService extends Effect.Service<TypeAnalyzerService>()("
         catch: toQuartzError("Could not get type info"),
       })
     })
-    const listSymbols = Effect.fnUntraced(function* (options: ListSymbolsOptions = {}) {
+    const getTypeInfo = (symbolName: string, packageName?: string) =>
+      cache.withProjectAccess(getTypeInfoBody(symbolName, packageName))
+    const listSymbolsBody = Effect.fnUntraced(function* (options: ListSymbolsOptions = {}) {
       const { pattern, kind, packageName, file, limit = 100, indexOnly = false } = options
       const { pkg, project, sourceFiles } = yield* resolveTarget(packageName)
       const symbols: SymbolInfo[] = []
@@ -475,85 +511,84 @@ export class TypeAnalyzerService extends Effect.Service<TypeAnalyzerService>()("
         package: pkg.name,
       }
     })
+    const listSymbols = (options?: ListSymbolsOptions) => cache.withProjectAccess(listSymbolsBody(options))
 
     const analyzer: TypeAnalyzer = {
       getPackages: workspace.getPackages,
       listSymbols,
       getTypeInfo,
       expandType: Effect.fnUntraced(function* (symbolName: string, packageName?: string) {
-        const { pkg, project } = yield* resolveTarget(packageName)
-        const found = yield* symbolLookup.findSymbol(symbolName, project, pkg)
-        if (found === null) return null
-        return yield* Effect.try({
-          try: () => expandTypeForSymbol(found, project, context),
-          catch: toQuartzError("Could not expand type"),
-        })
+        return yield* cache.withProjectAccess(Effect.gen(function* () {
+          const { pkg, project } = yield* resolveTarget(packageName)
+          const found = yield* symbolLookup.findSymbol(symbolName, project, pkg)
+          if (found === null) return null
+          return yield* Effect.try({
+            try: () => expandTypeForSymbol(found, project, context),
+            catch: toQuartzError("Could not expand type"),
+          })
+        }))
       }),
       searchTypes: Effect.fnUntraced(function* (options: SearchTypesOptions) {
-        const pattern = options.pattern ?? options.query
-        const symbolOptions: SearchTypesOptions = {
-          limit: options.limit ?? 25,
-          ...(pattern === undefined ? {} : { pattern }),
-          ...(options.hasProperty === undefined ? {} : { hasProperty: options.hasProperty }),
-          ...(options.extends === undefined ? {} : { extends: options.extends }),
-          ...(options.packageName === undefined ? {} : { packageName: options.packageName }),
-        }
-        const symbols = yield* listSymbols({ ...symbolOptions, kind: "all", limit: 1000 })
-        const filteredSymbols =
-          options.hasProperty === undefined && options.extends === undefined
-            ? symbols.symbols.slice(0, options.limit ?? 25)
-            : yield* Effect.forEach(
-                symbols.symbols,
-                (symbol) =>
-                  Effect.gen(function* () {
-                    const { pkg, project } = yield* resolveTarget(symbol.package)
-                    const found = yield* symbolLookup.findSymbol(symbol.name, project, pkg)
-                    if (found === null) return null
-                    const type = found.node.getType()
-                    if (options.hasProperty !== undefined && type.getProperty(options.hasProperty) === undefined) {
-                      return null
-                    }
-                    if (options.extends !== undefined) {
-                      const hasBase = type.getBaseTypes().some((baseType) => {
-                        const baseSymbol = baseType.getSymbol()
-                        return baseSymbol !== undefined && baseSymbol.getName() === options.extends
-                      })
-                      if (!hasBase) return null
-                    }
-                    return symbol
-                  }),
-                { concurrency: 4 },
-              ).pipe(
-                Effect.map((items) =>
-                  items
-                    .filter((item): item is NonNullable<typeof item> => item !== null)
-                    .slice(0, options.limit ?? 25),
-                ),
-              )
-        const results = yield* Effect.forEach(
-          filteredSymbols,
-          (symbol) => getTypeInfo(symbol.name, symbol.package),
-          { concurrency: 4 },
-        )
-        return results.filter((item): item is NonNullable<typeof item> => item !== null)
+        return yield* cache.withProjectAccess(Effect.gen(function* () {
+          const pattern = options.pattern ?? options.query
+          const limit = options.limit ?? 25
+          const symbolOptions: SearchTypesOptions = {
+            limit,
+            ...(pattern === undefined ? {} : { pattern }),
+            ...(options.hasProperty === undefined ? {} : { hasProperty: options.hasProperty }),
+            ...(options.extends === undefined ? {} : { extends: options.extends }),
+            ...(options.packageName === undefined ? {} : { packageName: options.packageName }),
+          }
+          const symbols = yield* listSymbolsBody({ ...symbolOptions, kind: "all", limit: 1000 })
+          const results = []
+          for (const symbol of symbols.symbols) {
+            const symbolReference = symbol.file === undefined ? symbol.name : `@file:${symbol.file}:${symbol.name}`
+            if (options.hasProperty !== undefined || options.extends !== undefined) {
+              const { pkg, project } = yield* resolveTarget(symbol.package)
+              const found = yield* symbolLookup.findSymbol(symbolReference, project, pkg)
+              if (found === null) continue
+              const type = found.node.getType()
+              if (options.hasProperty !== undefined && type.getProperty(options.hasProperty) === undefined) {
+                continue
+              }
+              if (options.extends !== undefined) {
+                const hasBase = type.getBaseTypes().some((baseType) => {
+                  const baseSymbol = baseType.getSymbol()
+                  return baseSymbol !== undefined && baseSymbol.getName() === options.extends
+                })
+                if (!hasBase) continue
+              }
+            }
+            const info = yield* getTypeInfoBody(symbolReference, symbol.package)
+            if (info !== null) results.push(info)
+            if (results.length >= limit) break
+          }
+          return results
+        }))
       }),
-      findRelated: typeRelations.findRelated,
+      findRelated: (symbolName, packageName) => cache.withProjectAccess(typeRelations.findRelated(symbolName, packageName)),
       evalType: Effect.fnUntraced(function* (expression: string, packageName?: string) {
-        const { pkg, project, sourceFiles } = yield* resolveTarget(packageName)
-        return yield* snippetEvaluation.evalType(expression, project, pkg, sourceFiles)
+        return yield* cache.withProjectAccess(Effect.gen(function* () {
+          const { pkg, project, sourceFiles } = yield* resolveTarget(packageName)
+          return yield* snippetEvaluation.evalType(expression, project, pkg, sourceFiles)
+        }))
       }),
       checkSnippet: Effect.fnUntraced(function* (code: string, packageName?: string) {
-        const { pkg, project, sourceFiles } = yield* resolveTarget(packageName)
-        return yield* snippetEvaluation.checkSnippet(code, project, pkg, sourceFiles)
+        return yield* cache.withProjectAccess(Effect.gen(function* () {
+          const { pkg, project, sourceFiles } = yield* resolveTarget(packageName)
+          return yield* snippetEvaluation.checkSnippet(code, project, pkg, sourceFiles)
+        }))
       }),
       getFileDeclarations: Effect.fnUntraced(function* (
         filePath: string,
         options: { readonly symbol?: string; readonly includePrivate?: boolean; readonly packageName?: string } = {},
       ) {
-        const { pkg, project, sourceFiles } = yield* resolveTarget(options.packageName)
-        const sourceFile = resolveSourceFile(filePath, config.rootDirectory, project, sourceFiles)
-        if (sourceFile === null) return null
-        return yield* fileInspection.inspectSourceFile(sourceFile, pkg, options)
+        return yield* cache.withProjectAccess(Effect.gen(function* () {
+          const { pkg, project, sourceFiles } = yield* resolveTarget(options.packageName)
+          const sourceFile = resolveSourceFile(filePath, config.rootDirectory, project, sourceFiles)
+          if (sourceFile === null) return null
+          return yield* fileInspection.inspectSourceFile(sourceFile, pkg, options)
+        }))
       }),
       getTypeAtPosition: Effect.fnUntraced(function* (
         filePath: string,
@@ -561,44 +596,49 @@ export class TypeAnalyzerService extends Effect.Service<TypeAnalyzerService>()("
         column: number,
         packageName?: string,
       ) {
-        const { project, sourceFiles } = yield* resolveTarget(packageName)
-        const sourceFile = resolveSourceFile(filePath, config.rootDirectory, project, sourceFiles)
-        if (sourceFile === null) return null
-        return yield* Effect.try({
-          try: () => getTypeAtPositionInFile(sourceFile, project, line, column, context),
-          catch: toQuartzError("Could not get type at position"),
-        })
+        return yield* cache.withProjectAccess(Effect.gen(function* () {
+          const { project, sourceFiles } = yield* resolveTarget(packageName)
+          const sourceFile = resolveSourceFile(filePath, config.rootDirectory, project, sourceFiles)
+          if (sourceFile === null) return null
+          return yield* Effect.try({
+            try: () => getTypeAtPositionInFile(sourceFile, project, line, column, context),
+            catch: toQuartzError("Could not get type at position"),
+          })
+        }))
       }),
-      checkCompatibility: typeRelations.checkCompatibility,
-      generateGraph: typeGraph.generateGraph,
-      previewRefactor: refactorPreview.previewRefactor,
+      checkCompatibility: (from, to, packageName) =>
+        cache.withProjectAccess(typeRelations.checkCompatibility(from, to, packageName)),
+      generateGraph: (symbol, options) => cache.withProjectAccess(typeGraph.generateGraph(symbol, options)),
+      previewRefactor: (options) => cache.withProjectAccess(refactorPreview.previewRefactor(options)),
       getDiagnostics: Effect.fnUntraced(function* (packageNameOrOptions?: string | DiagnosticOptions) {
-        const packageName =
-          typeof packageNameOrOptions === "string" ? packageNameOrOptions : packageNameOrOptions?.packageName
-        const rawDiagnostics = yield* diagnostics.getPackageDiagnostics(packageName)
-        if (typeof packageNameOrOptions !== "object" || packageNameOrOptions?.explain !== true) {
-          return rawDiagnostics
-        }
-        const errors = yield* Effect.forEach(
-          rawDiagnostics.slice(0, 10),
-          (diagnostic) =>
-            typeExplainer.explainError({
-              code: diagnostic.code,
-              message: diagnostic.message,
-              ...(packageName === undefined ? {} : { packageName }),
-            }).pipe(Effect.map((explanation) => ({ ...diagnostic, explanation }))),
-          { concurrency: 4 },
-        )
-        return {
-          totalErrors: rawDiagnostics.length,
-          explained: errors.length,
-          truncated: rawDiagnostics.length > 10,
-          errors,
-        }
+        return yield* cache.withProjectAccess(Effect.gen(function* () {
+          const packageName =
+            typeof packageNameOrOptions === "string" ? packageNameOrOptions : packageNameOrOptions?.packageName
+          const rawDiagnostics = yield* diagnostics.getPackageDiagnostics(packageName)
+          if (typeof packageNameOrOptions !== "object" || packageNameOrOptions?.explain !== true) {
+            return rawDiagnostics
+          }
+          const errors = yield* Effect.forEach(
+            rawDiagnostics.slice(0, 10),
+            (diagnostic) =>
+              typeExplainer.explainError({
+                code: diagnostic.code,
+                message: diagnostic.message,
+                ...(packageName === undefined ? {} : { packageName }),
+              }).pipe(Effect.map((explanation) => ({ ...diagnostic, explanation }))),
+            { concurrency: 1 },
+          )
+          return {
+            totalErrors: rawDiagnostics.length,
+            explained: errors.length,
+            truncated: rawDiagnostics.length > 10,
+            errors,
+          }
+        }))
       }),
-      explainError: typeExplainer.explainError,
-      explainType: typeExplainer.explainType,
-      transformSearch: transformSearch.search,
+      explainError: (options) => cache.withProjectAccess(typeExplainer.explainError(options)),
+      explainType: (expression, packageName) => cache.withProjectAccess(typeExplainer.explainType(expression, packageName)),
+      transformSearch: (options) => cache.withProjectAccess(transformSearch.search(options)),
       refresh: Effect.fnUntraced(function* (packageName?: string) {
         if (packageName !== undefined) {
           yield* cache.refreshPackage(packageName)
@@ -633,7 +673,8 @@ export type CoreServices =
 
 export const CoreLayer = (rootDirectory: string): Layer.Layer<CoreServices> => {
   const configLayer = AnalyzerConfig.layer(rootDirectory)
-  const workspaceLayer = ProjectWorkspace.Default.pipe(Layer.provide(configLayer))
+  const discoveryLayer = PackageDiscovery.Default.pipe(Layer.provide(configLayer))
+  const workspaceLayer = ProjectWorkspace.Default.pipe(Layer.provide(Layer.mergeAll(configLayer, discoveryLayer)))
   const cacheLayer = SourceProjectCache.Default.pipe(Layer.provide(workspaceLayer))
   const symbolLookupLayer = SymbolLookup.Default.pipe(Layer.provide(workspaceLayer))
   const fileInspectionLayer = FileInspection.Default.pipe(Layer.provide(workspaceLayer))
@@ -674,7 +715,7 @@ export const CoreLayer = (rootDirectory: string): Layer.Layer<CoreServices> => {
   )
   return Layer.mergeAll(
     configLayer,
-    PackageDiscovery.Default.pipe(Layer.provide(configLayer)),
+    discoveryLayer,
     workspaceLayer,
     cacheLayer,
     symbolLookupLayer,

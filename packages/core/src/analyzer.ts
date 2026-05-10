@@ -79,10 +79,32 @@ export interface TypeAtPositionResult {
 export interface DiagnosticInfo {
   readonly message: string
   readonly code: number
-  readonly category: string
+  readonly category?: string
   readonly file?: string
   readonly line?: number
   readonly column?: number
+}
+
+export interface EvaluatedTypeResult {
+  readonly result: string
+  readonly expanded: string
+}
+
+export interface TypeEvaluationError {
+  readonly error: string
+}
+
+export type TypeEvaluationResult = EvaluatedTypeResult | TypeEvaluationError
+
+export interface ExplainedDiagnosticInfo extends DiagnosticInfo {
+  readonly explanation: ErrorExplanationResult | null
+}
+
+export interface ExplainedDiagnosticsResult {
+  readonly totalErrors: number
+  readonly explained: number
+  readonly truncated: boolean
+  readonly errors: readonly ExplainedDiagnosticInfo[]
 }
 
 export interface SearchTypesOptions {
@@ -121,7 +143,7 @@ export interface TypeAnalyzer {
   readonly expandType: (symbolName: string, packageName?: string) => Effect.Effect<ExpandedType | null, QuartzError>
   readonly findRelated: (symbolName: string, packageName?: string) => Effect.Effect<RelatedInfo | null, QuartzError>
   readonly searchTypes: (options: SearchTypesOptions) => Effect.Effect<readonly TypeInfo[], QuartzError>
-  readonly evalType: (expression: string, packageName?: string) => Effect.Effect<unknown, QuartzError>
+  readonly evalType: (expression: string, packageName?: string) => Effect.Effect<TypeEvaluationResult, QuartzError>
   readonly checkSnippet: (code: string, packageName?: string) => Effect.Effect<SnippetCheckResult, QuartzError>
   readonly getFileDeclarations: (
     file: string,
@@ -139,7 +161,7 @@ export interface TypeAnalyzer {
   readonly previewRefactor: (options: RefactorPreviewOptions) => Effect.Effect<RefactorPreviewResult, QuartzError>
   readonly getDiagnostics: (
     packageNameOrOptions?: string | DiagnosticOptions,
-  ) => Effect.Effect<readonly DiagnosticInfo[] | unknown, QuartzError>
+  ) => Effect.Effect<readonly DiagnosticInfo[] | ExplainedDiagnosticsResult, QuartzError>
   readonly getTypeAtPosition: (
     filePath: string,
     line: number,

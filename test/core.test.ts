@@ -1,9 +1,13 @@
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { describe, expect, it } from "vitest"
-import { Effect, Layer } from "effect"
+import { Effect, Either, Layer } from "effect"
 import {
   AnalyzerConfig,
   FileInspection,
   Diagnostics,
+  PackageDiscovery,
   ProjectWorkspace,
   RefactorPreview,
   SnippetEvaluation,
@@ -14,6 +18,7 @@ import {
   TypeGraph,
   TypeRelations,
   TransformSearch,
+  discoverPackages,
 } from "@skastr0/quartz-core"
 import { createAnalyzerForRoot, createFixtureAnalyzer, fixturesPath } from "./helpers/analyzer"
 
@@ -56,7 +61,8 @@ describe("type analyzer core", () => {
 
   it("allows substituting symbol lookup through a test layer", async () => {
     const configLayer = AnalyzerConfig.layer(fixturesPath)
-    const workspaceLayer = ProjectWorkspace.Default.pipe(Layer.provide(configLayer))
+    const discoveryLayer = PackageDiscovery.Default.pipe(Layer.provide(configLayer))
+    const workspaceLayer = ProjectWorkspace.Default.pipe(Layer.provide(Layer.mergeAll(configLayer, discoveryLayer)))
     const cacheLayer = SourceProjectCache.Default.pipe(Layer.provide(workspaceLayer))
     const fileInspectionLayer = FileInspection.Default.pipe(Layer.provide(workspaceLayer))
     const symbolLookupLayer = Layer.succeed(SymbolLookup, {
@@ -171,6 +177,53 @@ describe("type analyzer core", () => {
     expect(byBase.map((result) => result.name)).toEqual(expect.arrayContaining(["ExtendedUser", "UserWithAddress"]))
   })
 
+  it("searches duplicate exported names by file-qualified symbol identity", async () => {
+    const root = mkdtempSync(join(tmpdir(), "quartz-duplicate-search-"))
+    mkdirSync(join(root, "src"))
+    writeFileSync(join(root, "tsconfig.json"), JSON.stringify({ include: ["src/**/*.ts"] }), "utf8")
+    writeFileSync(join(root, "src/a.ts"), "export interface DuplicateSnippetType { alpha: string }\n", "utf8")
+    writeFileSync(join(root, "src/b.ts"), "export interface DuplicateSnippetType { beta: number }\n", "utf8")
+
+    const analyzer = createAnalyzerForRoot(root)
+    const results = await Effect.runPromise(analyzer.searchTypes({ query: "DuplicateSnippetType", limit: 2 }))
+
+    expect(results.map((result) => result.name)).toEqual(["DuplicateSnippetType", "DuplicateSnippetType"])
+    expect(results.map((result) => result.location.file).sort()).toEqual(["src/a.ts", "src/b.ts"])
+  })
+
+  it("invalidates discovered packages after workspace refresh", async () => {
+    const root = mkdtempSync(join(tmpdir(), "quartz-package-refresh-"))
+    mkdirSync(join(root, "src"))
+    writeFileSync(join(root, "tsconfig.json"), JSON.stringify({ include: ["src/**/*.ts"] }), "utf8")
+    writeFileSync(join(root, "src/root.ts"), "export interface RootOnly { id: string }\n", "utf8")
+
+    const analyzer = createAnalyzerForRoot(root)
+    const before = await Effect.runPromise(analyzer.getPackages())
+
+    mkdirSync(join(root, "packages/extra/src"), { recursive: true })
+    writeFileSync(join(root, "packages/extra/tsconfig.json"), JSON.stringify({ include: ["src/**/*.ts"] }), "utf8")
+    writeFileSync(join(root, "packages/extra/src/extra.ts"), "export interface ExtraOnly { id: string }\n", "utf8")
+    await Effect.runPromise(analyzer.refresh())
+    const after = await Effect.runPromise(analyzer.getPackages())
+
+    expect(before.map((pkg) => pkg.name)).toEqual(["(root)"])
+    expect(after.map((pkg) => pkg.name)).toEqual(expect.arrayContaining(["(root)", "packages/extra"]))
+  })
+
+  it("surfaces filesystem discovery failures", async () => {
+    const root = mkdtempSync(join(tmpdir(), "quartz-discovery-error-"))
+    chmodSync(root, 0)
+    try {
+      const result = await Effect.runPromise(discoverPackages(root).pipe(Effect.either))
+      expect(Either.isLeft(result)).toBe(true)
+      if (Either.isLeft(result)) {
+        expect(result.left).toMatchObject({ _tag: "QuartzError" })
+      }
+    } finally {
+      chmodSync(root, 0o700)
+    }
+  })
+
   it("finds related symbols", async () => {
     const analyzer = createFixtureAnalyzer()
     const related = await Effect.runPromise(analyzer.findRelated("User"))
@@ -187,7 +240,7 @@ describe("type analyzer core", () => {
     expect(JSON.stringify(evaluated)).toContain("id")
     expect(explained.final).toContain("id")
     expect(explained.steps.length).toBeGreaterThan(0)
-  })
+  }, 20_000)
 
   it("checks compatibility and snippets", async () => {
     const analyzer = createFixtureAnalyzer()

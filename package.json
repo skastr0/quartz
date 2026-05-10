@@ -19,7 +19,8 @@
     "test": "vitest run",
     "verify": "bun run typecheck && bun run test && bun run build && bun run verify:package-boundaries",
     "verify:package-boundaries": "bun scripts/verify-package-boundaries.ts",
-    "release:check": "bun run verify && bun audit && publish-scan ."
+    "verify:effect-rewrite": "bun scripts/verify-effect-rewrite.ts",
+    "release:check": "bun run verify && bun run verify:effect-rewrite && bun audit && publish-scan ."
   },
   "dependencies": {
     "effect": "^3.21.2",
