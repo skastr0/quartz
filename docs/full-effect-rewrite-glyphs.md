@@ -1,6 +1,6 @@
 # Full Idiomatic Effect Rewrite Glyphs
 
-Status: Tower creation pending. `orbit_create_glyph` timed out on 2026-05-10 with "Unable to connect"; sync these glyphs to Tower project `quartz` / orbit `forge` when the service is reachable.
+Status: Synced to Tower project `quartz` / orbit `forge` on 2026-05-10. QZ-002 and QZ-003 are in `reviewing`; QZ-004 is in `building`; QZ-005 through QZ-009 are in `backlog`.
 
 ## Current Diagnosis
 
