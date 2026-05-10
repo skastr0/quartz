@@ -1,8 +1,8 @@
 import { dirname, join, relative } from "path";
 import { Node, type Project, type SourceFile, TypeFormatFlags } from "ts-morph";
+import { getDeclarationName } from "./declarations";
 import type { PackageInfo } from "./discovery";
 import type { SnippetCheckResult, SnippetDiagnostic, SnippetExportSource, SnippetImportPlan } from "./project-types";
-import { getDeclarationName } from "./symbol-lookup";
 
 export class SnippetEvaluator {
   evalType(

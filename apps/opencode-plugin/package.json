@@ -7,12 +7,16 @@
   "exports": {
     "./server": "./dist/server.js"
   },
+  "files": [
+    "dist/server.js",
+    "src/server.ts"
+  ],
   "scripts": {
     "build": "bun build ./src/server.ts --outdir ./dist --target bun --format esm --external @opencode-ai/plugin"
   },
   "dependencies": {
     "@skastr0/quartz-core": "workspace:*",
-    "effect": "^3.21.0"
+    "effect": "^3.21.2"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": ">=1.4.0"

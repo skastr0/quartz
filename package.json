@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "packageManager": "bun@1.3.11",
+  "packageManager": "bun@1.3.13",
   "workspaces": [
     "apps/*",
     "packages/*"
@@ -17,21 +17,26 @@
     "build": "bun run --filter './apps/*' build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "verify": "bun run typecheck && bun run test && bun run build"
+    "verify": "bun run typecheck && bun run test && bun run build && bun run verify:package-boundaries",
+    "verify:package-boundaries": "bun scripts/verify-package-boundaries.ts",
+    "release:check": "bun run verify && bun audit && publish-scan ."
   },
   "dependencies": {
-    "effect": "^3.21.0",
+    "effect": "^3.21.2",
     "ts-morph": "^27.0.2"
   },
   "devDependencies": {
     "@effect/vitest": "^0.29.0",
-    "@opencode-ai/plugin": "^1.4.0",
+    "@opencode-ai/plugin": "^1.14.46",
     "@types/bun": "^1.3.11",
     "typescript": "^6.0.3",
     "vitest": "^4.1.2"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": ">=1.4.0"
+  },
+  "overrides": {
+    "uuid": "13.0.2"
   },
   "license": "MIT",
   "description": "TypeScript code intelligence and transform search tooling.",

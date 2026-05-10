@@ -86,6 +86,16 @@ describe("type analyzer core", () => {
     expect(results[0]?.properties).toBeUndefined()
   })
 
+  it("honors structural search filters", async () => {
+    const analyzer = createFixtureAnalyzer()
+    const byProperty = await Effect.runPromise(analyzer.searchTypes({ query: "User", hasProperty: "address" }))
+    const byBase = await Effect.runPromise(analyzer.searchTypes({ query: "User", extends: "User" }))
+
+    expect(byProperty.map((result) => result.name)).toContain("UserWithAddress")
+    expect(byProperty.map((result) => result.name)).not.toContain("User")
+    expect(byBase.map((result) => result.name)).toEqual(expect.arrayContaining(["ExtendedUser", "UserWithAddress"]))
+  })
+
   it("finds related symbols", async () => {
     const analyzer = createFixtureAnalyzer()
     const related = await Effect.runPromise(analyzer.findRelated("User"))
@@ -107,9 +117,15 @@ describe("type analyzer core", () => {
   it("checks compatibility and snippets", async () => {
     const analyzer = createFixtureAnalyzer()
     const compatible = await Effect.runPromise(analyzer.checkCompatibility("ExtendedUser", "User"))
+    const incompatible = await Effect.runPromise(analyzer.checkCompatibility("UserInput", "User"))
     const invalidSnippet = await Effect.runPromise(analyzer.checkSnippet("const x: string = 42;"))
 
     expect(compatible.compatible).toBe(true)
+    expect(incompatible.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "missing_property", property: "id", expectedType: "string" }),
+      ]),
+    )
     expect(invalidSnippet.valid).toBe(false)
     expect(invalidSnippet.errors?.length).toBeGreaterThan(0)
   })

@@ -75,6 +75,7 @@ export interface CompatibilityResult {
   from: string;
   to: string;
   reason?: string;
+  issues?: ErrorExplanationIssue[];
 }
 
 export interface GraphEdge {

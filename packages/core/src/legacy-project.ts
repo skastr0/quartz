@@ -8,6 +8,7 @@ import {
 } from "ts-morph";
 import { isAbsolute, join, relative } from "path";
 
+import { getDeclarationName } from "./declarations";
 import type { PackageInfo } from "./discovery";
 import { getDisplayPropertySymbols } from "./display-properties";
 import { inspectSourceFile } from "./file-inspection";
@@ -16,6 +17,7 @@ import { kindToString, ProjectWorkspace } from "./project-workspace";
 import { previewRenameRefactor } from "./refactor-preview";
 import type {
   CompatibilityResult,
+  ErrorExplanationIssue,
   ErrorExplanationResult,
   ExpandedType,
   FileInspectionResult,
@@ -31,7 +33,7 @@ import type {
   TypeInfo,
 } from "./project-types";
 import { SnippetEvaluator } from "./snippet-evaluation";
-import { getDeclarationName, SymbolLookup } from "./symbol-lookup";
+import { SymbolLookup } from "./symbol-lookup";
 import { generateTypeGraph } from "./type-graph";
 import { TypeExplainer } from "./type-explanations";
 import { TypeRelationExplorer } from "./type-relations";
@@ -485,20 +487,24 @@ export class ProjectManager {
     const toFound = this.findSymbol(toSymbol, project, pkg);
 
     if (!fromFound) {
+      const message = `Symbol "${fromSymbol}" not found`;
       return {
         compatible: false,
         from: fromSymbol,
         to: toSymbol,
-        reason: `Symbol "${fromSymbol}" not found`,
+        reason: message,
+        issues: [{ kind: "other", message }],
       };
     }
 
     if (!toFound) {
+      const message = `Symbol "${toSymbol}" not found`;
       return {
         compatible: false,
         from: fromSymbol,
         to: toSymbol,
-        reason: `Symbol "${toSymbol}" not found`,
+        reason: message,
+        issues: [{ kind: "other", message }],
       };
     }
 
@@ -519,10 +525,9 @@ export class ProjectManager {
       };
     }
 
-    // Build detailed incompatibility reason by comparing properties
     const reasons: string[] = [];
+    const issues: ErrorExplanationIssue[] = [];
 
-    // Check for missing properties
     const toProperties = toType.getProperties();
     const fromProperties = fromType.getProperties();
     const fromPropNames = new Set(fromProperties.map((p) => p.getName()));
@@ -531,13 +536,17 @@ export class ProjectManager {
       const propName = toProp.getName();
       if (!toProp.isOptional() && !fromPropNames.has(propName)) {
         const propType = toProp.getTypeAtLocation(toFound.node).getText(toFound.node);
-        reasons.push(
-          `Property '${propName}' is missing in type '${fromTypeText}' but required in type '${toTypeText}' (expected: ${propType})`,
-        );
+        const message = `Property '${propName}' is missing in type '${fromTypeText}' but required in type '${toTypeText}' (expected: ${propType})`;
+        reasons.push(message);
+        issues.push({
+          kind: "missing_property",
+          property: propName,
+          expectedType: propType,
+          message,
+        });
       }
     }
 
-    // Check for type mismatches on existing properties
     for (const fromProp of fromProperties) {
       const propName = fromProp.getName();
       const toProp = toType.getProperty(propName);
@@ -549,26 +558,32 @@ export class ProjectManager {
         if (!fromPropType.isAssignableTo(toPropType)) {
           const fromPropText = fromPropType.getText(fromFound.node);
           const toPropText = toPropType.getText(toFound.node);
-          reasons.push(
-            `Property '${propName}' has incompatible types: '${fromPropText}' is not assignable to '${toPropText}'`,
-          );
+          const message = `Property '${propName}' has incompatible types: '${fromPropText}' is not assignable to '${toPropText}'`;
+          reasons.push(message);
+          issues.push({
+            kind: "type_mismatch",
+            property: propName,
+            actualType: fromPropText,
+            expectedType: toPropText,
+            message,
+          });
         }
       }
     }
 
-    // Check for callable/construct signature mismatches
     const fromCallSigs = fromType.getCallSignatures();
     const toCallSigs = toType.getCallSignatures();
 
     if (toCallSigs.length > 0 && fromCallSigs.length === 0) {
-      reasons.push(
-        `Type '${fromTypeText}' is not callable but '${toTypeText}' requires call signatures`,
-      );
+      const message = `Type '${fromTypeText}' is not callable but '${toTypeText}' requires call signatures`;
+      reasons.push(message);
+      issues.push({ kind: "not_callable", message });
     }
 
-    // If no specific reasons found, provide generic message
     if (reasons.length === 0) {
-      reasons.push(`Type '${fromTypeText}' is not assignable to type '${toTypeText}'`);
+      const message = `Type '${fromTypeText}' is not assignable to type '${toTypeText}'`;
+      reasons.push(message);
+      issues.push({ kind: "other", message });
     }
 
     return {
@@ -576,6 +591,7 @@ export class ProjectManager {
       from: fromTypeText,
       to: toTypeText,
       reason: reasons.join("; "),
+      issues,
     };
   }
 

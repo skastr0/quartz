@@ -1,14 +1,15 @@
 import { isAbsolute, join } from "node:path"
 import {
-  Node,
   type FunctionDeclaration,
   type MethodDeclaration,
   type ParameterDeclaration,
+  Node,
   type Project,
   type SourceFile,
   type Symbol,
   SyntaxKind,
 } from "ts-morph"
+import { getDeclarationName } from "./declarations"
 import type { PackageInfo } from "./discovery"
 import type { ProjectWorkspace } from "./project-workspace"
 
@@ -18,20 +19,6 @@ interface SymbolMatch {
   readonly file: string
   readonly line: number
   readonly isDefault: boolean
-}
-
-export const getDeclarationName = (node: Node): string | null => {
-  if (Node.isClassDeclaration(node)) return node.getName() ?? null
-  if (Node.isFunctionDeclaration(node)) return node.getName() ?? null
-  if (Node.isInterfaceDeclaration(node)) return node.getName()
-  if (Node.isTypeAliasDeclaration(node)) return node.getName()
-  if (Node.isEnumDeclaration(node)) return node.getName()
-  if (Node.isVariableDeclaration(node)) return node.getName()
-
-  const symbol = node.getSymbol()
-  if (symbol === undefined) return null
-  const name = symbol.getName()
-  return name === "default" ? null : name
 }
 
 export class SymbolLookup {

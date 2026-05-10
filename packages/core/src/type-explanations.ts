@@ -2,7 +2,6 @@ import { Node, type Project, type Symbol, TypeFormatFlags } from "ts-morph";
 import type { PackageInfo } from "./discovery";
 import type {
   CompatibilityResult,
-  ErrorExplanationIssue,
   ErrorExplanationResult,
   TypeExplanationResult,
   TypeExplanationStep,
@@ -110,8 +109,12 @@ export class TypeExplainer {
     await this.expandResultTypes(result, [fromType!, toType!], project, pkg);
 
     const compatibility = await this.context.checkCompatibility(fromType!, toType!, packageName);
-    if (!compatibility.compatible && compatibility.reason !== undefined) {
-      result.issues.push(...parseCompatibilityIssues(compatibility.reason));
+    if (!compatibility.compatible) {
+      result.issues.push(
+        ...(compatibility.issues ?? [
+          { kind: "other", message: compatibility.reason ?? "Types are not compatible" },
+        ]),
+      );
     }
 
     result.explanation = `You're trying to use a value of type '${fromType}' where a value of type '${toType}' is expected. These types are not compatible.`;
@@ -335,34 +338,6 @@ export class TypeExplainer {
     };
   }
 }
-
-const parseCompatibilityIssues = (reason: string): ErrorExplanationIssue[] =>
-  reason.split("; ").map((part) => {
-    if (part.includes("missing")) {
-      const propMatch = part.match(/Property '(\w+)'/);
-      const typeMatch = part.match(/expected: ([^)]+)/);
-      return {
-        kind: "missing_property",
-        ...(propMatch?.[1] === undefined ? {} : { property: propMatch[1] }),
-        ...(typeMatch?.[1] === undefined ? {} : { expectedType: typeMatch[1] }),
-        message: part,
-      };
-    }
-
-    if (part.includes("incompatible types")) {
-      const propMatch = part.match(/Property '(\w+)'/);
-      const typesMatch = part.match(/'([^']+)' is not assignable to '([^']+)'/);
-      return {
-        kind: "type_mismatch",
-        ...(propMatch?.[1] === undefined ? {} : { property: propMatch[1] }),
-        ...(typesMatch?.[1] === undefined ? {} : { actualType: typesMatch[1] }),
-        ...(typesMatch?.[2] === undefined ? {} : { expectedType: typesMatch[2] }),
-        message: part,
-      };
-    }
-
-    return { kind: "other", message: part };
-  });
 
 const addAssignabilitySuggestions = (result: ErrorExplanationResult, toType: string): void => {
   const missingProperties = result.issues.filter((issue) => issue.kind === "missing_property");

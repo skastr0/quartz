@@ -85,10 +85,13 @@ const createDiscoveryTools = (analyzer: TypeAnalyzer) => ({
     },
   }),
   type_search: tool({
-    description: "Search exported types by name.",
+    description: "Search exported types by name, property, or base type.",
     args: {
       query: tool.schema.string().describe("Case-insensitive symbol query"),
       package: optionalPackageArg,
+      pattern: tool.schema.string().optional().describe("Case-insensitive regex pattern"),
+      hasProperty: tool.schema.string().optional().describe("Only include types with this property"),
+      extends: tool.schema.string().optional().describe("Only include types extending this base symbol"),
       limit: limitArg,
     },
     async execute(args) {
@@ -96,6 +99,9 @@ const createDiscoveryTools = (analyzer: TypeAnalyzer) => ({
         await run(
           analyzer.searchTypes({
             query: args.query,
+            ...optionalOption("pattern", args.pattern),
+            ...optionalOption("hasProperty", args.hasProperty),
+            ...optionalOption("extends", args.extends),
             ...packageOption(args.package),
             ...optionalOption("limit", args.limit),
           }),

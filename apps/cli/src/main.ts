@@ -43,6 +43,9 @@ const SymbolPayload = Schema.Struct({
 const SearchPayload = Schema.Struct({
   ...baseFields,
   query: Schema.NonEmptyString,
+  pattern: Schema.optional(Schema.NonEmptyString),
+  hasProperty: Schema.optional(Schema.NonEmptyString),
+  extends: Schema.optional(Schema.NonEmptyString),
   limit: Schema.optional(PositiveInteger),
 })
 
@@ -396,11 +399,19 @@ const commandSpecs = {
     example: { root: "test/fixtures", query: "Role", limit: 10 },
     execute: (payload: SearchPayload) => {
       const options: Mutable<SearchTypesOptions> = { query: payload.query }
+      if (payload.pattern !== undefined) options.pattern = payload.pattern
+      if (payload.hasProperty !== undefined) options.hasProperty = payload.hasProperty
+      if (payload.extends !== undefined) options.extends = payload.extends
       if (payload.limit !== undefined) options.limit = payload.limit
       if (payload.package !== undefined) options.packageName = payload.package
       return analyzerFor(payload).searchTypes(options)
     },
-    target: (payload: SearchPayload) => ({ query: payload.query }),
+    target: (payload: SearchPayload) => ({
+      query: payload.query,
+      pattern: payload.pattern,
+      hasProperty: payload.hasProperty,
+      extends: payload.extends,
+    }),
   } satisfies CommandSpec<SearchPayload>,
   diagnostics: {
     name: "diagnostics",

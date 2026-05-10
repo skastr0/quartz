@@ -6,13 +6,17 @@
   "bin": {
     "quartz": "./dist/main.js"
   },
+  "files": [
+    "dist/main.js",
+    "src/main.ts"
+  ],
   "scripts": {
     "build": "bun build ./src/main.ts --outdir ./dist --target bun --format esm",
     "install:local": "bun run build && bun link"
   },
   "dependencies": {
     "@skastr0/quartz-core": "workspace:*",
-    "effect": "^3.21.0"
+    "effect": "^3.21.2"
   },
   "license": "MIT",
   "description": "Agent-native CLI for quartz TypeScript code intelligence.",

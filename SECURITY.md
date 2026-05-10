@@ -6,7 +6,7 @@ quartz is experimental and solo-maintained. Security reports are reviewed on a b
 
 ## Reporting A Vulnerability
 
-Please do not open a public issue for suspected vulnerabilities. Report privately to the maintainer through GitHub's private vulnerability reporting for this repository, or contact the maintainer directly if that is not yet enabled.
+Please do not open a public issue for suspected vulnerabilities. Report privately through GitHub's private vulnerability reporting for this repository. If that is not enabled, repository visibility is not ready for public release; open only a minimal public issue asking for a private reporting path, without vulnerability details.
 
 Include:
 

@@ -212,10 +212,15 @@ const searchTypes = (
   options: SearchTypesOptions,
 ): Effect.Effect<readonly TypeInfo[], QuartzError> =>
   Effect.gen(function* () {
-    const symbolOptions: Mutable<ListSymbolsOptions> = { limit: options.limit ?? 25 }
-    if (options.query !== undefined) symbolOptions.pattern = options.query
+    const symbolOptions: Mutable<SearchTypesOptions> = { limit: options.limit ?? 25 }
+    const pattern = options.pattern ?? options.query
+    if (pattern !== undefined) symbolOptions.pattern = pattern
+    if (options.hasProperty !== undefined) symbolOptions.hasProperty = options.hasProperty
+    if (options.extends !== undefined) symbolOptions.extends = options.extends
     if (options.packageName !== undefined) symbolOptions.packageName = options.packageName
-    const symbols = yield* fromProjectPromise(() => projectManager.listSymbols(symbolOptions))
+    const symbols = yield* fromProjectPromise(() =>
+      projectManager.searchTypes(symbolOptions, options.packageName),
+    )
     const results = yield* Effect.forEach(
       symbols.symbols,
       (symbol) => fromProjectPromise(() => projectManager.getTypeInfo(symbol.name, symbol.package)),

@@ -5,10 +5,14 @@
   "private": true,
   "exports": {
     ".": "./src/index.ts",
-    "./discovery": "./src/discovery.ts"
+    "./discovery": "./src/discovery.ts",
+    "./project-types": "./src/project-types.ts"
   },
+  "files": [
+    "src"
+  ],
   "dependencies": {
-    "effect": "^3.21.0",
+    "effect": "^3.21.2",
     "ts-morph": "^27.0.2"
   },
   "license": "MIT",

@@ -1,7 +1,7 @@
 import { Node, type SourceFile, SyntaxKind } from "ts-morph";
+import { getDeclarationName } from "./declarations";
 import type { PackageInfo } from "./discovery";
 import type { FileDeclarationInfo, FileExportMetadata, FileInspectionResult } from "./project-types";
-import { getDeclarationName } from "./symbol-lookup";
 
 export interface FileInspectionContext {
   readonly kindToString: (kind: SyntaxKind) => string;
