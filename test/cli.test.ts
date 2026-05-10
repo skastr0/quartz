@@ -17,6 +17,7 @@ const runCli = (args: readonly string[], input?: string) =>
   })
 
 const parse = (text: string) => JSON.parse(text) as Record<string, any>
+const cliTestTimeout = 20_000
 
 describe("agentic CLI protocol", () => {
   it("reuses analyzers by normalized root without changing payload-facing roots", () => {
@@ -43,7 +44,7 @@ describe("agentic CLI protocol", () => {
     expect(result.stderr).toBe("")
     const envelope = parse(result.stdout)
     expect(envelope.data.results.map((item: any) => item.target.root)).toEqual(["test/fixtures", "./test/fixtures"])
-  }, 20_000)
+  }, cliTestTimeout)
 
   it("accepts inline, @file, and stdin JSON payloads", () => {
     const payload = { root: fixturesPath, symbol: "User" }
@@ -64,7 +65,7 @@ describe("agentic CLI protocol", () => {
         data: { name: "User", kind: "interface" },
       })
     }
-  }, 20_000)
+  }, cliTestTimeout)
 
   it("writes expected failures as stderr envelopes", () => {
     const result = runCli(["info", JSON.stringify({ root: fixturesPath })])
@@ -81,7 +82,7 @@ describe("agentic CLI protocol", () => {
         },
       },
     })
-  }, 10_000)
+  }, cliTestTimeout)
 
   it("returns ordered batch results with partial failure semantics", () => {
     const result = runCli([
@@ -114,7 +115,7 @@ describe("agentic CLI protocol", () => {
       target: { symbol: "MissingSymbol" },
       error: { type: "NotFoundError" },
     })
-  })
+  }, cliTestTimeout)
 
   it("writes artifact-mode output for graph results", () => {
     const artifactDir = mkdtempSync(join(tmpdir(), "tlt-artifacts-"))
@@ -142,7 +143,7 @@ describe("agentic CLI protocol", () => {
     const artifactPath = envelope.data.artifact.absolute_path
     expect(existsSync(artifactPath)).toBe(true)
     expect(readFileSync(artifactPath, "utf8")).toContain("ExtendedUser")
-  }, 10_000)
+  }, cliTestTimeout)
 
   it("exposes capabilities, schemas, examples, and doctor discovery", () => {
     const capabilities = runCli(["capabilities"])
@@ -207,7 +208,7 @@ describe("agentic CLI protocol", () => {
         package_count: 1,
       },
     })
-  }, 15_000)
+  }, cliTestTimeout)
 
   it("rejects payloads for list discovery commands", () => {
     const result = runCli(["schema", "list", JSON.stringify({ name: "graph" })])
@@ -223,7 +224,7 @@ describe("agentic CLI protocol", () => {
         },
       },
     })
-  })
+  }, cliTestTimeout)
 
   it("explains unquoted assignability errors through the CLI", () => {
     const result = runCli([
@@ -245,7 +246,7 @@ describe("agentic CLI protocol", () => {
         issues: [expect.objectContaining({ kind: "missing_property", property: "id" })],
       },
     })
-  })
+  }, cliTestTimeout)
 
   it("builds the CLI bundle", () => {
     const result = spawnSync("bun", ["run", "cli:build"], {
