@@ -730,5 +730,3 @@ export const CoreLayer = (rootDirectory: string): Layer.Layer<CoreServices> => {
     typeAnalyzerLayer,
   )
 }
-
-export const AppLayer = CoreLayer

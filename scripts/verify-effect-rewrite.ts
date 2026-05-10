@@ -50,7 +50,18 @@ const oldDocTerms = [
 
 requireNoMatches("old analyzer path", oldAnalyzerTerms, coreAndEdges)
 requireNoMatches("core runPromise", "Effect\\.runPromise", ["packages/core/src"])
-requireNoMatches("repeated AppLayer provide", "Effect\\.provide\\(AppLayer|provide\\(AppLayer", ["packages/core/src", "apps"])
+const appLayerTerm = "App" + "Layer"
+requireNoMatches("repeated app layer provide", `Effect\\.provide\\(${appLayerTerm}|provide\\(${appLayerTerm}`, [
+  "packages/core/src",
+  "apps",
+])
+requireNoMatches("app layer compatibility alias", `\\b${appLayerTerm}\\b`, [
+  "packages/core/src",
+  "apps",
+  "test",
+  "scripts",
+  "README.md",
+])
 requireNoMatches(
   "old API docs",
   oldDocTerms,

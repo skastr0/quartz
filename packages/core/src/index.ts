@@ -1,6 +1,5 @@
 export {
   AnalyzerConfig,
-  AppLayer,
   CoreLayer,
   Diagnostics,
   FileInspection,

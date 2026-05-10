@@ -63,17 +63,22 @@ Deletes the previous analyzer construction path and moves runtime creation to CL
 
 Runs final validation, proof searches, documentation cleanup, and independent review. This is the only glyph allowed to declare the full rewrite complete.
 
-## Active QZ-008 Blockers
+## QZ-008 Review Blockers Fixed In Commit `9c2b53a`
 
-The first review pass found blockers that must be closed before any QZ rewrite glyph moves to `done`:
+The first review pass found blockers that were fixed before QZ-008 moved back to review:
 
-- Shared mutable ts-morph project access needs serialized ownership.
-- Transform search engine caching must be bound to project identity.
-- Package discovery cache must invalidate on dirty/refresh operations.
-- Discovery filesystem failures must surface instead of being silently treated as an empty workspace.
-- Type search must resolve duplicate names by file-qualified identity.
-- Documentation must describe the current architecture rather than the migration plan.
-- `release:check` must include an automated Effect rewrite proof gate.
+- Shared mutable ts-morph project access is serialized at public analyzer entrypoints.
+- Transform search engine caching is bound to project identity.
+- Package discovery cache invalidates on dirty/refresh operations.
+- Discovery filesystem failures surface as typed Quartz errors.
+- Type search resolves duplicate names by file-qualified identity.
+- Documentation describes the current architecture rather than the migration plan.
+- `release:check` includes an automated Effect rewrite proof gate.
+
+## QZ-008 Review Blockers Fixed After Final Dispatch
+
+- The exported app-layer alias was removed so `CoreLayer(root)` remains the only named composition root.
+- The Effect rewrite verifier now fails on any remaining app-layer alias reference in core, apps, tests, scripts, or README.
 
 ## Completion Rule
 
