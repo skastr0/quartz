@@ -56,7 +56,7 @@ describe("OpenCode plugin wrapper", () => {
     const diagnostics = parse(await toolExecute(plugin, "type_diagnostics", { explain: true }))
     const info = parse(await toolExecute(plugin, "type_info", { symbol: "User" }))
     const memberInfo = parse(await toolExecute(plugin, "type_info", { symbol: "@file:types/basic.ts:User.name" }))
-    const symbols = parse(await toolExecute(plugin, "type_symbols", { pattern: "^User", kind: "interface", limit: 1 }))
+    const symbols = parse(await toolExecute(plugin, "type_symbols", { package: "(root)", pattern: "^User", kind: "interface", limit: 1 }))
     const related = parse(await toolExecute(plugin, "type_related", { symbol: "ExtendedUser" }))
     const graph = parse(await toolExecute(plugin, "type_graph", { symbol: "ExtendedUser", depth: 1, format: "dot" }))
     const compatible = parse(await toolExecute(plugin, "type_compatible", { from: "ExtendedUser", to: "User" }))
@@ -127,5 +127,27 @@ describe("OpenCode plugin wrapper", () => {
         extra: { sessionID: "session-1" },
       }),
     })
+  })
+
+  it("routes package-scoped plugin calls to the selected package", async () => {
+    const root = mkdtempSync(join(tmpdir(), "quartz-plugin-packages-"))
+    const leafPackage = "packages/leaf"
+    mkdirSync(join(root, "src"), { recursive: true })
+    mkdirSync(join(root, leafPackage, "src"), { recursive: true })
+    writeFileSync(join(root, "tsconfig.json"), JSON.stringify({ include: ["src/**/*.ts"] }), "utf8")
+    writeFileSync(join(root, "src", "root.ts"), "export interface RootOnly { root: string }\n", "utf8")
+    writeFileSync(join(root, leafPackage, "tsconfig.json"), JSON.stringify({ include: ["src/**/*.ts"] }), "utf8")
+    writeFileSync(join(root, leafPackage, "src", "leaf.ts"), "export interface LeafOnly { leaf: string }\n", "utf8")
+
+    const plugin: any = await QuartzPlugin({
+      directory: root,
+      client: {},
+    } as never)
+
+    const leafSymbols = parse(await toolExecute(plugin, "type_symbols", { package: leafPackage, limit: 25 }))
+    const names = leafSymbols.symbols.map((symbol: any) => symbol.name)
+
+    expect(names).toContain("LeafOnly")
+    expect(names).not.toContain("RootOnly")
   })
 })

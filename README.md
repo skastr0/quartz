@@ -2,15 +2,32 @@
 
 Generic TypeScript type-analysis core, an agent-native CLI, and a thin OpenCode plugin app.
 
+Quartz is built for agents that need to inspect TypeScript projects without scraping editor UI or guessing from text search. It answers questions about packages, exported symbols, type expansion, diagnostics, snippets, source positions, compatibility, dependency graphs, refactor previews, and structural transform candidates.
+
 ## Layout
 
 - `packages/core`: reusable type-analysis behavior, independent of OpenCode.
 - `apps/cli`: Effect-powered CLI protocol for agents and scripts.
 - `apps/opencode-plugin`: OpenCode-specific tool registration, event hooks, logging, and session context behavior.
 
+## Install And Run Locally
+
+```bash
+bun install
+bun run cli:build
+bun run cli:install-local
+quartz capabilities
+```
+
+During development, commands can also run through the source entrypoint:
+
+```bash
+bun run apps/cli/src/main.ts capabilities
+```
+
 ## CLI Protocol
 
-The CLI accepts domain input as JSON payloads. Flags are reserved for execution controls:
+The CLI follows `agentic-cli/v1`. Domain input lives in JSON payloads. Flags are reserved for execution controls:
 
 - `--output inline|artifact|auto`
 - `--format json|pretty`
@@ -26,6 +43,8 @@ quartz info '{"root":"test/fixtures","symbol":"User"}'
 cat payloads/info.json | quartz info -
 ```
 
+If `root` is omitted, Quartz analyzes the current working directory. Multi-package workspaces can pass `package` to target a discovered package or directory.
+
 Every command returns an envelope. Success is written to stdout:
 
 ```json
@@ -37,6 +56,8 @@ Expected failures are written to stderr and exit with code `1`:
 ```json
 {"ok":false,"command":"info","error":{"type":"CommandInputError","message":"Payload failed schema validation","details":{}}}
 ```
+
+Most failures include `details.retryable`. Schema errors, unknown commands, missing required fields, and not-found lookups are non-retryable until the payload changes. File-read, artifact-write, and timeout failures may be retryable after fixing the environment or increasing `--timeout`.
 
 ## Discovery
 
@@ -51,7 +72,36 @@ quartz examples show info
 quartz doctor '{"root":"test/fixtures"}'
 ```
 
-## Example Payloads
+`capabilities` reports supported input modes, execution flags, envelope shape, batch behavior, and command inventory. `schema show <command>` returns the JSON schema and example for one command. `examples show <command>` returns a payload plus inline, file, and stdin invocation forms.
+
+## Public Commands
+
+All command examples below use `test/fixtures`, the same fixture repo exercised by `bun run verify:docs-examples`.
+
+| Command | Use | Example payload |
+| --- | --- | --- |
+| `packages` | List discovered TypeScript packages from `tsconfig.json` files. | `{"root":"test/fixtures"}` |
+| `symbols` | List exported symbols with `pattern`, `kind`, `file`, `package`, and `limit` filters. | `{"root":"test/fixtures","pattern":"^User","limit":25}` |
+| `info` | Show type information for an exported symbol or `@file:path.ts:Symbol.member`. | `{"root":"test/fixtures","symbol":"User"}` |
+| `expand` | Expand an exported symbol type. | `{"root":"test/fixtures","symbol":"User"}` |
+| `search` | Search exported types by name, regex, property, or base type. | `{"root":"test/fixtures","query":"Role","limit":10}` |
+| `diagnostics` | Show TypeScript diagnostics, optionally with Quartz explanations. | `{"root":"test/fixtures","explain":true}` |
+| `at-position` | Show the type at a one-based source position. | `{"root":"test/fixtures","file":"types/basic.ts","line":9,"column":3}` |
+| `related` | Find symbols that reference or are referenced by a symbol. | `{"root":"test/fixtures","symbol":"User"}` |
+| `eval` | Evaluate a TypeScript type expression. | `{"root":"test/fixtures","expression":"Pick<User, \"id\" | \"name\">"}` |
+| `check-snippet` | Type-check a snippet without writing to disk. | `{"root":"test/fixtures","code":"const value = 1 satisfies number;"}` |
+| `file` | Inspect declarations in one source file. | `{"root":"test/fixtures","file":"types/basic.ts","includePrivate":false}` |
+| `compatible` | Check whether one type is assignable to another. | `{"root":"test/fixtures","from":"ExtendedUser","to":"User"}` |
+| `graph` | Generate a type dependency graph as Mermaid or DOT. | `{"root":"test/fixtures","symbol":"ExtendedUser","depth":2,"format":"mermaid"}` |
+| `refactor-preview` | Preview a rename refactor without applying it. | `{"root":"test/fixtures","symbol":"RefactorUser","to":"RenamedUser"}` |
+| `why-error` | Explain a TypeScript diagnostic code or message. | `{"root":"test/fixtures","code":2322,"message":"Type 'UserInput' is not assignable to type 'User'."}` |
+| `explain` | Show resolution steps for a type expression. | `{"root":"test/fixtures","expression":"Pick<User, \"id\" | \"name\">"}` |
+| `transform-search` | Search functions by structural input/output type compatibility. | `{"root":"test/fixtures","from":"User","to":"UserDTO","limit":5}` |
+| `doctor` | Inspect local CLI health and project discovery. | `{"root":"test/fixtures"}` |
+
+Use `schema show <command>` for exact payload fields. Artifact-capable commands are `expand`, `diagnostics`, `file`, `graph`, `refactor-preview`, `why-error`, `explain`, and `transform-search`.
+
+## Example Payload Files
 
 `payloads/info.json`:
 
@@ -84,7 +134,7 @@ quartz doctor '{"root":"test/fixtures"}'
 }
 ```
 
-## Batch Calls
+## Batch Calls And Partial Failures
 
 Batch-capable commands accept an array of payload objects and preserve input order:
 
@@ -127,43 +177,45 @@ Artifact responses include a compact summary plus an absolute path:
 
 Graphs, diagnostics, declaration dumps, transform search results, refactor previews, expanded types, and large explanations support artifact output.
 
-## Commands
+## OpenCode Plugin
 
-JSON-payload commands:
+The OpenCode plugin exposes the same analyzer through tool calls rooted at the OpenCode project directory.
 
-- `packages`
-- `symbols`
-- `info`
-- `expand`
-- `search`
-- `diagnostics`
-- `at-position`
-- `related`
-- `eval`
-- `check-snippet`
-- `file`
-- `compatible`
-- `graph`
-- `refactor-preview`
-- `why-error`
-- `explain`
-- `transform-search`
-- `doctor`
-
-Use `schema show <command>` for exact payload fields.
-
-## Local Build And Install
+Build the plugin bundle:
 
 ```bash
-bun run cli:build
-bun run cli:install-local
-quartz capabilities
+bun run --filter @skastr0/quartz-opencode-plugin build
 ```
 
-Package checks:
+Configure OpenCode to load `@skastr0/quartz-opencode-plugin/server` after the package is available to the project. The plugin creates one Effect runtime for the OpenCode workspace directory, reuses the analyzer across tool calls, and marks the project cache dirty after file-modifying tools such as `edit`, `write`, or `morph-mcp_edit_file`.
+
+Plugin tools:
+
+- Discovery: `type_packages`, `type_symbols`, `type_info`, `type_expand`, `type_related`, `type_search`
+- Analysis: `type_eval`, `type_diagnostics`, `type_check_snippet`, `type_at_position`, `type_file`, `type_refresh`
+- Relationships and refactors: `type_compatible`, `type_graph`, `type_refactor_preview`, `type_why_error`, `type_explain`, `type_transform_search`
+
+Tool arguments mirror CLI payload fields except `root`, because the plugin root is the OpenCode workspace directory. Use `package` for multi-package workspaces.
+
+## Validation
 
 ```bash
-bun run typecheck
-bun run test
-bun run build
+bun run verify
+bun run verify:docs-examples
+bun run verify:regression-guard
+bun run verify:external-matrix
 ```
+
+`verify:docs-examples` backs the public examples in this README against `test/fixtures`.
+
+`verify:regression-guard` is the compact pre-release guard for public-feature and severe legibility drift. It runs the Effect rewrite structural check, the documented CLI example smoke test, and focused CLI/plugin/refactor coverage. Use it before release-readiness work or after changing analyzer services, CLI envelopes, plugin tools, diagnostics/explanations, transform search, snippet checking, source-file inspection, or refactor preview behavior. A failure means either a public feature regressed or a structural guard detected a return to the old analyzer/runtime shape.
+
+`verify:external-matrix` exercises public CLI features against real local repositories and writes JSON/Markdown evidence under `.quartz/artifacts/`.
+
+Release checks:
+
+```bash
+bun run release:check
+```
+
+Do not publish npm packages or flip repository visibility until `release.md` says the public-release gates have been completed.

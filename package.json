@@ -19,8 +19,11 @@
     "test": "vitest run",
     "verify": "bun run typecheck && bun run test && bun run build && bun run verify:package-boundaries",
     "verify:package-boundaries": "bun scripts/verify-package-boundaries.ts",
+    "verify:docs-examples": "bun scripts/verify-doc-examples.ts",
     "verify:effect-rewrite": "bun scripts/verify-effect-rewrite.ts",
-    "release:check": "bun run verify && bun run verify:effect-rewrite && bun audit && publish-scan ."
+    "verify:external-matrix": "bun scripts/external-feature-matrix.ts",
+    "verify:regression-guard": "bun scripts/verify-regression-guard.ts",
+    "release:check": "bun run verify && bun run verify:regression-guard && bun run verify:external-matrix && bun audit && publish-scan ."
   },
   "dependencies": {
     "effect": "^3.21.2",

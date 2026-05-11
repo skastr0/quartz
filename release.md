@@ -39,16 +39,20 @@ None for this checkpoint. Public visibility and npm publishing remain intentiona
 
 ## Verification
 - bun run verify
+- bun run verify:docs-examples
+- bun run verify:regression-guard
 - bun run typecheck
 - bun run test
 - bun run build
 - bun run verify:package-boundaries
+- bun run verify:effect-rewrite
+- bun run verify:external-matrix
 - bun audit
 - publish-scan .
 
 ## First Publish Steps
 1. Keep the repository private and finish blocker cleanup.
-2. Run `bun run release:check` and inspect the publish-scan output directory.
+2. Run `bun run release:check`, confirm the docs-example and external-matrix gates pass, and inspect the publish-scan output directory.
 3. Inspect package contents with npm pack/bun publish --dry-run or cargo package --list, depending on the project.
 4. Make the repository public only after the public files and security settings are ready.
 5. Publish manually to the chosen registry or create a draft GitHub Release.
