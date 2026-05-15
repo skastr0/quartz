@@ -4,6 +4,7 @@ import { isAbsolute, join, relative, resolve } from "node:path"
 import { Either, Effect, JSONSchema, ManagedRuntime, ParseResult, Schema } from "effect"
 import { CoreLayer, QuartzError, TypeAnalyzerService } from "@skastr0/quartz-core"
 import type { ListSymbolsOptions, SearchTypesOptions, TypeAnalyzer } from "@skastr0/quartz-core"
+import { defaultArtifactDirectory, quartzHome, QUARTZ_HOME_ENV } from "./runtime-storage"
 
 const VERSION = "0.1.0"
 const DEFAULT_CONCURRENCY = 5
@@ -1105,7 +1106,7 @@ const writeArtifact = (
 ): Effect.Effect<ArtifactResult, CommandExecutionError> =>
   Effect.tryPromise({
     try: async () => {
-      const artifactDirectory = resolve(options.artifactDir ?? join(process.cwd(), ".quartz", "artifacts"))
+      const artifactDirectory = resolve(options.artifactDir ?? defaultArtifactDirectory())
       await mkdir(artifactDirectory, { recursive: true })
 
       const createdAt = new Date().toISOString()
@@ -1146,7 +1147,12 @@ const capabilities = () => ({
     format: ["json", "pretty"],
     concurrency: "positive integer, default 5",
     timeout: "positive integer milliseconds",
-    artifact_dir: "directory for artifact output",
+    artifact_dir: "explicit directory for artifact output; defaults to runtime_storage.artifact_dir",
+  },
+  runtime_storage: {
+    home_env: QUARTZ_HOME_ENV,
+    home: quartzHome(),
+    artifact_dir: defaultArtifactDirectory(),
   },
   envelopes: {
     success: { ok: true, command: "<name>", data: {} },

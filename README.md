@@ -59,6 +59,8 @@ Expected failures are written to stderr and exit with code `1`:
 
 Most failures include `details.retryable`. Schema errors, unknown commands, missing required fields, and not-found lookups are non-retryable until the payload changes. File-read, artifact-write, and timeout failures may be retryable after fixing the environment or increasing `--timeout`.
 
+Quartz-owned runtime output defaults to `~/.config/quartz`, or `$QUARTZ_HOME` when that environment variable is set. Project output is written only when a command receives an explicit path such as `--artifact-dir`.
+
 ## Discovery
 
 Agents should discover the contract instead of scraping help text:
@@ -158,9 +160,12 @@ Batch responses use `outcome: "succeeded" | "partial_failure" | "failed"` with p
 Large outputs can be redirected to artifacts:
 
 ```bash
-quartz graph @payloads/graph.json --output artifact --artifact-dir .quartz/artifacts
+quartz graph @payloads/graph.json --output artifact
+quartz graph @payloads/graph.json --output artifact --artifact-dir ./quartz-artifacts
 quartz diagnostics '{"root":"test/fixtures","explain":true}' --output auto
 ```
+
+Without `--artifact-dir`, artifacts are written under `~/.config/quartz/artifacts` or `$QUARTZ_HOME/artifacts`. Use `--artifact-dir` when you intentionally want project-local output.
 
 Artifact responses include a compact summary plus an absolute path:
 
@@ -170,7 +175,7 @@ Artifact responses include a compact summary plus an absolute path:
   "summary": "graph output written to artifact (428 bytes).",
   "artifact": {
     "kind": "json",
-    "absolute_path": "/abs/path/.quartz/artifacts/result.json"
+    "absolute_path": "/Users/alice/.config/quartz/artifacts/result.json"
   }
 }
 ```
@@ -210,7 +215,7 @@ bun run verify:external-matrix
 
 `verify:regression-guard` is the compact pre-release guard for public-feature and severe legibility drift. It runs the Effect rewrite structural check, the documented CLI example smoke test, and focused CLI/plugin/refactor coverage. Use it before release-readiness work or after changing analyzer services, CLI envelopes, plugin tools, diagnostics/explanations, transform search, snippet checking, source-file inspection, or refactor preview behavior. A failure means either a public feature regressed or a structural guard detected a return to the old analyzer/runtime shape.
 
-`verify:external-matrix` exercises public CLI features against real local repositories and writes JSON/Markdown evidence under `.quartz/artifacts/`.
+`verify:external-matrix` exercises public CLI features against real local repositories and writes JSON/Markdown evidence under `~/.config/quartz/artifacts/external-feature-matrix`, or `$QUARTZ_MATRIX_ARTIFACT_DIR` when set.
 
 Release checks:
 

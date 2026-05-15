@@ -25,6 +25,8 @@ Quartz uses `agentic-cli/v1`.
 - Success envelopes go to stdout.
 - Expected failure envelopes go to stderr and exit `1`.
 - Batch-capable commands accept an array of payloads and return ordered per-item results.
+- Runtime-owned artifacts default to `~/.config/quartz/artifacts`, or `$QUARTZ_HOME/artifacts` when `QUARTZ_HOME` is set.
+- Use `--artifact-dir <path>` only when you intentionally want artifacts in a specific output directory.
 
 Examples:
 

@@ -1,6 +1,6 @@
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { homedir, tmpdir } from "node:os"
+import { join, relative } from "node:path"
 import { spawnSync } from "node:child_process"
 import { describe, expect, it } from "vitest"
 import { fixturesPath } from "./helpers/analyzer"
@@ -9,9 +9,10 @@ import { __testing } from "../apps/cli/src/main"
 const repoRoot = join(fixturesPath, "..", "..")
 const cliEntry = "apps/cli/src/main.ts"
 
-const runCli = (args: readonly string[], input?: string) =>
+const runCli = (args: readonly string[], input?: string, env: NodeJS.ProcessEnv = {}) =>
   spawnSync("bun", ["run", cliEntry, ...args], {
     cwd: repoRoot,
+    env: { ...process.env, ...env },
     input,
     encoding: "utf8",
   })
@@ -117,16 +118,14 @@ describe("agentic CLI protocol", () => {
     })
   }, cliTestTimeout)
 
-  it("writes artifact-mode output for graph results", () => {
-    const artifactDir = mkdtempSync(join(tmpdir(), "tlt-artifacts-"))
+  it("writes default artifact-mode output under Quartz home", () => {
+    const quartzHome = mkdtempSync(join(tmpdir(), "quartz-home-"))
     const result = runCli([
       "graph",
       JSON.stringify({ root: fixturesPath, symbol: "ExtendedUser" }),
       "--output",
       "artifact",
-      "--artifact-dir",
-      artifactDir,
-    ])
+    ], undefined, { QUARTZ_HOME: quartzHome })
 
     expect(result.status).toBe(0)
     expect(result.stderr).toBe("")
@@ -141,12 +140,47 @@ describe("agentic CLI protocol", () => {
       },
     })
     const artifactPath = envelope.data.artifact.absolute_path
+    const relativeToHomeArtifacts = relative(join(quartzHome, "artifacts"), artifactPath)
+    expect(relativeToHomeArtifacts).not.toBe("")
+    expect(relativeToHomeArtifacts.startsWith("..")).toBe(false)
+    expect(readFileSync(artifactPath, "utf8")).toContain("ExtendedUser")
+  }, cliTestTimeout)
+
+  it("honors explicit artifact output directories for graph results", () => {
+    const quartzHome = mkdtempSync(join(tmpdir(), "quartz-home-"))
+    const artifactDir = mkdtempSync(join(tmpdir(), "tlt-artifacts-"))
+    const result = runCli([
+      "graph",
+      JSON.stringify({ root: fixturesPath, symbol: "ExtendedUser" }),
+      "--output",
+      "artifact",
+      "--artifact-dir",
+      artifactDir,
+    ], undefined, { QUARTZ_HOME: quartzHome })
+
+    expect(result.status).toBe(0)
+    expect(result.stderr).toBe("")
+
+    const envelope = parse(result.stdout)
+    expect(envelope).toMatchObject({
+      ok: true,
+      command: "graph",
+      data: {
+        kind: "summary+artifact",
+        artifact: { kind: "json" },
+      },
+    })
+    const artifactPath = envelope.data.artifact.absolute_path
+    const relativeToExplicitArtifacts = relative(artifactDir, artifactPath)
+    expect(relativeToExplicitArtifacts).not.toBe("")
+    expect(relativeToExplicitArtifacts.startsWith("..")).toBe(false)
     expect(existsSync(artifactPath)).toBe(true)
     expect(readFileSync(artifactPath, "utf8")).toContain("ExtendedUser")
   }, cliTestTimeout)
 
   it("exposes capabilities, schemas, examples, and doctor discovery", () => {
-    const capabilities = runCli(["capabilities"])
+    const quartzHome = mkdtempSync(join(tmpdir(), "quartz-home-"))
+    const capabilities = runCli(["capabilities"], undefined, { QUARTZ_HOME: quartzHome })
     const schemaList = runCli(["schema", "list"])
     const schemas = runCli(["schema", "show", "graph"])
     const examplesList = runCli(["examples", "list"])
@@ -158,6 +192,11 @@ describe("agentic CLI protocol", () => {
       ok: true,
       data: {
         protocol: "agentic-cli/v1",
+        runtime_storage: {
+          home_env: "QUARTZ_HOME",
+          home: quartzHome,
+          artifact_dir: join(quartzHome, "artifacts"),
+        },
       },
     })
 
@@ -206,6 +245,21 @@ describe("agentic CLI protocol", () => {
       data: {
         ok: true,
         package_count: 1,
+      },
+    })
+  }, cliTestTimeout)
+
+  it("ignores an empty Quartz home override", () => {
+    const capabilities = runCli(["capabilities"], undefined, { QUARTZ_HOME: "" })
+
+    expect(capabilities.status).toBe(0)
+    expect(parse(capabilities.stdout)).toMatchObject({
+      ok: true,
+      data: {
+        runtime_storage: {
+          home: join(homedir(), ".config", "quartz"),
+          artifact_dir: join(homedir(), ".config", "quartz", "artifacts"),
+        },
       },
     })
   }, cliTestTimeout)

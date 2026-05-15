@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
-import { dirname, join, relative } from "node:path"
+import { homedir } from "node:os"
+import { dirname, join, relative, resolve } from "node:path"
 import { spawnSync } from "node:child_process"
 
 type Classification = "pass" | "quartz-bug" | "repo-precondition" | "timeout" | "matrix-harness"
@@ -53,7 +54,12 @@ interface CommandInput {
 
 const repoRoot = process.cwd()
 const cliEntry = "apps/cli/src/main.ts"
-const artifactDir = join(repoRoot, ".quartz/artifacts")
+const envPath = (name: string): string | undefined => {
+  const value = process.env[name]
+  return value === undefined || value.trim() === "" ? undefined : value
+}
+const quartzHome = resolve(envPath("QUARTZ_HOME") ?? join(homedir(), ".config", "quartz"))
+const artifactDir = resolve(envPath("QUARTZ_MATRIX_ARTIFACT_DIR") ?? join(quartzHome, "artifacts", "external-feature-matrix"))
 const outputPath = join(artifactDir, "external-feature-matrix-results.json")
 const summaryPath = join(artifactDir, "external-feature-matrix-summary.md")
 const commandTimeoutMs = 20_000
@@ -584,8 +590,8 @@ const actionableFailures = [
 ]
 
 console.log(JSON.stringify({
-  output: relative(repoRoot, outputPath),
-  summary: relative(repoRoot, summaryPath),
+  output: displayPath(outputPath),
+  summary: displayPath(summaryPath),
   repositories: results.repositories.length,
   commands: results.global.length + results.repositories.reduce((sum, repo) => sum + repo.results.length, 0),
   actionableFailures: actionableFailures.length,
@@ -593,6 +599,11 @@ console.log(JSON.stringify({
 
 if (actionableFailures.length > 0) {
   process.exitCode = 1
+}
+
+function displayPath(path: string): string {
+  const fromRepo = relative(repoRoot, path)
+  return fromRepo.startsWith("..") ? path : fromRepo
 }
 
 function renderSummary(matrix: typeof results): string {
