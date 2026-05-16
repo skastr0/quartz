@@ -48,6 +48,12 @@ export type {
   SnippetDiagnostic,
   StringLiteralRef,
   TypeExplanationResult,
+  VerifyContractCheck,
+  VerifyContractCheckKey,
+  VerifyContractDiagnostic,
+  VerifyContractEvidence,
+  VerifyContractOptions,
+  VerifyContractResult,
 } from "./project-types"
 export { discoverPackages } from "./discovery"
 export type { PackageInfo } from "./discovery"

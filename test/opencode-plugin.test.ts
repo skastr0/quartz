@@ -42,6 +42,7 @@ describe("OpenCode plugin wrapper", () => {
         type_why_error: expect.any(Object),
         type_explain: expect.any(Object),
         type_transform_search: expect.any(Object),
+        type_verify_contract: expect.any(Object),
       }),
     )
     expect(plugin.event).toEqual(expect.any(Function))
@@ -81,6 +82,12 @@ describe("OpenCode plugin wrapper", () => {
       from: "User",
       limit: 5,
     }))
+    const verifyContract = parse(await toolExecute(plugin, "type_verify_contract", {
+      from: "User",
+      to: "UserDTO",
+      symbol: "toDTO",
+      snippet: "const user: User = { id: '1', name: 'Ada', email: 'ada@example.com' }; const dto: UserDTO = toDTO(user);",
+    }))
     const whyError = parse(await toolExecute(plugin, "type_why_error", {
       code: 2322,
       message: "Type UserInput is not assignable to type User",
@@ -119,6 +126,26 @@ describe("OpenCode plugin wrapper", () => {
         }),
       ]),
     )
+    expect(verifyContract).toMatchObject({
+      schemaVersion: "verify-contract/v1",
+      ok: true,
+      checks: {
+        compatibility: { ran: true, passed: false, blocking: false },
+        snippet: { ran: true, passed: true },
+        diagnostics: { ran: true, passed: true },
+        transform: { ran: true, passed: true },
+      },
+      evidence: {
+        transformSearch: {
+          results: expect.arrayContaining([
+            expect.objectContaining({
+              name: expect.stringContaining("toDTO"),
+              verification: expect.objectContaining({ status: "verified" }),
+            }),
+          ]),
+        },
+      },
+    })
     expect(whyError).toMatchObject({
       explanation: expect.stringContaining("UserInput"),
       issues: [expect.objectContaining({ kind: "missing_property", property: "id" })],

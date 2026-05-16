@@ -170,6 +170,31 @@ const checks: readonly CommandCheck[] = [
     },
   },
   {
+    name: "verify-contract",
+    args: [
+      "verify-contract",
+      JSON.stringify({
+        root: fixtureRoot,
+        from: "User",
+        to: "UserDTO",
+        symbol: "toDTO",
+        snippet: "const user: User = { id: '1', name: 'Ada', email: 'ada@example.com' }; const dto: UserDTO = toDTO(user);",
+      }),
+    ],
+    assert: (envelope) => {
+      const data = envelope.data
+      if (
+        data?.schemaVersion !== "verify-contract/v1" ||
+        data?.ok !== true ||
+        data?.checks?.transform?.passed !== true ||
+        data?.checks?.snippet?.passed !== true ||
+        data?.evidence?.transformSearch?.results?.[0]?.verification?.status !== "verified"
+      ) {
+        throw new Error(`verify-contract did not return passing evidence: ${JSON.stringify(data)}`)
+      }
+    },
+  },
+  {
     name: "transform-search verifiedOnly",
     args: [
       "transform-search",

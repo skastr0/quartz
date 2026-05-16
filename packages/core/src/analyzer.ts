@@ -10,6 +10,8 @@ import type {
   RelatedInfo,
   SnippetCheckResult,
   TypeExplanationResult,
+  VerifyContractOptions,
+  VerifyContractResult,
 } from "./project-types"
 import type { TransformSearchOptions } from "./transform-search"
 
@@ -175,6 +177,7 @@ export interface TypeAnalyzer {
   readonly transformSearch: (
     options: TransformSearchOptions & { readonly packageName?: string },
   ) => Effect.Effect<string, QuartzError>
+  readonly verifyContract: (options: VerifyContractOptions) => Effect.Effect<VerifyContractResult, QuartzError>
   readonly refresh: (packageName?: string) => Effect.Effect<string, QuartzError>
   readonly markDirty: () => Effect.Effect<void, QuartzError>
 }

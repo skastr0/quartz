@@ -3,7 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises"
 import { isAbsolute, join, relative, resolve } from "node:path"
 import { Either, Effect, JSONSchema, ManagedRuntime, ParseResult, Schema } from "effect"
 import { CoreLayer, QuartzError, TypeAnalyzerService } from "@skastr0/quartz-core"
-import type { ListSymbolsOptions, SearchTypesOptions, TypeAnalyzer } from "@skastr0/quartz-core"
+import type { ListSymbolsOptions, SearchTypesOptions, TypeAnalyzer, VerifyContractOptions } from "@skastr0/quartz-core"
 import { defaultArtifactDirectory, quartzHome, QUARTZ_HOME_ENV } from "./runtime-storage"
 
 const VERSION = "0.1.0"
@@ -123,6 +123,17 @@ const TransformSearchPayload = Schema.Struct({
   limit: Schema.optional(PositiveInteger),
 })
 
+const VerifyContractPayload = Schema.Struct({
+  ...baseFields,
+  from: Schema.optional(TypeExpression),
+  to: Schema.optional(TypeExpression),
+  symbol: Schema.optional(SymbolName),
+  snippet: Schema.optional(Schema.NonEmptyString),
+  includeDiagnostics: Schema.optional(Schema.Boolean),
+  includeTransformEvidence: Schema.optional(Schema.Boolean),
+  transformLimit: Schema.optional(PositiveInteger),
+})
+
 const DoctorPayload = Schema.Struct({
   root: Schema.optional(ProjectRoot),
 })
@@ -143,6 +154,7 @@ type GraphPayload = Schema.Schema.Type<typeof GraphPayload>
 type RefactorPreviewPayload = Schema.Schema.Type<typeof RefactorPreviewPayload>
 type WhyErrorPayload = Schema.Schema.Type<typeof WhyErrorPayload>
 type TransformSearchPayload = Schema.Schema.Type<typeof TransformSearchPayload>
+type VerifyContractPayload = Schema.Schema.Type<typeof VerifyContractPayload>
 type DoctorPayload = Schema.Schema.Type<typeof DoctorPayload>
 
 class CommandInputError extends Schema.TaggedError<CommandInputError>()("CommandInputError", {
@@ -647,9 +659,42 @@ const commandSpecs = {
           }
           return analyzerFor(payload).transformSearch(options)
         }),
-      ),
+    ),
     target: (payload: TransformSearchPayload) => ({ from: payload.from, to: payload.to }),
   } satisfies CommandSpec<TransformSearchPayload>,
+  "verify-contract": {
+    name: "verify-contract",
+    description: "Compose compatibility, snippet, diagnostics, and transform evidence for a proposed type contract.",
+    schema: VerifyContractPayload,
+    batch: true,
+    artifactEligible: true,
+    example: {
+      root: "test/fixtures",
+      from: "User",
+      to: "UserDTO",
+      symbol: "toDTO",
+      snippet: "const user: User = { id: '1', name: 'Ada', email: 'ada@example.com' }; const dto: UserDTO = toDTO(user);",
+    },
+    execute: (payload: VerifyContractPayload) =>
+      requireAnyField(payload, ["from", "to", "snippet"], "Provide from/to types or a concrete snippet to verify.").pipe(
+        Effect.flatMap(() => {
+          const options: VerifyContractOptions = {
+            ...packageField(payload),
+            ...(payload.from === undefined ? {} : { from: payload.from }),
+            ...(payload.to === undefined ? {} : { to: payload.to }),
+            ...(payload.symbol === undefined ? {} : { symbol: payload.symbol }),
+            ...(payload.snippet === undefined ? {} : { snippet: payload.snippet }),
+            ...(payload.includeDiagnostics === undefined ? {} : { includeDiagnostics: payload.includeDiagnostics }),
+            ...(payload.includeTransformEvidence === undefined
+              ? {}
+              : { includeTransformEvidence: payload.includeTransformEvidence }),
+            ...(payload.transformLimit === undefined ? {} : { transformLimit: payload.transformLimit }),
+          }
+          return analyzerFor(payload).verifyContract(options)
+        }),
+      ),
+    target: (payload: VerifyContractPayload) => ({ from: payload.from, to: payload.to, symbol: payload.symbol }),
+  } satisfies CommandSpec<VerifyContractPayload>,
   doctor: {
     name: "doctor",
     description: "Inspect local CLI health and project discovery.",

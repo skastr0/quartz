@@ -99,9 +99,16 @@ All command examples below use `test/fixtures`, the same fixture repo exercised 
 | `why-error` | Explain a TypeScript diagnostic code or message. | `{"root":"test/fixtures","code":2322,"message":"Type 'UserInput' is not assignable to type 'User'."}` |
 | `explain` | Show resolution steps for a type expression. | `{"root":"test/fixtures","expression":"Pick<User, \"id\" | \"name\">"}` |
 | `transform-search` | Search functions by structural input/output type compatibility. | `{"root":"test/fixtures","from":"User","to":"UserDTO","limit":5}` |
+| `verify-contract` | Compose compatibility, snippet, diagnostics, and transform evidence for a proposed contract. | `{"root":"test/fixtures","from":"User","to":"UserDTO","symbol":"toDTO"}` |
 | `doctor` | Inspect local CLI health and project discovery. | `{"root":"test/fixtures"}` |
 
-Use `schema show <command>` for exact payload fields. Artifact-capable commands are `expand`, `diagnostics`, `file`, `graph`, `refactor-preview`, `why-error`, `explain`, and `transform-search`.
+Use `schema show <command>` for exact payload fields. Artifact-capable commands are `expand`, `diagnostics`, `file`, `graph`, `refactor-preview`, `why-error`, `explain`, `transform-search`, and `verify-contract`.
+
+### Verify Contract Evidence
+
+`verify-contract` returns a versioned evidence packet with `schemaVersion: "verify-contract/v1"`. Its `ok` field means the configured Quartz checks found enough evidence for the requested contract shape; it is not a proof of runtime correctness or TypeScript soundness.
+
+The command composes existing checks: direct assignability, optional snippet checking, package diagnostics, and verified transform search. Direct assignability can fail for a conversion contract while a verified transform still provides useful compiler-backed evidence.
 
 ### Transform Search Verification Trust Ladder
 

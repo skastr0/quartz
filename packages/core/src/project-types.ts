@@ -1,3 +1,5 @@
+import type { TransformSearchResponse } from "./transform-search";
+
 export interface SymbolInfo {
   name: string;
   kind: string;
@@ -76,6 +78,58 @@ export interface CompatibilityResult {
   to: string;
   reason?: string;
   issues?: ErrorExplanationIssue[];
+}
+
+export interface VerifyContractOptions {
+  from?: string;
+  to?: string;
+  symbol?: string;
+  snippet?: string;
+  packageName?: string;
+  includeDiagnostics?: boolean;
+  includeTransformEvidence?: boolean;
+  transformLimit?: number;
+}
+
+export type VerifyContractCheckKey = "compatibility" | "snippet" | "diagnostics" | "transform";
+
+export interface VerifyContractCheck<T = unknown> {
+  ran: boolean;
+  passed: boolean | null;
+  blocking: boolean;
+  summary: string;
+  evidence?: T;
+}
+
+export interface VerifyContractDiagnostic {
+  file: string;
+  line: number;
+  column: number;
+  message: string;
+  code: number;
+}
+
+export interface VerifyContractEvidence {
+  compatibility?: CompatibilityResult;
+  snippet?: SnippetCheckResult;
+  diagnostics?: VerifyContractDiagnostic[];
+  transformSearch?: TransformSearchResponse;
+  explanations?: ErrorExplanationResult[];
+}
+
+export interface VerifyContractResult {
+  schemaVersion: "verify-contract/v1";
+  ok: boolean;
+  contract: {
+    from?: string;
+    to?: string;
+    symbol?: string;
+    package: string;
+  };
+  checks: Record<VerifyContractCheckKey, VerifyContractCheck>;
+  evidence: VerifyContractEvidence;
+  gaps: string[];
+  next_steps: string[];
 }
 
 export interface GraphEdge {

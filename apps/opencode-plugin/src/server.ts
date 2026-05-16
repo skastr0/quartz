@@ -198,6 +198,7 @@ const createRelationshipTools = (analyzer: TypeAnalyzer) => ({
   ...createRefactorTools(analyzer),
   ...createExplanationTools(analyzer),
   ...createTransformSearchTools(analyzer),
+  ...createVerifyContractTools(analyzer),
 })
 
 const createCompatibilityTools = (analyzer: TypeAnalyzer) => ({
@@ -334,6 +335,38 @@ const createTransformSearchTools = (analyzer: TypeAnalyzer) => ({
           ...optionalOption("includeSyntheticCode", args.includeSyntheticCode),
           ...optionalOption("includeFailedVerification", args.includeFailedVerification),
         }),
+      )
+    },
+  }),
+})
+
+const createVerifyContractTools = (analyzer: TypeAnalyzer) => ({
+  type_verify_contract: tool({
+    description: "Compose compatibility, snippet, diagnostics, and transform evidence for a proposed type contract.",
+    args: {
+      from: tool.schema.string().optional().describe("Source type or symbol"),
+      to: tool.schema.string().optional().describe("Target type or symbol"),
+      symbol: tool.schema.string().optional().describe("Expected transform symbol"),
+      snippet: tool.schema.string().optional().describe("Concrete TypeScript call-site snippet to check"),
+      includeDiagnostics: tool.schema.boolean().optional(),
+      includeTransformEvidence: tool.schema.boolean().optional(),
+      transformLimit: limitArg,
+      package: optionalPackageArg,
+    },
+    async execute(args) {
+      return json(
+        await run(
+          analyzer.verifyContract({
+            ...packageOption(args.package),
+            ...optionalOption("from", args.from),
+            ...optionalOption("to", args.to),
+            ...optionalOption("symbol", args.symbol),
+            ...optionalOption("snippet", args.snippet),
+            ...optionalOption("includeDiagnostics", args.includeDiagnostics),
+            ...optionalOption("includeTransformEvidence", args.includeTransformEvidence),
+            ...optionalOption("transformLimit", args.transformLimit),
+          }),
+        ),
       )
     },
   }),

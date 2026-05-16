@@ -258,6 +258,110 @@ describe("type analyzer core", () => {
     expect(invalidSnippet.errors?.length).toBeGreaterThan(0)
   })
 
+  it("composes contract verification evidence", async () => {
+    const analyzer = createFixtureAnalyzer()
+    const verified = await Effect.runPromise(
+      analyzer.verifyContract({
+        from: "User",
+        to: "UserDTO",
+        symbol: "toDTO",
+        snippet: "const user: User = { id: '1', name: 'Ada', email: 'ada@example.com' }; const dto: UserDTO = toDTO(user);",
+      }),
+    )
+    const failed = await Effect.runPromise(
+      analyzer.verifyContract({
+        from: "User",
+        to: "UserDTO",
+        symbol: "fromDTO",
+        snippet: "const dto: UserDTO = toDTO({ id: 1 });",
+      }),
+    )
+
+    expect(verified).toMatchObject({
+      schemaVersion: "verify-contract/v1",
+      ok: true,
+      contract: { from: "User", to: "UserDTO", symbol: "toDTO" },
+      checks: {
+        compatibility: { ran: true, passed: false, blocking: false },
+        snippet: { ran: true, passed: true, blocking: true },
+        diagnostics: { ran: true, passed: true, blocking: true },
+        transform: { ran: true, passed: true, blocking: true },
+      },
+    })
+    expect(verified.evidence.transformSearch?.results[0]).toMatchObject({
+      name: expect.stringContaining("toDTO"),
+      verification: { status: "verified" },
+    })
+    expect(verified.gaps).toContain("Direct assignability is not established for from -> to.")
+
+    expect(failed.ok).toBe(false)
+    expect(failed.checks.snippet.passed).toBe(false)
+    expect(failed.checks.transform.passed).toBe(false)
+    expect(failed.gaps).toEqual(
+      expect.arrayContaining([
+        "The supplied snippet does not compile.",
+        "No compiler-verified transform candidate matched the requested symbol.",
+      ]),
+    )
+    expect(failed.next_steps.length).toBeGreaterThan(0)
+  })
+
+  it("verifies contract modes without requiring every evidence source", async () => {
+    const analyzer = createFixtureAnalyzer()
+    const transformOnly = await Effect.runPromise(
+      analyzer.verifyContract({
+        from: "User",
+        to: "UserDTO",
+      }),
+    )
+    const snippetOnly = await Effect.runPromise(
+      analyzer.verifyContract({
+        snippet: "const user: User = { id: '1', name: 'Ada', email: 'ada@example.com' };",
+      }),
+    )
+    const directlyAssignable = await Effect.runPromise(
+      analyzer.verifyContract({
+        from: "ExtendedUser",
+        to: "User",
+        snippet: "const extended: ExtendedUser = { id: '1', name: 'Ada', email: 'ada@example.com', role: 'admin', createdAt: new Date() }; const user: User = extended;",
+        includeTransformEvidence: false,
+      }),
+    )
+    const symbolMismatch = await Effect.runPromise(
+      analyzer.verifyContract({
+        from: "User",
+        to: "UserDTO",
+        symbol: "fromDTO",
+        snippet: "const user: User = { id: '1', name: 'Ada', email: 'ada@example.com' }; const dto: UserDTO = toDTO(user);",
+      }),
+    )
+
+    expect(transformOnly.ok).toBe(true)
+    expect(transformOnly.checks.transform.passed).toBe(true)
+    expect(transformOnly.checks.snippet.ran).toBe(false)
+    expect(transformOnly.gaps).toContain("No snippet was supplied, so Quartz did not verify a concrete call site.")
+
+    expect(snippetOnly.ok).toBe(true)
+    expect(snippetOnly.checks.snippet.passed).toBe(true)
+    expect(snippetOnly.checks.compatibility.ran).toBe(false)
+    expect(snippetOnly.checks.transform.ran).toBe(false)
+
+    expect(directlyAssignable.ok).toBe(true)
+    expect(directlyAssignable.checks.compatibility).toMatchObject({
+      ran: true,
+      passed: true,
+      blocking: false,
+    })
+    expect(directlyAssignable.checks.snippet.passed).toBe(true)
+    expect(directlyAssignable.checks.transform.ran).toBe(false)
+    expect(directlyAssignable.gaps).toContain("Transform evidence was skipped by includeTransformEvidence: false.")
+
+    expect(symbolMismatch.ok).toBe(false)
+    expect(symbolMismatch.checks.snippet.passed).toBe(true)
+    expect(symbolMismatch.checks.transform.passed).toBe(false)
+    expect(symbolMismatch.gaps).toContain("No compiler-verified transform candidate matched the requested symbol.")
+  })
+
   it("inspects files, graphs relationships, and previews refactors", async () => {
     const analyzer = createFixtureAnalyzer()
     const file = await Effect.runPromise(analyzer.getFileDeclarations("types/basic.ts"))

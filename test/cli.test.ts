@@ -302,6 +302,47 @@ describe("agentic CLI protocol", () => {
     })
   }, cliTestTimeout)
 
+  it("verifies composed contract evidence through the CLI", () => {
+    const result = runCli([
+      "verify-contract",
+      JSON.stringify({
+        root: fixturesPath,
+        from: "User",
+        to: "UserDTO",
+        symbol: "toDTO",
+        snippet: "const user: User = { id: '1', name: 'Ada', email: 'ada@example.com' }; const dto: UserDTO = toDTO(user);",
+      }),
+    ])
+
+    expect(result.status).toBe(0)
+    expect(result.stderr).toBe("")
+    const envelope = parse(result.stdout)
+    expect(envelope).toMatchObject({
+      ok: true,
+      command: "verify-contract",
+      data: {
+        schemaVersion: "verify-contract/v1",
+        ok: true,
+        checks: {
+          compatibility: { ran: true, passed: false, blocking: false },
+          snippet: { ran: true, passed: true },
+          diagnostics: { ran: true, passed: true },
+          transform: { ran: true, passed: true },
+        },
+        evidence: {
+          transformSearch: {
+            results: expect.arrayContaining([
+              expect.objectContaining({
+                name: expect.stringContaining("toDTO"),
+                verification: expect.objectContaining({ status: "verified" }),
+              }),
+            ]),
+          },
+        },
+      },
+    })
+  }, cliTestTimeout)
+
   it("builds the CLI bundle", () => {
     const result = spawnSync("bun", ["run", "cli:build"], {
       cwd: repoRoot,

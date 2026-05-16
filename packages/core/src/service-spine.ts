@@ -29,7 +29,15 @@ import {
   workspaceRelativePath,
 } from "./project-workspace"
 import type { RefactorPreviewOptions } from "./analyzer"
-import type { CompatibilityResult, FileInspectionResult, SnippetCheckResult } from "./project-types"
+import type {
+  CompatibilityResult,
+  ErrorExplanationResult,
+  FileInspectionResult,
+  SnippetCheckResult,
+  VerifyContractCheck,
+  VerifyContractOptions,
+  VerifyContractResult,
+} from "./project-types"
 import { previewRenameRefactor } from "./refactor-preview"
 import { SnippetEvaluator } from "./snippet-evaluation"
 import {
@@ -390,25 +398,29 @@ export class TransformSearch extends Effect.Service<TransformSearch>()("@skastr0
     const workspace = yield* ProjectWorkspace
     const cache = yield* SourceProjectCache
     const engines = yield* Ref.make(new Map<string, { readonly project: Project; readonly engine: TransformSearchEngine }>())
+    const searchRaw = Effect.fnUntraced(function* (
+      options: TransformSearchOptions & { readonly packageName?: string },
+    ) {
+      const pkg = yield* workspace.resolvePackage(options.packageName)
+      const project = yield* cache.getProject(pkg)
+      const sourceFiles = yield* cache.getSourceFiles(project, pkg)
+      const engine = yield* Ref.modify(engines, (current) => {
+        const cached = current.get(pkg.tsconfigPath)
+        if (cached !== undefined && cached.project === project) return [cached.engine, current] as const
+        const next = new Map(current)
+        const created = new TransformSearchEngine(project, pkg.path, [...sourceFiles])
+        next.set(pkg.tsconfigPath, { project, engine: created })
+        return [created, next] as const
+      })
+      return yield* Effect.tryPromise({
+        try: () => engine.search(options),
+        catch: toQuartzError("Could not search transforms"),
+      })
+    })
     return {
-      search: Effect.fnUntraced(function* (options: TransformSearchOptions & { readonly packageName?: string }) {
-        const pkg = yield* workspace.resolvePackage(options.packageName)
-        const project = yield* cache.getProject(pkg)
-        const sourceFiles = yield* cache.getSourceFiles(project, pkg)
-        const engine = yield* Ref.modify(engines, (current) => {
-          const cached = current.get(pkg.tsconfigPath)
-          if (cached !== undefined && cached.project === project) return [cached.engine, current] as const
-          const next = new Map(current)
-          const created = new TransformSearchEngine(project, pkg.path, [...sourceFiles])
-          next.set(pkg.tsconfigPath, { project, engine: created })
-          return [created, next] as const
-        })
-        const result = yield* Effect.tryPromise({
-          try: () => engine.search(options),
-          catch: toQuartzError("Could not search transforms"),
-        })
-        return formatResults(result)
-      }),
+      searchRaw,
+      search: (options: TransformSearchOptions & { readonly packageName?: string }) =>
+        searchRaw(options).pipe(Effect.map(formatResults)),
       clear: () => Ref.update(engines, (current) => {
         if (current.size === 0) return current
         return new Map()
@@ -512,6 +524,186 @@ export class TypeAnalyzerService extends Effect.Service<TypeAnalyzerService>()("
       }
     })
     const listSymbols = (options?: ListSymbolsOptions) => cache.withProjectAccess(listSymbolsBody(options))
+    const skippedContractCheck = (summary: string): VerifyContractCheck => ({
+      ran: false,
+      passed: null,
+      blocking: false,
+      summary,
+    })
+    const matchesRequestedSymbol = (resultName: string, symbol: string): boolean =>
+      resultName === symbol || resultName.endsWith(`.${symbol}`)
+    const verifyContractBody = Effect.fnUntraced(function* (options: VerifyContractOptions) {
+      const { pkg, project, sourceFiles } = yield* resolveTarget(options.packageName)
+      const checks: Record<"compatibility" | "snippet" | "diagnostics" | "transform", VerifyContractCheck> = {
+        compatibility: skippedContractCheck("Skipped because both from and to were not provided."),
+        snippet: skippedContractCheck("Skipped because no snippet was provided."),
+        diagnostics: skippedContractCheck("Skipped because includeDiagnostics was false."),
+        transform: skippedContractCheck("Skipped because both from and to were not provided."),
+      }
+      const evidence: VerifyContractResult["evidence"] = {}
+      const gaps: string[] = []
+      const nextSteps = new Set<string>()
+      const explanations: ErrorExplanationResult[] = []
+      const hasFromTo = options.from !== undefined && options.to !== undefined
+
+      if (hasFromTo) {
+        const from = options.from as string
+        const to = options.to as string
+        const fromFound = yield* symbolLookup.findSymbol(from, project, pkg)
+        const toFound = yield* symbolLookup.findSymbol(to, project, pkg)
+        const compatibility = yield* Effect.try({
+          try: () => checkResolvedTypeCompatibility(from, to, fromFound, toFound),
+          catch: toQuartzError("Could not check contract compatibility"),
+        })
+        evidence.compatibility = compatibility
+        checks.compatibility = {
+          ran: true,
+          passed: compatibility.compatible,
+          blocking: false,
+          summary: compatibility.compatible
+            ? `${from} is directly assignable to ${to}.`
+            : `${from} is not directly assignable to ${to}; verified transform evidence can still satisfy a conversion contract.`,
+          evidence: compatibility,
+        }
+        if (!compatibility.compatible) {
+          gaps.push("Direct assignability is not established for from -> to.")
+          const explanation = yield* typeExplainer.explainError({
+            ...(options.packageName === undefined ? {} : { packageName: options.packageName }),
+            code: 2322,
+            message: compatibility.reason ?? `Type ${from} is not assignable to type ${to}.`,
+          }).pipe(Effect.catchAll(() => Effect.succeed(null)))
+          if (explanation !== null) explanations.push(explanation)
+        }
+      } else if (options.from !== undefined || options.to !== undefined) {
+        gaps.push("Only one side of the from/to contract was provided.")
+        nextSteps.add("Provide both from and to to run compatibility and transform verification.")
+      }
+
+      if (options.snippet !== undefined) {
+        const snippet = yield* snippetEvaluation.checkSnippet(options.snippet, project, pkg, sourceFiles)
+        evidence.snippet = snippet
+        checks.snippet = {
+          ran: true,
+          passed: snippet.valid,
+          blocking: true,
+          summary: snippet.valid ? "Snippet compiles under the package TypeScript project." : "Snippet has TypeScript errors.",
+          evidence: snippet,
+        }
+        if (!snippet.valid) {
+          gaps.push("The supplied snippet does not compile.")
+          nextSteps.add("Repair the snippet until check-snippet returns valid: true.")
+          const firstError = snippet.errors?.[0]
+          if (firstError !== undefined) {
+            const explanation = yield* typeExplainer.explainError({
+              ...(options.packageName === undefined ? {} : { packageName: options.packageName }),
+              message: firstError.message,
+            }).pipe(Effect.catchAll(() => Effect.succeed(null)))
+            if (explanation !== null) explanations.push(explanation)
+          }
+        }
+      } else {
+        gaps.push("No snippet was supplied, so Quartz did not verify a concrete call site.")
+        nextSteps.add("Add a minimal snippet that exercises the proposed contract at a call site.")
+      }
+
+      if (options.includeDiagnostics !== false) {
+        const diagnosticsResult = collectPackageDiagnostics(project, pkg, context)
+        evidence.diagnostics = diagnosticsResult
+        checks.diagnostics = {
+          ran: true,
+          passed: diagnosticsResult.length === 0,
+          blocking: true,
+          summary: diagnosticsResult.length === 0
+            ? "Package diagnostics are clean."
+            : `Package has ${diagnosticsResult.length} TypeScript diagnostic(s).`,
+          evidence: diagnosticsResult,
+        }
+        if (diagnosticsResult.length > 0) {
+          gaps.push("The package has ambient TypeScript diagnostics.")
+          nextSteps.add("Inspect diagnostics before trusting the contract in this project state.")
+        }
+      }
+
+      if (hasFromTo && options.includeTransformEvidence !== false) {
+        const from = options.from as string
+        const to = options.to as string
+        const transformResponse = yield* transformSearch.searchRaw({
+          ...(options.packageName === undefined ? {} : { packageName: options.packageName }),
+          from,
+          to,
+          verifiedOnly: true,
+          limit: options.transformLimit ?? 10,
+        })
+        evidence.transformSearch = transformResponse
+        const verifiedResults = transformResponse.results.filter((result) => result.verification.status === "verified")
+        const symbolMatched = options.symbol === undefined
+          ? true
+          : verifiedResults.some((result) => matchesRequestedSymbol(result.name, options.symbol as string))
+        const passed = verifiedResults.length > 0 && symbolMatched
+        const directAssignable = checks.compatibility.passed === true
+        checks.transform = {
+          ran: true,
+          passed,
+          blocking: !directAssignable,
+          summary: passed
+            ? options.symbol === undefined
+              ? `Found ${verifiedResults.length} compiler-verified transform candidate(s).`
+              : `Found compiler-verified transform evidence for ${options.symbol}.`
+            : options.symbol === undefined
+              ? directAssignable
+                ? "No compiler-verified transform candidates were found; direct assignability already supports the contract."
+                : "No compiler-verified transform candidates were found."
+              : directAssignable
+                ? `No compiler-verified transform candidate matched ${options.symbol}; direct assignability already supports the contract.`
+                : `No compiler-verified transform candidate matched ${options.symbol}.`,
+          evidence: {
+            verified: verifiedResults.length,
+            returned: transformResponse.results.length,
+            symbol: options.symbol,
+          },
+        }
+        if (!passed && !directAssignable) {
+          gaps.push(options.symbol === undefined
+            ? "No compiler-verified transform candidate was found for from -> to."
+            : "No compiler-verified transform candidate matched the requested symbol.")
+          nextSteps.add("Run transform-search with includeDiagnostics/includeSyntheticCode to inspect candidate verifier failures.")
+        }
+      } else if (hasFromTo && options.includeTransformEvidence === false) {
+        gaps.push("Transform evidence was skipped by includeTransformEvidence: false.")
+        if (options.symbol !== undefined) {
+          nextSteps.add("Enable transform evidence to verify that the requested symbol backs the contract.")
+        }
+      }
+
+      if (explanations.length > 0) evidence.explanations = explanations
+
+      const directAssignable = checks.compatibility.passed === true
+      const transformPassed = checks.transform.passed === true
+      const snippetOk = checks.snippet.passed !== false
+      const diagnosticsOk = checks.diagnostics.passed !== false
+      const contractEvidenceOk = hasFromTo ? directAssignable || transformPassed : true
+      const hasPositiveEvidence = directAssignable || transformPassed || checks.snippet.passed === true
+      const ok = snippetOk && diagnosticsOk && contractEvidenceOk && hasPositiveEvidence
+
+      if (!ok) {
+        nextSteps.add("Treat this contract as untrusted until a blocking check passes.")
+      }
+
+      return {
+        schemaVersion: "verify-contract/v1" as const,
+        ok,
+        contract: {
+          ...(options.from === undefined ? {} : { from: options.from }),
+          ...(options.to === undefined ? {} : { to: options.to }),
+          ...(options.symbol === undefined ? {} : { symbol: options.symbol }),
+          package: pkg.name,
+        },
+        checks,
+        evidence,
+        gaps,
+        next_steps: [...nextSteps],
+      }
+    })
 
     const analyzer: TypeAnalyzer = {
       getPackages: workspace.getPackages,
@@ -639,6 +831,7 @@ export class TypeAnalyzerService extends Effect.Service<TypeAnalyzerService>()("
       explainError: (options) => cache.withProjectAccess(typeExplainer.explainError(options)),
       explainType: (expression, packageName) => cache.withProjectAccess(typeExplainer.explainType(expression, packageName)),
       transformSearch: (options) => cache.withProjectAccess(transformSearch.search(options)),
+      verifyContract: (options) => cache.withProjectAccess(verifyContractBody(options)),
       refresh: Effect.fnUntraced(function* (packageName?: string) {
         if (packageName !== undefined) {
           yield* cache.refreshPackage(packageName)
