@@ -362,6 +362,31 @@ describe("type analyzer core", () => {
     expect(symbolMismatch.gaps).toContain("No compiler-verified transform candidate matched the requested symbol.")
   })
 
+  it("rejects blank verify-contract boundary refs before lookup", async () => {
+    const analyzer = createFixtureAnalyzer()
+
+    await expect(
+      Effect.runPromise(
+        analyzer.verifyContract({
+          from: "   ",
+          to: "User",
+        }),
+      ),
+    ).rejects.toThrow("from must be a non-empty TypeExpression")
+
+    const blankPackage = await Effect.runPromise(
+      analyzer.verifyContract({
+        packageName: "   ",
+        snippet: "const value = 1 satisfies number;",
+      }),
+    )
+    expect(blankPackage).toMatchObject({
+      ok: true,
+      contract: { package: "(root)" },
+      checks: { snippet: { ran: true, passed: true } },
+    })
+  })
+
   it("inspects files, graphs relationships, and previews refactors", async () => {
     const analyzer = createFixtureAnalyzer()
     const file = await Effect.runPromise(analyzer.getFileDeclarations("types/basic.ts"))

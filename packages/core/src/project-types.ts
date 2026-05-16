@@ -1,4 +1,5 @@
 import type { TransformSearchResponse } from "./transform-search";
+import type { PackageRef, SymbolRef, TypeExpressionRef } from "./boundary-refs";
 
 export interface SymbolInfo {
   name: string;
@@ -86,6 +87,17 @@ export interface VerifyContractOptions {
   symbol?: string;
   snippet?: string;
   packageName?: string;
+  includeDiagnostics?: boolean;
+  includeTransformEvidence?: boolean;
+  transformLimit?: number;
+}
+
+export interface ParsedVerifyContractInput {
+  from?: TypeExpressionRef;
+  to?: TypeExpressionRef;
+  symbol?: SymbolRef;
+  packageName?: PackageRef;
+  snippet?: string;
   includeDiagnostics?: boolean;
   includeTransformEvidence?: boolean;
   transformLimit?: number;

@@ -16,6 +16,27 @@ export {
   TypeRelations,
 } from "./service-spine"
 export type {
+  BoundaryRef,
+  BoundaryRefKind,
+  FileRef,
+  PackageRef,
+  ProjectRootRef,
+  SourcePositionRef,
+  SymbolRef,
+  TypeExpressionRef,
+} from "./boundary-refs"
+export {
+  BoundaryRefError,
+  parseBoundaryRef,
+  parseFileRef,
+  parseOptionalBoundaryRef,
+  parsePackageRef,
+  parseProjectRootRef,
+  parseSourcePositionRef,
+  parseSymbolRef,
+  parseTypeExpressionRef,
+} from "./boundary-refs"
+export type {
   DiagnosticInfo,
   EvaluatedTypeResult,
   ExpandedType,

@@ -1,6 +1,11 @@
 import { resolve } from "node:path"
 import type { Project, SourceFile } from "ts-morph"
 import { Context, Effect, Layer, Ref } from "effect"
+import {
+  parsePackageRef,
+  parseSymbolRef,
+  parseTypeExpressionRef,
+} from "./boundary-refs"
 import type {
   DiagnosticOptions,
   ListSymbolsOptions,
@@ -34,6 +39,7 @@ import type {
   ErrorExplanationResult,
   FileInspectionResult,
   SnippetCheckResult,
+  ParsedVerifyContractInput,
   VerifyContractCheck,
   VerifyContractOptions,
   VerifyContractResult,
@@ -530,10 +536,29 @@ export class TypeAnalyzerService extends Effect.Service<TypeAnalyzerService>()("
       blocking: false,
       summary,
     })
+    const parseVerifyContractInput = (options: VerifyContractOptions): ParsedVerifyContractInput => {
+      const packageName = options.packageName?.trim()
+      return {
+        ...(options.from === undefined ? {} : { from: parseTypeExpressionRef("from", options.from) }),
+        ...(options.to === undefined ? {} : { to: parseTypeExpressionRef("to", options.to) }),
+        ...(options.symbol === undefined ? {} : { symbol: parseSymbolRef("symbol", options.symbol) }),
+        ...(packageName === undefined || packageName.length === 0 ? {} : { packageName: parsePackageRef(packageName) }),
+        ...(options.snippet === undefined ? {} : { snippet: options.snippet }),
+        ...(options.includeDiagnostics === undefined ? {} : { includeDiagnostics: options.includeDiagnostics }),
+        ...(options.includeTransformEvidence === undefined
+          ? {}
+          : { includeTransformEvidence: options.includeTransformEvidence }),
+        ...(options.transformLimit === undefined ? {} : { transformLimit: options.transformLimit }),
+      }
+    }
     const matchesRequestedSymbol = (resultName: string, symbol: string): boolean =>
       resultName === symbol || resultName.endsWith(`.${symbol}`)
     const verifyContractBody = Effect.fnUntraced(function* (options: VerifyContractOptions) {
-      const { pkg, project, sourceFiles } = yield* resolveTarget(options.packageName)
+      const input = yield* Effect.try({
+        try: () => parseVerifyContractInput(options),
+        catch: toQuartzError("Could not parse verify-contract refs"),
+      })
+      const { pkg, project, sourceFiles } = yield* resolveTarget(input.packageName)
       const checks: Record<"compatibility" | "snippet" | "diagnostics" | "transform", VerifyContractCheck> = {
         compatibility: skippedContractCheck("Skipped because both from and to were not provided."),
         snippet: skippedContractCheck("Skipped because no snippet was provided."),
@@ -544,11 +569,11 @@ export class TypeAnalyzerService extends Effect.Service<TypeAnalyzerService>()("
       const gaps: string[] = []
       const nextSteps = new Set<string>()
       const explanations: ErrorExplanationResult[] = []
-      const hasFromTo = options.from !== undefined && options.to !== undefined
+      const hasFromTo = input.from !== undefined && input.to !== undefined
 
       if (hasFromTo) {
-        const from = options.from as string
-        const to = options.to as string
+        const from = input.from as string
+        const to = input.to as string
         const fromFound = yield* symbolLookup.findSymbol(from, project, pkg)
         const toFound = yield* symbolLookup.findSymbol(to, project, pkg)
         const compatibility = yield* Effect.try({
@@ -568,19 +593,19 @@ export class TypeAnalyzerService extends Effect.Service<TypeAnalyzerService>()("
         if (!compatibility.compatible) {
           gaps.push("Direct assignability is not established for from -> to.")
           const explanation = yield* typeExplainer.explainError({
-            ...(options.packageName === undefined ? {} : { packageName: options.packageName }),
+            ...(input.packageName === undefined ? {} : { packageName: input.packageName }),
             code: 2322,
             message: compatibility.reason ?? `Type ${from} is not assignable to type ${to}.`,
           }).pipe(Effect.catchAll(() => Effect.succeed(null)))
           if (explanation !== null) explanations.push(explanation)
         }
-      } else if (options.from !== undefined || options.to !== undefined) {
+      } else if (input.from !== undefined || input.to !== undefined) {
         gaps.push("Only one side of the from/to contract was provided.")
         nextSteps.add("Provide both from and to to run compatibility and transform verification.")
       }
 
-      if (options.snippet !== undefined) {
-        const snippet = yield* snippetEvaluation.checkSnippet(options.snippet, project, pkg, sourceFiles)
+      if (input.snippet !== undefined) {
+        const snippet = yield* snippetEvaluation.checkSnippet(input.snippet, project, pkg, sourceFiles)
         evidence.snippet = snippet
         checks.snippet = {
           ran: true,
@@ -595,7 +620,7 @@ export class TypeAnalyzerService extends Effect.Service<TypeAnalyzerService>()("
           const firstError = snippet.errors?.[0]
           if (firstError !== undefined) {
             const explanation = yield* typeExplainer.explainError({
-              ...(options.packageName === undefined ? {} : { packageName: options.packageName }),
+              ...(input.packageName === undefined ? {} : { packageName: input.packageName }),
               message: firstError.message,
             }).pipe(Effect.catchAll(() => Effect.succeed(null)))
             if (explanation !== null) explanations.push(explanation)
@@ -606,7 +631,7 @@ export class TypeAnalyzerService extends Effect.Service<TypeAnalyzerService>()("
         nextSteps.add("Add a minimal snippet that exercises the proposed contract at a call site.")
       }
 
-      if (options.includeDiagnostics !== false) {
+      if (input.includeDiagnostics !== false) {
         const diagnosticsResult = collectPackageDiagnostics(project, pkg, context)
         evidence.diagnostics = diagnosticsResult
         checks.diagnostics = {
@@ -624,21 +649,21 @@ export class TypeAnalyzerService extends Effect.Service<TypeAnalyzerService>()("
         }
       }
 
-      if (hasFromTo && options.includeTransformEvidence !== false) {
-        const from = options.from as string
-        const to = options.to as string
+      if (hasFromTo && input.includeTransformEvidence !== false) {
+        const from = input.from as string
+        const to = input.to as string
         const transformResponse = yield* transformSearch.searchRaw({
-          ...(options.packageName === undefined ? {} : { packageName: options.packageName }),
+          ...(input.packageName === undefined ? {} : { packageName: input.packageName }),
           from,
           to,
           verifiedOnly: true,
-          limit: options.transformLimit ?? 10,
+          limit: input.transformLimit ?? 10,
         })
         evidence.transformSearch = transformResponse
         const verifiedResults = transformResponse.results.filter((result) => result.verification.status === "verified")
-        const symbolMatched = options.symbol === undefined
+        const symbolMatched = input.symbol === undefined
           ? true
-          : verifiedResults.some((result) => matchesRequestedSymbol(result.name, options.symbol as string))
+          : verifiedResults.some((result) => matchesRequestedSymbol(result.name, input.symbol as string))
         const passed = verifiedResults.length > 0 && symbolMatched
         const directAssignable = checks.compatibility.passed === true
         checks.transform = {
@@ -646,31 +671,31 @@ export class TypeAnalyzerService extends Effect.Service<TypeAnalyzerService>()("
           passed,
           blocking: !directAssignable,
           summary: passed
-            ? options.symbol === undefined
+            ? input.symbol === undefined
               ? `Found ${verifiedResults.length} compiler-verified transform candidate(s).`
-              : `Found compiler-verified transform evidence for ${options.symbol}.`
-            : options.symbol === undefined
+              : `Found compiler-verified transform evidence for ${input.symbol}.`
+            : input.symbol === undefined
               ? directAssignable
                 ? "No compiler-verified transform candidates were found; direct assignability already supports the contract."
                 : "No compiler-verified transform candidates were found."
               : directAssignable
-                ? `No compiler-verified transform candidate matched ${options.symbol}; direct assignability already supports the contract.`
-                : `No compiler-verified transform candidate matched ${options.symbol}.`,
+                ? `No compiler-verified transform candidate matched ${input.symbol}; direct assignability already supports the contract.`
+                : `No compiler-verified transform candidate matched ${input.symbol}.`,
           evidence: {
             verified: verifiedResults.length,
             returned: transformResponse.results.length,
-            symbol: options.symbol,
+            symbol: input.symbol,
           },
         }
         if (!passed && !directAssignable) {
-          gaps.push(options.symbol === undefined
+          gaps.push(input.symbol === undefined
             ? "No compiler-verified transform candidate was found for from -> to."
             : "No compiler-verified transform candidate matched the requested symbol.")
           nextSteps.add("Run transform-search with includeDiagnostics/includeSyntheticCode to inspect candidate verifier failures.")
         }
-      } else if (hasFromTo && options.includeTransformEvidence === false) {
+      } else if (hasFromTo && input.includeTransformEvidence === false) {
         gaps.push("Transform evidence was skipped by includeTransformEvidence: false.")
-        if (options.symbol !== undefined) {
+        if (input.symbol !== undefined) {
           nextSteps.add("Enable transform evidence to verify that the requested symbol backs the contract.")
         }
       }
@@ -693,9 +718,9 @@ export class TypeAnalyzerService extends Effect.Service<TypeAnalyzerService>()("
         schemaVersion: "verify-contract/v1" as const,
         ok,
         contract: {
-          ...(options.from === undefined ? {} : { from: options.from }),
-          ...(options.to === undefined ? {} : { to: options.to }),
-          ...(options.symbol === undefined ? {} : { symbol: options.symbol }),
+          ...(input.from === undefined ? {} : { from: input.from }),
+          ...(input.to === undefined ? {} : { to: input.to }),
+          ...(input.symbol === undefined ? {} : { symbol: input.symbol }),
           package: pkg.name,
         },
         checks,

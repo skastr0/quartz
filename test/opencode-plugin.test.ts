@@ -88,6 +88,10 @@ describe("OpenCode plugin wrapper", () => {
       symbol: "toDTO",
       snippet: "const user: User = { id: '1', name: 'Ada', email: 'ada@example.com' }; const dto: UserDTO = toDTO(user);",
     }))
+    const verifyContractBlankPackage = parse(await toolExecute(plugin, "type_verify_contract", {
+      package: "   ",
+      snippet: "const value = 1 satisfies number;",
+    }))
     const whyError = parse(await toolExecute(plugin, "type_why_error", {
       code: 2322,
       message: "Type UserInput is not assignable to type User",
@@ -145,6 +149,11 @@ describe("OpenCode plugin wrapper", () => {
           ]),
         },
       },
+    })
+    expect(verifyContractBlankPackage).toMatchObject({
+      ok: true,
+      contract: { package: "(root)" },
+      checks: { snippet: { ran: true, passed: true } },
     })
     expect(whyError).toMatchObject({
       explanation: expect.stringContaining("UserInput"),
