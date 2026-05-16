@@ -34,11 +34,20 @@ const steps: readonly GuardStep[] = [
   {
     name: "CLI and plugin wrapper regression tests",
     command: "bun",
-    args: ["run", "vitest", "run", "test/cli.test.ts", "test/opencode-plugin.test.ts", "test/refactor-coverage.test.ts"],
+    args: [
+      "run",
+      "vitest",
+      "run",
+      "test/cli.test.ts",
+      "test/opencode-plugin.test.ts",
+      "test/refactor-coverage.test.ts",
+      "test/property-regression.test.ts",
+    ],
     covers: [
       "agentic CLI envelopes, discovery, artifacts, and batch behavior",
       "OpenCode tool registration, tool execution, refresh, and file-modification dirty marking",
       "refactor, diagnostics, explanation, related-symbol, snippet, file, and transform-search coverage",
+      "property-style invariants for batch ordering, artifact records, trust filters, failed verification evidence, and refactor paths",
     ],
   },
 ]

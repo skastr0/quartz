@@ -42,7 +42,7 @@ const fitnessChecks = [
     name: "Regression guard",
     command: "bun run verify:regression-guard",
     protects: [
-      "effect rewrite, docs examples, CLI/plugin wrapper tests, refactor coverage, and transform-search coverage run together",
+      "effect rewrite, docs examples, CLI/plugin wrapper tests, refactor coverage, transform-search coverage, and property-style invariants run together",
       "agent-facing behavior remains covered by a single guard command",
     ],
   },

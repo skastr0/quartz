@@ -10,7 +10,7 @@ checks as the source of truth before trusting broad changes.
 | Effect rewrite structure | `bun run verify:effect-rewrite` | Core code does not regain `Effect.runPromise`; old analyzer/project-manager paths stay deleted; runtime ownership remains at CLI and plugin edges. |
 | Package boundaries | `bun run verify:package-boundaries` | Published package export maps, packed files, README/LICENSE presence, and CLI/plugin build boundaries stay coherent. |
 | Docs examples | `bun run verify:docs-examples` | Public command examples, schemas, input modes, artifact output, batch semantics, transform verification metadata, and `verify-contract` output stay executable. |
-| Regression guard | `bun run verify:regression-guard` | The main agent-facing guard composes effect-structure, docs-example, CLI/plugin, refactor, diagnostics, explanation, and transform-search coverage. |
+| Regression guard | `bun run verify:regression-guard` | The main agent-facing guard composes effect-structure, docs-example, CLI/plugin, refactor, diagnostics, explanation, transform-search, and property-style invariant coverage. |
 | External feature matrix | `bun run verify:external-matrix` | Quartz commands keep working on representative external TypeScript repositories, with failures classified as Quartz bugs, repo preconditions, timeouts, or matrix harness issues. |
 
 ## When To Run
