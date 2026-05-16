@@ -5,7 +5,7 @@
  * of why each function matched the query.
  */
 
-import type { CallableEntry, CallableKind, VerificationMeta } from "./types";
+import type { CallableEntry, CallableKind, VerificationMeta, VerificationStatus } from "./types";
 import type { AssignabilityCheckResult } from "./assignability-filter";
 import type { SyntheticCheckResult } from "./synthetic-verifier";
 import type { ParsedQuery } from "./query-parser";
@@ -151,6 +151,11 @@ export interface TransformSearchResponse {
       paramPosition: number | "any";
       unwrapReturn: boolean;
       exportedOnly: boolean;
+      verifiedOnly?: boolean;
+      minVerificationStatus?: VerificationStatus;
+      includeDiagnostics?: boolean;
+      includeSyntheticCode?: boolean;
+      includeFailedVerification?: boolean;
     };
   };
 
@@ -159,6 +164,7 @@ export interface TransformSearchResponse {
     totalCandidates: number;
     assignableMatches: number;
     verifiedMatches: number;
+    verification: Record<VerificationStatus, number>;
     returned: number;
     timing: {
       indexLookupMs: number;
@@ -389,7 +395,10 @@ export function formatResults(response: TransformSearchResponse): string {
       // NEW: Include verification status for trust assessment
       verification: {
         status: r.verification.status,
+        method: r.verification.method,
         reason: r.verification.reason,
+        ...(r.verification.diagnostics ? { diagnostics: r.verification.diagnostics } : {}),
+        ...(r.verification.syntheticCode ? { syntheticCode: r.verification.syntheticCode } : {}),
       },
       explanation: r.explanation.summary,
       score: r.score,
@@ -401,6 +410,7 @@ export function formatResults(response: TransformSearchResponse): string {
     stats: {
       found: response.stats.verifiedMatches,
       returned: response.stats.returned,
+      verification: response.stats.verification,
       timeMs: Math.round(response.stats.timing.totalMs),
     },
   };

@@ -18,6 +18,7 @@ const TypeExpression = Schema.NonEmptyString.pipe(Schema.brand("TypeExpression")
 const PositiveInteger = Schema.Number.pipe(Schema.int(), Schema.positive())
 const GraphFormat = Schema.Literal("mermaid", "dot")
 const OutputPolicy = Schema.Literal("inline", "artifact", "auto")
+const VerificationStatus = Schema.Literal("verified", "unverified", "unverifiable")
 
 const baseFields = {
   root: Schema.optional(ProjectRoot),
@@ -114,6 +115,11 @@ const TransformSearchPayload = Schema.Struct({
   unwrapReturn: Schema.optional(Schema.Boolean),
   exportedOnly: Schema.optional(Schema.Boolean),
   allowTypeErasure: Schema.optional(Schema.Boolean),
+  verifiedOnly: Schema.optional(Schema.Boolean),
+  minVerificationStatus: Schema.optional(VerificationStatus),
+  includeDiagnostics: Schema.optional(Schema.Boolean),
+  includeSyntheticCode: Schema.optional(Schema.Boolean),
+  includeFailedVerification: Schema.optional(Schema.Boolean),
   limit: Schema.optional(PositiveInteger),
 })
 
@@ -614,6 +620,11 @@ const commandSpecs = {
             readonly unwrapReturn?: boolean
             readonly exportedOnly?: boolean
             readonly allowTypeErasure?: boolean
+            readonly verifiedOnly?: boolean
+            readonly minVerificationStatus?: "verified" | "unverified" | "unverifiable"
+            readonly includeDiagnostics?: boolean
+            readonly includeSyntheticCode?: boolean
+            readonly includeFailedVerification?: boolean
             readonly limit?: number
           } = {
             ...packageField(payload),
@@ -623,6 +634,15 @@ const commandSpecs = {
             ...(payload.unwrapReturn === undefined ? {} : { unwrapReturn: payload.unwrapReturn }),
             ...(payload.exportedOnly === undefined ? {} : { exportedOnly: payload.exportedOnly }),
             ...(payload.allowTypeErasure === undefined ? {} : { allowTypeErasure: payload.allowTypeErasure }),
+            ...(payload.verifiedOnly === undefined ? {} : { verifiedOnly: payload.verifiedOnly }),
+            ...(payload.minVerificationStatus === undefined
+              ? {}
+              : { minVerificationStatus: payload.minVerificationStatus }),
+            ...(payload.includeDiagnostics === undefined ? {} : { includeDiagnostics: payload.includeDiagnostics }),
+            ...(payload.includeSyntheticCode === undefined ? {} : { includeSyntheticCode: payload.includeSyntheticCode }),
+            ...(payload.includeFailedVerification === undefined
+              ? {}
+              : { includeFailedVerification: payload.includeFailedVerification }),
             ...(payload.limit === undefined ? {} : { limit: payload.limit }),
           }
           return analyzerFor(payload).transformSearch(options)

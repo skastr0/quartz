@@ -71,6 +71,16 @@ describe("OpenCode plugin wrapper", () => {
       allowTypeErasure: true,
       limit: 1,
     }))
+    const verifiedTransformSearch = parse(await toolExecute(plugin, "type_transform_search", {
+      from: "User",
+      to: "UserDTO",
+      verifiedOnly: true,
+      limit: 5,
+    }))
+    const partialTransformSearch = parse(await toolExecute(plugin, "type_transform_search", {
+      from: "User",
+      limit: 5,
+    }))
     const whyError = parse(await toolExecute(plugin, "type_why_error", {
       code: 2322,
       message: "Type UserInput is not assignable to type User",
@@ -89,7 +99,26 @@ describe("OpenCode plugin wrapper", () => {
     expect(compatible).toMatchObject({ compatible: true })
     expect(file.declarations.map((declaration: any) => declaration.name)).toEqual(["User"])
     expect(explainedType.final).toContain("id")
-    expect(transformSearch.results[0]).toMatchObject({ name: expect.stringContaining("toDTO") })
+    expect(transformSearch.results[0]).toMatchObject({
+      name: expect.stringContaining("toDTO"),
+      verification: {
+        status: expect.stringMatching(/verified|unverified|unverifiable/),
+        method: expect.anything(),
+        reason: expect.any(String),
+      },
+    })
+    expect(verifiedTransformSearch.results.every((result: any) => result.verification.status === "verified")).toBe(true)
+    expect(partialTransformSearch.results).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          verification: {
+            status: "unverified",
+            method: "assignability_only",
+            reason: "partial_query",
+          },
+        }),
+      ]),
+    )
     expect(whyError).toMatchObject({
       explanation: expect.stringContaining("UserInput"),
       issues: [expect.objectContaining({ kind: "missing_property", property: "id" })],
@@ -149,5 +178,77 @@ describe("OpenCode plugin wrapper", () => {
 
     expect(names).toContain("LeafOnly")
     expect(names).not.toContain("RootOnly")
+  })
+
+  it("exposes failed synthetic verification diagnostics when requested", async () => {
+    const root = mkdtempSync(join(tmpdir(), "quartz-plugin-verification-"))
+    mkdirSync(join(root, "src"), { recursive: true })
+    writeFileSync(
+      join(root, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: {
+          target: "ESNext",
+          module: "ESNext",
+          moduleResolution: "bundler",
+          strict: true,
+          skipLibCheck: true,
+          noEmit: true,
+        },
+        include: ["src/**/*.ts"],
+      }),
+      "utf8",
+    )
+    writeFileSync(
+      join(root, "src", "transforms.ts"),
+      [
+        "export interface SourceShape { id: string }",
+        "export interface TargetShape { id: string; displayName: string }",
+        "export type TargetShapePlus = TargetShape & { extra: string }",
+        "export class SecretMapper {",
+        "  private constructor() {}",
+        "  map(value: SourceShape): TargetShapePlus {",
+        "    return { ...value, displayName: value.id, extra: value.id }",
+        "  }",
+        "}",
+      ].join("\n"),
+      "utf8",
+    )
+
+    const plugin: any = await QuartzPlugin({
+      directory: root,
+      client: {},
+    } as never)
+
+    const hidden = parse(await toolExecute(plugin, "type_transform_search", {
+      from: "SourceShape",
+      to: "TargetShape",
+      limit: 10,
+    }))
+    const exposed = parse(await toolExecute(plugin, "type_transform_search", {
+      from: "SourceShape",
+      to: "TargetShape",
+      includeFailedVerification: true,
+      includeDiagnostics: true,
+      includeSyntheticCode: true,
+      limit: 10,
+    }))
+    const failed = exposed.results?.find((result: any) => result.verification.reason === "synthetic_check_failed")
+
+    expect(hidden.results?.every((result: any) => result.verification.reason !== "synthetic_check_failed") ?? true).toBe(true)
+    expect(failed).toMatchObject({
+      name: "SecretMapper.map",
+      verification: {
+        status: "unverified",
+        method: "synthetic",
+        reason: "synthetic_check_failed",
+        diagnostics: expect.arrayContaining([
+          expect.objectContaining({
+            code: expect.any(Number),
+            message: expect.stringContaining("SecretMapper"),
+          }),
+        ]),
+        syntheticCode: expect.stringContaining("SecretMapper"),
+      },
+    })
   })
 })

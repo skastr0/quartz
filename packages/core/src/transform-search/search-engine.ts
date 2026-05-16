@@ -14,13 +14,19 @@
 import { type Project, type SourceFile } from "ts-morph";
 import { relative } from "path";
 
-import type { CallableEntry, CallableId, CallableIndex, VerificationMeta } from "./types";
+import type {
+  CallableEntry,
+  CallableId,
+  CallableIndex,
+  VerificationMeta,
+  VerificationStatus,
+} from "./types";
 import { enumerateCallables } from "./enumerate";
 import { populateEntryTokens } from "./tokens";
 import { buildCallableIndex, selectCandidates } from "./index-builder";
 import { SignatureResolver } from "./signature-resolver";
 import { AssignabilityFilter, type AssignabilityCheckResult } from "./assignability-filter";
-import { SyntheticVerifier, shouldSkipSyntheticCheck } from "./synthetic-verifier";
+import { SyntheticVerifier, shouldSkipSyntheticCheck, type SyntheticCheckResult } from "./synthetic-verifier";
 import { QueryParser, type ParsedQuery } from "./query-parser";
 import {
   calculateScore,
@@ -57,7 +63,44 @@ export interface TransformSearchOptions {
    * as these produce false positives.
    */
   allowTypeErasure?: boolean;
+
+  /**
+   * Only return compiler-verified or exact-match results.
+   * Equivalent to minVerificationStatus: "verified".
+   */
+  verifiedOnly?: boolean;
+
+  /**
+   * Minimum trust level to return.
+   * Order: unverifiable < unverified < verified.
+   */
+  minVerificationStatus?: VerificationStatus;
+
+  /**
+   * Include failed synthetic-check diagnostics in result verification metadata.
+   * Useful for agent repair loops. Default: false.
+   */
+  includeDiagnostics?: boolean;
+
+  /**
+   * Include generated synthetic verification code.
+   * Useful for debugging verifier feedback. Default: false.
+   */
+  includeSyntheticCode?: boolean;
+
+  /**
+   * Include candidates whose synthetic compiler check failed.
+   * Default: false, preserving transform-search's normal "valid transforms only"
+   * behavior.
+   */
+  includeFailedVerification?: boolean;
 }
+
+const verificationRank: Record<VerificationStatus, number> = {
+  unverifiable: 0,
+  unverified: 1,
+  verified: 2,
+};
 
 type SearchTiming = TransformSearchResponse["stats"]["timing"];
 
@@ -144,7 +187,7 @@ export class TransformSearchEngine {
       timing,
     );
     const syntheticResults = this.verifyTopCandidates(query, index, assignableResults, timing);
-    const results = this.buildSearchResults(query, index, assignableResults, syntheticResults);
+    const results = this.buildSearchResults(query, options, index, assignableResults, syntheticResults);
 
     timing.totalMs = performance.now() - startTime;
 
@@ -199,7 +242,7 @@ export class TransformSearchEngine {
     index: CallableIndex,
     assignableResults: AssignabilityCheckResult[],
     timing: SearchTiming,
-  ): Map<CallableId, VerificationMeta> {
+  ): Map<CallableId, SyntheticCheckResult> {
     const syntheticStart = performance.now();
     const topCandidates = assignableResults.slice(0, Math.min(50, assignableResults.length));
     const syntheticResults = query.from?.raw && query.to?.raw
@@ -213,8 +256,8 @@ export class TransformSearchEngine {
     query: ParsedQuery,
     index: CallableIndex,
     topCandidates: AssignabilityCheckResult[],
-  ): Map<CallableId, VerificationMeta> {
-    const syntheticResults = new Map<CallableId, VerificationMeta>();
+  ): Map<CallableId, SyntheticCheckResult> {
+    const syntheticResults = new Map<CallableId, SyntheticCheckResult>();
     const verifier = new SyntheticVerifier(this.project, this.packagePath);
 
     for (const candidate of topCandidates) {
@@ -223,11 +266,11 @@ export class TransformSearchEngine {
 
       const skipResult = shouldSkipSyntheticCheck(entry, candidate);
       if (skipResult.skip) {
-        syntheticResults.set(candidate.candidateId, {
+        syntheticResults.set(candidate.candidateId, this.createVerificationEvidence(candidate.candidateId, {
           status: skipResult.status,
           method: skipResult.method,
           reason: skipResult.reason,
-        });
+        }));
         continue;
       }
 
@@ -242,7 +285,7 @@ export class TransformSearchEngine {
       );
 
       if (verified.length > 0) {
-        syntheticResults.set(candidate.candidateId, verified[0]!.verification);
+        syntheticResults.set(candidate.candidateId, verified[0]!);
       }
     }
 
@@ -252,40 +295,55 @@ export class TransformSearchEngine {
   private markPartialQueryCandidates(
     index: CallableIndex,
     topCandidates: AssignabilityCheckResult[],
-  ): Map<CallableId, VerificationMeta> {
-    const syntheticResults = new Map<CallableId, VerificationMeta>();
+  ): Map<CallableId, SyntheticCheckResult> {
+    const syntheticResults = new Map<CallableId, SyntheticCheckResult>();
     for (const candidate of topCandidates) {
       const entry = index.entries[candidate.candidateId];
       if (!entry) continue;
 
       const skipResult = shouldSkipSyntheticCheck(entry, candidate);
       if (skipResult.skip && skipResult.status !== "verified") {
-        syntheticResults.set(candidate.candidateId, {
+        syntheticResults.set(candidate.candidateId, this.createVerificationEvidence(candidate.candidateId, {
           status: skipResult.status,
           method: skipResult.method,
           reason: skipResult.reason,
-        });
+        }));
       } else {
-        syntheticResults.set(candidate.candidateId, {
+        syntheticResults.set(candidate.candidateId, this.createVerificationEvidence(candidate.candidateId, {
           status: "unverified",
           method: "assignability_only",
           reason: "partial_query",
-        });
+        }));
       }
     }
     return syntheticResults;
   }
 
+  private createVerificationEvidence(
+    candidateId: CallableId,
+    verification: VerificationMeta,
+    syntheticCode = "",
+  ): SyntheticCheckResult {
+    return {
+      candidateId,
+      verified: verification.status === "verified",
+      verification,
+      diagnostics: verification.diagnostics ?? [],
+      syntheticCode,
+    };
+  }
+
   private buildSearchResults(
     query: ParsedQuery,
+    options: TransformSearchOptions,
     index: CallableIndex,
     assignableResults: AssignabilityCheckResult[],
-    syntheticResults: Map<CallableId, VerificationMeta>,
+    syntheticResults: Map<CallableId, SyntheticCheckResult>,
   ): TransformSearchResult[] {
     const results: TransformSearchResult[] = [];
 
     for (const assignResult of assignableResults) {
-      const result = this.createSearchResult(query, index, assignResult, syntheticResults);
+      const result = this.createSearchResult(query, options, index, assignResult, syntheticResults);
       if (result) results.push(result);
     }
 
@@ -295,32 +353,30 @@ export class TransformSearchEngine {
 
   private createSearchResult(
     query: ParsedQuery,
+    options: TransformSearchOptions,
     index: CallableIndex,
     assignResult: AssignabilityCheckResult,
-    syntheticResults: Map<CallableId, VerificationMeta>,
+    syntheticResults: Map<CallableId, SyntheticCheckResult>,
   ): TransformSearchResult | null {
     const entry = index.entries[assignResult.candidateId];
     if (!entry) return null;
 
-    const verificationMeta = syntheticResults.get(assignResult.candidateId);
-    if (verificationMeta?.reason === "synthetic_check_failed") return null;
+    const verificationEvidence = syntheticResults.get(assignResult.candidateId) ?? null;
+    if (
+      verificationEvidence?.verification.reason === "synthetic_check_failed" &&
+      options.includeFailedVerification !== true
+    ) {
+      return null;
+    }
 
-    const syntheticResultCompat = verificationMeta
-      ? {
-          candidateId: entry.id,
-          verified: verificationMeta.status === "verified",
-          verification: verificationMeta,
-          diagnostics: verificationMeta.diagnostics ?? [],
-          syntheticCode: "",
-        }
-      : null;
-    const score = calculateScore(entry, assignResult, syntheticResultCompat);
-    const explanation = generateExplanation(entry, assignResult, syntheticResultCompat, query);
-    const finalVerification: VerificationMeta = verificationMeta ?? {
+    const score = calculateScore(entry, assignResult, verificationEvidence);
+    const explanation = generateExplanation(entry, assignResult, verificationEvidence, query);
+    const finalVerification: VerificationMeta = verificationEvidence?.verification ?? {
       status: "unverified",
       method: "assignability_only",
       reason: "partial_query",
     };
+    if (!this.matchesVerificationFilter(finalVerification.status, options)) return null;
 
     return {
       name: entry.qualifiedName,
@@ -333,12 +389,38 @@ export class TransformSearchEngine {
       score: score.total,
       confidence: explanation.confidence,
       explanation,
-      verification: finalVerification,
+      verification: this.formatVerificationMeta(finalVerification, verificationEvidence, options),
       matchDetails: {
         fromMatch: assignResult.fromMatch,
         toMatch: assignResult.toMatch,
         syntheticVerified: finalVerification.status === "verified",
       },
+    };
+  }
+
+  private matchesVerificationFilter(
+    status: VerificationStatus,
+    options: TransformSearchOptions,
+  ): boolean {
+    const minimum = options.verifiedOnly === true ? "verified" : options.minVerificationStatus;
+    if (minimum === undefined) return true;
+    return verificationRank[status] >= verificationRank[minimum];
+  }
+
+  private formatVerificationMeta(
+    verification: VerificationMeta,
+    evidence: SyntheticCheckResult | null,
+    options: TransformSearchOptions,
+  ): VerificationMeta {
+    const { diagnostics: _diagnostics, syntheticCode: _syntheticCode, ...base } = verification;
+    return {
+      ...base,
+      ...(options.includeDiagnostics === true && evidence?.diagnostics.length
+        ? { diagnostics: evidence.diagnostics }
+        : {}),
+      ...(options.includeSyntheticCode === true && evidence?.syntheticCode
+        ? { syntheticCode: evidence.syntheticCode }
+        : {}),
     };
   }
 
@@ -360,16 +442,36 @@ export class TransformSearchEngine {
           paramPosition: query.paramPosition,
           unwrapReturn: query.unwrapReturn,
           exportedOnly: query.exportedOnly,
+          ...(options.verifiedOnly === undefined ? {} : { verifiedOnly: options.verifiedOnly }),
+          ...(options.minVerificationStatus === undefined
+            ? {}
+            : { minVerificationStatus: options.minVerificationStatus }),
+          ...(options.includeDiagnostics === undefined ? {} : { includeDiagnostics: options.includeDiagnostics }),
+          ...(options.includeSyntheticCode === undefined ? {} : { includeSyntheticCode: options.includeSyntheticCode }),
+          ...(options.includeFailedVerification === undefined
+            ? {}
+            : { includeFailedVerification: options.includeFailedVerification }),
         },
       },
       stats: {
         totalCandidates: candidateIds.length,
         assignableMatches: assignableResults.length,
         verifiedMatches: results.length,
+        verification: this.countVerificationStatuses(results),
         returned: limitedResults.length,
         timing,
       },
     };
+  }
+
+  private countVerificationStatuses(results: TransformSearchResult[]): Record<VerificationStatus, number> {
+    const counts: Record<VerificationStatus, number> = {
+      verified: 0,
+      unverified: 0,
+      unverifiable: 0,
+    };
+    for (const result of results) counts[result.verification.status]++;
+    return counts;
   }
 
   /**

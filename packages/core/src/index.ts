@@ -52,3 +52,11 @@ export type {
 export { discoverPackages } from "./discovery"
 export type { PackageInfo } from "./discovery"
 export { QuartzError } from "./errors"
+export type {
+  TransformSearchOptions,
+  TransformSearchResponse,
+  TransformSearchResult,
+  VerificationMeta,
+  VerificationReason,
+  VerificationStatus,
+} from "./transform-search"

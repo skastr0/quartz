@@ -103,6 +103,16 @@ All command examples below use `test/fixtures`, the same fixture repo exercised 
 
 Use `schema show <command>` for exact payload fields. Artifact-capable commands are `expand`, `diagnostics`, `file`, `graph`, `refactor-preview`, `why-error`, `explain`, and `transform-search`.
 
+### Transform Search Verification Trust Ladder
+
+`transform-search` ranks structural transform candidates with TypeScript/compiler feedback, but Quartz does not make TypeScript sound. Treat verification status as a trust ladder:
+
+- `verified`: candidate passed the requested compiler-backed checks.
+- `unverified`: candidate was found structurally, but verification was not requested or did not have enough evidence to prove it.
+- `unverifiable`: Quartz could not build a meaningful verification check for the candidate.
+
+Use `verifiedOnly` to return only verified candidates. Use `minVerificationStatus` to set the lowest acceptable status. Use `includeDiagnostics` to include compiler feedback, `includeSyntheticCode` to include the generated verification snippet, and `includeFailedVerification` to keep candidates whose verification failed.
+
 ## Example Payload Files
 
 `payloads/info.json`:

@@ -307,6 +307,14 @@ const createTransformSearchTools = (analyzer: TypeAnalyzer) => ({
       exportedOnly: tool.schema.boolean().optional(),
       limit: limitArg,
       allowTypeErasure: tool.schema.boolean().optional(),
+      verifiedOnly: tool.schema.boolean().optional(),
+      minVerificationStatus: tool.schema
+        .enum(["verified", "unverified", "unverifiable"])
+        .optional()
+        .describe("Minimum verification status to return"),
+      includeDiagnostics: tool.schema.boolean().optional(),
+      includeSyntheticCode: tool.schema.boolean().optional(),
+      includeFailedVerification: tool.schema.boolean().optional(),
       package: optionalPackageArg,
     },
     async execute(args) {
@@ -320,6 +328,11 @@ const createTransformSearchTools = (analyzer: TypeAnalyzer) => ({
           ...optionalOption("exportedOnly", args.exportedOnly),
           ...optionalOption("limit", args.limit),
           ...optionalOption("allowTypeErasure", args.allowTypeErasure),
+          ...optionalOption("verifiedOnly", args.verifiedOnly),
+          ...optionalOption("minVerificationStatus", args.minVerificationStatus),
+          ...optionalOption("includeDiagnostics", args.includeDiagnostics),
+          ...optionalOption("includeSyntheticCode", args.includeSyntheticCode),
+          ...optionalOption("includeFailedVerification", args.includeFailedVerification),
         }),
       )
     },

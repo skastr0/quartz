@@ -15,6 +15,9 @@ export type {
   EnumerationStats,
   TokenExtractionResult,
   CallableIndex,
+  VerificationStatus,
+  VerificationReason,
+  VerificationMeta,
   CandidateSelectionOptions,
 } from "./types";
 

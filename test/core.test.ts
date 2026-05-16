@@ -280,9 +280,35 @@ describe("type analyzer core", () => {
       }),
     )
     const transforms = await Effect.runPromise(analyzer.transformSearch({ from: "User", to: "UserDTO", limit: 5 }))
+    const verifiedTransforms = await Effect.runPromise(
+      analyzer.transformSearch({ from: "User", to: "UserDTO", verifiedOnly: true, limit: 5 }),
+    )
+    const partialTransforms = await Effect.runPromise(analyzer.transformSearch({ from: "User", limit: 5 }))
+    const parsedTransforms = JSON.parse(transforms)
+    const parsedVerifiedTransforms = JSON.parse(verifiedTransforms)
+    const parsedPartialTransforms = JSON.parse(partialTransforms)
 
     expect(explanation?.explanation).toContain("compatible")
     expect(transforms).toContain("toDTO")
+    expect(parsedTransforms.results[0]).toMatchObject({
+      verification: {
+        status: expect.stringMatching(/verified|unverified|unverifiable/),
+        method: expect.anything(),
+        reason: expect.any(String),
+      },
+    })
+    expect(parsedVerifiedTransforms.results.every((result: any) => result.verification.status === "verified")).toBe(true)
+    expect(parsedPartialTransforms.results).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          verification: {
+            status: "unverified",
+            method: "assignability_only",
+            reason: "partial_query",
+          },
+        }),
+      ]),
+    )
   })
 
   it("explains simplified unquoted assignability diagnostics", async () => {

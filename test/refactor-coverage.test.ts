@@ -22,6 +22,14 @@ function createFixtureProject(): Project {
   return project
 }
 
+function createProject(root: string): Project {
+  const project = new Project({
+    tsConfigFilePath: join(root, "tsconfig.json"),
+  })
+  project.addSourceFilesAtPaths(join(root, "src/**/*.ts"))
+  return project
+}
+
 describe("refactor coverage", () => {
   const callable = (
     id: number,
@@ -108,6 +116,9 @@ describe("refactor coverage", () => {
     expect(complete.stats.returned).toBe(complete.results.length)
     expect(complete.stats.timing.totalMs).toBeGreaterThanOrEqual(0)
     expect(complete.results.some((result) => result.verification.status === "verified")).toBe(true)
+    expect(complete.results.every((result) => result.verification.status)).toBe(true)
+    expect(complete.results.every((result) => result.verification.method !== undefined)).toBe(true)
+    expect(complete.results.every((result) => result.verification.reason)).toBe(true)
     expect(complete.results.every((result) => result.verification.reason !== "synthetic_check_failed")).toBe(true)
     const explained = complete.results.find((result) => result.explanation.summary.includes("accepts User"))
     expect(explained?.explanation).toMatchObject({
@@ -131,6 +142,133 @@ describe("refactor coverage", () => {
     expect(partial.stats.verifiedMatches).toBeGreaterThan(partial.stats.returned)
     expect(partial.results.every((result) => result.verification.reason !== "synthetic_check_failed")).toBe(true)
     expect(partial.results.some((result) => result.verification.reason === "partial_query")).toBe(true)
+    expect(partial.results.filter((result) => result.verification.reason === "partial_query")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          verification: expect.objectContaining({
+            status: "unverified",
+            method: "assignability_only",
+            reason: "partial_query",
+          }),
+        }),
+      ]),
+    )
+  })
+
+  it("filters transform-search results by verifiedOnly", async () => {
+    const project = createFixtureProject()
+    const sourceFiles = project.getSourceFiles().filter((sourceFile) => !sourceFile.isInNodeModules())
+    const engine = new TransformSearchEngine(project, fixturesPath, sourceFiles)
+
+    const mixed = await engine.search({
+      from: "User",
+      to: "CreateUserRequest",
+      includeFailedVerification: true,
+      limit: 50,
+    })
+    const verifiedOnly = await engine.search({
+      from: "User",
+      to: "CreateUserRequest",
+      includeFailedVerification: true,
+      verifiedOnly: true,
+      limit: 50,
+    })
+    const minUnverified = await engine.search({
+      from: "User",
+      to: "CreateUserRequest",
+      includeFailedVerification: true,
+      minVerificationStatus: "unverified",
+      limit: 50,
+    })
+    const minVerified = await engine.search({
+      from: "User",
+      to: "CreateUserRequest",
+      includeFailedVerification: true,
+      minVerificationStatus: "verified",
+      limit: 50,
+    })
+
+    expect(mixed.results.length).toBeGreaterThan(verifiedOnly.results.length)
+    expect(verifiedOnly.results.length).toBeGreaterThan(0)
+    expect(minUnverified.results.length).toBe(mixed.results.length)
+    expect(minVerified.results.length).toBe(verifiedOnly.results.length)
+    expect(verifiedOnly.query.options).toMatchObject({ verifiedOnly: true })
+    expect(minUnverified.query.options).toMatchObject({ minVerificationStatus: "unverified" })
+    expect(minVerified.query.options).toMatchObject({ minVerificationStatus: "verified" })
+    expect(mixed.results.some((result) => result.verification.status === "verified")).toBe(true)
+    expect(mixed.results.some((result) => result.verification.status === "unverified")).toBe(true)
+    expect(verifiedOnly.results.every((result) => result.verification.status === "verified")).toBe(true)
+    expect(minUnverified.results.some((result) => result.verification.status === "unverified")).toBe(true)
+    expect(minUnverified.results.every((result) => result.verification.status !== "unverifiable")).toBe(true)
+    expect(minVerified.results.every((result) => result.verification.status === "verified")).toBe(true)
+    expect(verifiedOnly.stats.verification.unverified).toBe(0)
+    expect(verifiedOnly.stats.verification.unverifiable).toBe(0)
+  })
+
+  it("surfaces synthetic verification failures only when diagnostic evidence is requested", async () => {
+    const root = mkdtempSync(join(tmpdir(), "quartz-transform-search-verification-"))
+    mkdirSync(join(root, "src"), { recursive: true })
+    writeFileSync(
+      join(root, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: {
+          target: "ESNext",
+          module: "ESNext",
+          moduleResolution: "bundler",
+          strict: true,
+          skipLibCheck: true,
+          noEmit: true,
+        },
+        include: ["src/**/*.ts"],
+      }),
+      "utf8",
+    )
+    writeFileSync(
+      join(root, "src", "transforms.ts"),
+      [
+        "export interface SourceShape { id: string }",
+        "export interface TargetShape { id: string; displayName: string }",
+        "export type TargetShapePlus = TargetShape & { extra: string }",
+        "export class SecretMapper {",
+        "  private constructor() {}",
+        "  map(value: SourceShape): TargetShapePlus {",
+        "    return { ...value, displayName: value.id, extra: value.id }",
+        "  }",
+        "}",
+      ].join("\n"),
+      "utf8",
+    )
+    const project = createProject(root)
+    const sourceFiles = project.getSourceFiles().filter((sourceFile) => !sourceFile.isInNodeModules())
+    const engine = new TransformSearchEngine(project, root, sourceFiles)
+
+    const hidden = await engine.search({ from: "SourceShape", to: "TargetShape", limit: 10 })
+    const exposed = await engine.search({
+      from: "SourceShape",
+      to: "TargetShape",
+      includeFailedVerification: true,
+      includeDiagnostics: true,
+      includeSyntheticCode: true,
+      limit: 10,
+    })
+    const failed = exposed.results.find((result) => result.verification.reason === "synthetic_check_failed")
+
+    expect(hidden.results.every((result) => result.verification.reason !== "synthetic_check_failed")).toBe(true)
+    expect(failed).toMatchObject({
+      name: "SecretMapper.map",
+      verification: {
+        status: "unverified",
+        method: "synthetic",
+        reason: "synthetic_check_failed",
+        diagnostics: expect.arrayContaining([
+          expect.objectContaining({
+            code: expect.any(Number),
+            message: expect.stringContaining("SecretMapper"),
+          }),
+        ]),
+        syntheticCode: expect.stringContaining("SecretMapper"),
+      },
+    })
   })
 
   it("explains non-assignability diagnostic branches", async () => {

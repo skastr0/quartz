@@ -281,6 +281,9 @@ export interface VerificationMeta {
 
   /** Any compiler diagnostics from failed verification */
   diagnostics?: Array<{ code: number; message: string }>;
+
+  /** Generated synthetic TypeScript used for compiler-backed verification */
+  syntheticCode?: string;
 }
 
 /**

@@ -12,6 +12,9 @@ interface CommandCheck {
   readonly assert?: (envelope: any, output: string) => void
 }
 
+const commandData = (envelope: any): any =>
+  typeof envelope.data === "string" ? JSON.parse(envelope.data) : envelope.data
+
 const repoRoot = process.cwd()
 const cliEntry = "apps/cli/src/main.ts"
 const fixtureRoot = "test/fixtures"
@@ -33,10 +36,42 @@ writeFileSync(
 )
 mkdirSync(join(multiPackageRoot, "src"), { recursive: true })
 mkdirSync(join(multiPackageRoot, leafPackage, "src"), { recursive: true })
+const transformFailureRoot = join(tempDir, "transform-failure")
+mkdirSync(join(transformFailureRoot, "src"), { recursive: true })
 writeFileSync(join(multiPackageRoot, "tsconfig.json"), JSON.stringify({ include: ["src/**/*.ts"] }), "utf8")
 writeFileSync(join(multiPackageRoot, "src", "root.ts"), "export interface RootOnly { root: string }\n", "utf8")
 writeFileSync(join(multiPackageRoot, leafPackage, "tsconfig.json"), JSON.stringify({ include: ["src/**/*.ts"] }), "utf8")
 writeFileSync(join(multiPackageRoot, leafPackage, "src", "leaf.ts"), "export interface LeafOnly { leaf: string }\n", "utf8")
+writeFileSync(
+  join(transformFailureRoot, "tsconfig.json"),
+  JSON.stringify({
+    compilerOptions: {
+      target: "ESNext",
+      module: "ESNext",
+      moduleResolution: "bundler",
+      strict: true,
+      skipLibCheck: true,
+      noEmit: true,
+    },
+    include: ["src/**/*.ts"],
+  }),
+  "utf8",
+)
+writeFileSync(
+  join(transformFailureRoot, "src", "transforms.ts"),
+  [
+    "export interface SourceShape { id: string }",
+    "export interface TargetShape { id: string; displayName: string }",
+    "export type TargetShapePlus = TargetShape & { extra: string }",
+    "export class SecretMapper {",
+    "  private constructor() {}",
+    "  map(value: SourceShape): TargetShapePlus {",
+    "    return { ...value, displayName: value.id, extra: value.id }",
+    "  }",
+    "}",
+  ].join("\n"),
+  "utf8",
+)
 
 const checks: readonly CommandCheck[] = [
   { name: "capabilities", args: ["capabilities"] },
@@ -120,7 +155,96 @@ const checks: readonly CommandCheck[] = [
     ],
   },
   { name: "explain", args: ["explain", JSON.stringify({ root: fixtureRoot, expression: 'Pick<User, "id" | "name">' })] },
-  { name: "transform-search", args: ["transform-search", JSON.stringify({ root: fixtureRoot, from: "User", to: "UserDTO", limit: 5 })] },
+  {
+    name: "transform-search",
+    args: ["transform-search", JSON.stringify({ root: fixtureRoot, from: "User", to: "UserDTO", limit: 5 })],
+    assert: (envelope) => {
+      const first = commandData(envelope)?.results?.[0]
+      if (
+        typeof first?.verification?.status !== "string" ||
+        !("method" in first.verification) ||
+        typeof first.verification.reason !== "string"
+      ) {
+        throw new Error(`transform-search did not include verification metadata: ${JSON.stringify(first)}`)
+      }
+    },
+  },
+  {
+    name: "transform-search verifiedOnly",
+    args: [
+      "transform-search",
+      JSON.stringify({
+        root: fixtureRoot,
+        from: "User",
+        to: "CreateUserRequest",
+        includeFailedVerification: true,
+        verifiedOnly: true,
+        limit: 10,
+      }),
+    ],
+    assert: (envelope) => {
+      const results = commandData(envelope)?.results ?? []
+      if (results.length === 0 || results.some((result: any) => result.verification?.status !== "verified")) {
+        throw new Error(`verifiedOnly returned non-verified results: ${JSON.stringify(results)}`)
+      }
+    },
+  },
+  {
+    name: "transform-search minVerificationStatus",
+    args: [
+      "transform-search",
+      JSON.stringify({
+        root: fixtureRoot,
+        from: "User",
+        to: "CreateUserRequest",
+        includeFailedVerification: true,
+        minVerificationStatus: "unverified",
+        limit: 10,
+      }),
+    ],
+    assert: (envelope) => {
+      const results = commandData(envelope)?.results ?? []
+      if (
+        results.length === 0 ||
+        !results.some((result: any) => result.verification?.status === "verified") ||
+        !results.some((result: any) => result.verification?.status === "unverified") ||
+        results.some((result: any) => result.verification?.status === "unverifiable")
+      ) {
+        throw new Error(`minVerificationStatus did not preserve the mixed trust ladder: ${JSON.stringify(results)}`)
+      }
+    },
+  },
+  {
+    name: "transform-search failed verification evidence",
+    args: [
+      "transform-search",
+      JSON.stringify({
+        root: transformFailureRoot,
+        from: "SourceShape",
+        to: "TargetShape",
+        includeFailedVerification: true,
+        includeDiagnostics: true,
+        includeSyntheticCode: true,
+        limit: 10,
+      }),
+    ],
+    assert: (envelope) => {
+      const failed = commandData(envelope)?.results?.find(
+        (result: any) => result.verification?.reason === "synthetic_check_failed",
+      )
+      if (
+        failed?.verification?.status !== "unverified" ||
+        !Array.isArray(failed.verification.diagnostics) ||
+        !failed.verification.diagnostics.some((diagnostic: any) =>
+          typeof diagnostic.message === "string" && diagnostic.message.includes("SecretMapper"),
+        ) ||
+        typeof failed.verification.syntheticCode !== "string" ||
+        !failed.verification.syntheticCode.includes("SecretMapper")
+      ) {
+        throw new Error(`failed verification evidence was not exposed: ${JSON.stringify(failed)}`)
+      }
+    },
+  },
   {
     name: "batch partial failure",
     args: ["info", `@${batchFile}`, "--concurrency", "2"],
