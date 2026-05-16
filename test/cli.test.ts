@@ -245,6 +245,13 @@ describe("agentic CLI protocol", () => {
       data: {
         ok: true,
         package_count: 1,
+        fitness_checks: expect.arrayContaining([
+          expect.objectContaining({ command: "bun run verify:effect-rewrite" }),
+          expect.objectContaining({ command: "bun run verify:package-boundaries" }),
+          expect.objectContaining({ command: "bun run verify:docs-examples" }),
+          expect.objectContaining({ command: "bun run verify:regression-guard" }),
+          expect.objectContaining({ command: "bun run verify:external-matrix" }),
+        ]),
       },
     })
   }, cliTestTimeout)

@@ -19,21 +19,14 @@ const repoRoot = process.cwd()
 const cliEntry = "apps/cli/src/main.ts"
 const fixtureRoot = "test/fixtures"
 const tempDir = mkdtempSync(join(tmpdir(), "quartz-doc-examples-"))
-const payloadFile = join(tempDir, "info.json")
-const batchFile = join(tempDir, "info-batch.json")
+const payloadFile = "payloads/info.json"
+const batchFile = "payloads/info-batch.json"
+const graphPayloadFile = "payloads/graph.json"
+const transformSearchPayloadFile = "payloads/transform-search.json"
 const artifactDir = join(tempDir, "artifacts")
 const multiPackageRoot = join(tempDir, "multi-package")
 const leafPackage = "packages/leaf"
 
-writeFileSync(payloadFile, JSON.stringify({ root: fixtureRoot, symbol: "User" }), "utf8")
-writeFileSync(
-  batchFile,
-  JSON.stringify([
-    { root: fixtureRoot, symbol: "User" },
-    { root: fixtureRoot, symbol: "MissingSymbol" },
-  ]),
-  "utf8",
-)
 mkdirSync(join(multiPackageRoot, "src"), { recursive: true })
 mkdirSync(join(multiPackageRoot, leafPackage, "src"), { recursive: true })
 const transformFailureRoot = join(tempDir, "transform-failure")
@@ -80,9 +73,27 @@ const checks: readonly CommandCheck[] = [
   { name: "examples list", args: ["examples", "list"] },
   { name: "examples show info", args: ["examples", "show", "info"] },
   { name: "doctor", args: ["doctor", JSON.stringify({ root: fixtureRoot })] },
+  {
+    name: "doctor fitness checks",
+    args: ["doctor", JSON.stringify({ root: fixtureRoot })],
+    assert: (envelope) => {
+      const commands = envelope.data?.fitness_checks?.map((check: any) => check.command) ?? []
+      for (const expected of [
+        "bun run verify:effect-rewrite",
+        "bun run verify:package-boundaries",
+        "bun run verify:docs-examples",
+        "bun run verify:regression-guard",
+        "bun run verify:external-matrix",
+      ]) {
+        if (!commands.includes(expected)) {
+          throw new Error(`doctor did not report fitness check ${expected}: ${commands.join(", ")}`)
+        }
+      }
+    },
+  },
   { name: "inline info", args: ["info", JSON.stringify({ root: fixtureRoot, symbol: "User" })] },
   { name: "@file info", args: ["info", `@${payloadFile}`] },
-  { name: "stdin info", args: ["info", "-"], input: JSON.stringify({ root: fixtureRoot, symbol: "User" }) },
+  { name: "stdin info", args: ["info", "-"], input: readFileSync(payloadFile, "utf8") },
   {
     name: "pretty format",
     args: ["packages", JSON.stringify({ root: fixtureRoot }), "--format", "pretty"],
@@ -123,7 +134,7 @@ const checks: readonly CommandCheck[] = [
     name: "graph artifact",
     args: [
       "graph",
-      JSON.stringify({ root: fixtureRoot, symbol: "ExtendedUser", depth: 2, format: "mermaid" }),
+      `@${graphPayloadFile}`,
       "--output",
       "artifact",
       "--artifact-dir",
@@ -157,7 +168,7 @@ const checks: readonly CommandCheck[] = [
   { name: "explain", args: ["explain", JSON.stringify({ root: fixtureRoot, expression: 'Pick<User, "id" | "name">' })] },
   {
     name: "transform-search",
-    args: ["transform-search", JSON.stringify({ root: fixtureRoot, from: "User", to: "UserDTO", limit: 5 })],
+    args: ["transform-search", `@${transformSearchPayloadFile}`],
     assert: (envelope) => {
       const first = commandData(envelope)?.results?.[0]
       if (

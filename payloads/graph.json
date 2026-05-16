@@ -1,0 +1,6 @@
+{
+  "root": "test/fixtures",
+  "symbol": "ExtendedUser",
+  "depth": 2,
+  "format": "mermaid"
+}

@@ -10,6 +10,52 @@ const VERSION = "0.1.0"
 const DEFAULT_CONCURRENCY = 5
 const AUTO_ARTIFACT_THRESHOLD_BYTES = 8_000
 
+const fitnessChecks = [
+  {
+    name: "Effect rewrite structure",
+    command: "bun run verify:effect-rewrite",
+    protects: [
+      "core internals do not regain Effect.runPromise",
+      "old analyzer/project manager path stays deleted",
+      "runtime ownership remains at CLI/plugin edges",
+    ],
+  },
+  {
+    name: "Package boundaries",
+    command: "bun run verify:package-boundaries",
+    protects: [
+      "published package export maps stay coherent",
+      "packed package contents include required dist, README, and LICENSE files",
+      "CLI and plugin build boundaries stay explicit",
+    ],
+  },
+  {
+    name: "Docs examples",
+    command: "bun run verify:docs-examples",
+    protects: [
+      "public command examples remain executable",
+      "schemas, input modes, artifacts, and batch semantics stay fresh",
+      "transform verification and verify-contract examples keep their evidence shape",
+    ],
+  },
+  {
+    name: "Regression guard",
+    command: "bun run verify:regression-guard",
+    protects: [
+      "effect rewrite, docs examples, CLI/plugin wrapper tests, refactor coverage, and transform-search coverage run together",
+      "agent-facing behavior remains covered by a single guard command",
+    ],
+  },
+  {
+    name: "External feature matrix",
+    command: "bun run verify:external-matrix",
+    protects: [
+      "Quartz commands run against representative external TypeScript repositories",
+      "failures are classified as Quartz bugs, repo preconditions, timeouts, or matrix harness issues",
+    ],
+  },
+] as const
+
 const ProjectRoot = Schema.NonEmptyString.pipe(Schema.brand("ProjectRoot"))
 const PackageRef = Schema.NonEmptyString.pipe(Schema.brand("PackageRef"))
 const SymbolName = Schema.NonEmptyString.pipe(Schema.brand("SymbolName"))
@@ -711,6 +757,7 @@ const commandSpecs = {
           package_count: packages.length,
           packages,
           input_modes: ["inline-json", "@file", "stdin"],
+          fitness_checks: fitnessChecks,
           local_install: {
             bin: "quartz",
             build: "bun run cli:build",

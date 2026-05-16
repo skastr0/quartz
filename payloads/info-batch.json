@@ -1,0 +1,10 @@
+[
+  {
+    "root": "test/fixtures",
+    "symbol": "User"
+  },
+  {
+    "root": "test/fixtures",
+    "symbol": "MissingSymbol"
+  }
+]

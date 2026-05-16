@@ -76,6 +76,8 @@ quartz doctor '{"root":"test/fixtures"}'
 
 `capabilities` reports supported input modes, execution flags, envelope shape, batch behavior, and command inventory. `schema show <command>` returns the JSON schema and example for one command. `examples show <command>` returns a payload plus inline, file, and stdin invocation forms.
 
+Architecture fitness checks are documented in `docs/architecture-fitness.md`, and `doctor` reports the same check inventory for agents that need executable obligations.
+
 ## Public Commands
 
 All command examples below use `test/fixtures`, the same fixture repo exercised by `bun run verify:docs-examples`.
