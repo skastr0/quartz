@@ -2,5 +2,6 @@ node_modules
 dist
 coverage
 .DS_Store
+.quartz/
 .taste-codec/cache
 packages/npm/quartz-*/bin/
