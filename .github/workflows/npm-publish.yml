@@ -1,0 +1,72 @@
+name: Publish npm packages
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: release
+    concurrency:
+      group: npm-publish-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Verify
+        run: bun run verify
+
+      - name: Build npm CLI packages
+        run: bun run build:npm-cli
+
+      - name: Inspect package contents
+        run: |
+          set -euo pipefail
+
+          for package_dir in \
+            packages/core \
+            apps/opencode-plugin \
+            packages/npm/quartz-darwin-arm64 \
+            packages/npm/quartz-darwin-x64 \
+            packages/npm/quartz-linux-arm64 \
+            packages/npm/quartz-linux-x64 \
+            packages/npm/quartz
+          do
+            echo "Inspecting ${package_dir}"
+            npm pack --dry-run "./${package_dir}"
+          done
+
+      - name: Publish packages
+        run: |
+          set -euo pipefail
+
+          for package_dir in \
+            packages/core \
+            apps/opencode-plugin \
+            packages/npm/quartz-darwin-arm64 \
+            packages/npm/quartz-darwin-x64 \
+            packages/npm/quartz-linux-arm64 \
+            packages/npm/quartz-linux-x64 \
+            packages/npm/quartz
+          do
+            echo "Publishing ${package_dir}"
+            npm publish "./${package_dir}" --access public
+          done
