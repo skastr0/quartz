@@ -1,0 +1,30 @@
+{
+  "name": "@skastr0/quartz-darwin-arm64",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Quartz standalone CLI binary for macOS arm64.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/skastr0/quartz.git",
+    "directory": "packages/npm/quartz-darwin-arm64"
+  },
+  "homepage": "https://github.com/skastr0/quartz#readme",
+  "bugs": {
+    "url": "https://github.com/skastr0/quartz/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "bin",
+    "README.md",
+    "LICENSE"
+  ]
+}

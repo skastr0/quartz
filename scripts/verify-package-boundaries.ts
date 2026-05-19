@@ -85,14 +85,50 @@ const main = async (): Promise<void> => {
     )
 
     await verifyPack("@skastr0/quartz-core", join(root, "packages/core"), destination, [
-      "src/index.ts",
-      "src/discovery.ts",
-      "src/project-types.ts",
+      "dist/index.js",
+      "dist/index.d.ts",
+      "dist/discovery.js",
+      "dist/discovery.d.ts",
+      "dist/project-types.js",
+      "dist/project-types.d.ts",
+      "README.md",
+      "LICENSE",
     ])
     await verifyPack("@skastr0/quartz-cli", join(root, "apps/cli"), destination, ["dist/main.js"])
     await verifyPack("@skastr0/quartz-opencode-plugin", join(root, "apps/opencode-plugin"), destination, [
       "dist/server.js",
+      "dist/server.d.ts",
+      "README.md",
+      "LICENSE",
     ])
+
+    await run("npm CLI package build", ["bun", "run", "build:npm-cli"])
+    await verifyPack("@skastr0/quartz-darwin-arm64", join(root, "packages/npm/quartz-darwin-arm64"), destination, [
+      "bin/quartz",
+      "README.md",
+      "LICENSE",
+    ])
+    await verifyPack("@skastr0/quartz-darwin-x64", join(root, "packages/npm/quartz-darwin-x64"), destination, [
+      "bin/quartz",
+      "README.md",
+      "LICENSE",
+    ])
+    await verifyPack("@skastr0/quartz-linux-arm64", join(root, "packages/npm/quartz-linux-arm64"), destination, [
+      "bin/quartz",
+      "README.md",
+      "LICENSE",
+    ])
+    await verifyPack("@skastr0/quartz-linux-x64", join(root, "packages/npm/quartz-linux-x64"), destination, [
+      "bin/quartz",
+      "README.md",
+      "LICENSE",
+    ])
+    await verifyPack("@skastr0/quartz", join(root, "packages/npm/quartz"), destination, [
+      "bin/quartz.js",
+      "README.md",
+      "LICENSE",
+    ])
+    await run("npm CLI launcher", ["node", "packages/npm/quartz/bin/quartz.js", "capabilities"])
   } finally {
     await rm(destination, { force: true, recursive: true })
   }

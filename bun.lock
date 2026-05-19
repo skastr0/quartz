@@ -23,7 +23,7 @@
       "name": "@skastr0/quartz-cli",
       "version": "0.1.0",
       "bin": {
-        "quartz": "./dist/main.js",
+        "quartz": "dist/main.js",
       },
       "dependencies": {
         "@skastr0/quartz-core": "workspace:*",
@@ -34,7 +34,7 @@
       "name": "@skastr0/quartz-opencode-plugin",
       "version": "0.1.0",
       "dependencies": {
-        "@skastr0/quartz-core": "workspace:*",
+        "@skastr0/quartz-core": "0.1.0",
         "effect": "^3.21.2",
       },
       "peerDependencies": {
@@ -48,6 +48,35 @@
         "effect": "^3.21.2",
         "ts-morph": "^27.0.2",
       },
+    },
+    "packages/npm/quartz": {
+      "name": "@skastr0/quartz",
+      "version": "0.1.0",
+      "bin": {
+        "quartz": "bin/quartz.js",
+      },
+      "optionalDependencies": {
+        "@skastr0/quartz-darwin-arm64": "0.1.0",
+        "@skastr0/quartz-darwin-x64": "0.1.0",
+        "@skastr0/quartz-linux-arm64": "0.1.0",
+        "@skastr0/quartz-linux-x64": "0.1.0",
+      },
+    },
+    "packages/npm/quartz-darwin-arm64": {
+      "name": "@skastr0/quartz-darwin-arm64",
+      "version": "0.1.0",
+    },
+    "packages/npm/quartz-darwin-x64": {
+      "name": "@skastr0/quartz-darwin-x64",
+      "version": "0.1.0",
+    },
+    "packages/npm/quartz-linux-arm64": {
+      "name": "@skastr0/quartz-linux-arm64",
+      "version": "0.1.0",
+    },
+    "packages/npm/quartz-linux-x64": {
+      "name": "@skastr0/quartz-linux-x64",
+      "version": "0.1.0",
     },
   },
   "overrides": {
@@ -117,9 +146,19 @@
 
     "@rolldown/pluginutils": ["@rolldown/pluginutils@1.0.0-rc.17", "", {}, "sha512-n8iosDOt6Ig1UhJ2AYqoIhHWh/isz0xpicHTzpKBeotdVsTEcxsSA/i3EVM7gQAj0rU27OLAxCjzlj15IWY7bg=="],
 
+    "@skastr0/quartz": ["@skastr0/quartz@workspace:packages/npm/quartz"],
+
     "@skastr0/quartz-cli": ["@skastr0/quartz-cli@workspace:apps/cli"],
 
     "@skastr0/quartz-core": ["@skastr0/quartz-core@workspace:packages/core"],
+
+    "@skastr0/quartz-darwin-arm64": ["@skastr0/quartz-darwin-arm64@workspace:packages/npm/quartz-darwin-arm64"],
+
+    "@skastr0/quartz-darwin-x64": ["@skastr0/quartz-darwin-x64@workspace:packages/npm/quartz-darwin-x64"],
+
+    "@skastr0/quartz-linux-arm64": ["@skastr0/quartz-linux-arm64@workspace:packages/npm/quartz-linux-arm64"],
+
+    "@skastr0/quartz-linux-x64": ["@skastr0/quartz-linux-x64@workspace:packages/npm/quartz-linux-x64"],
 
     "@skastr0/quartz-opencode-plugin": ["@skastr0/quartz-opencode-plugin@workspace:apps/opencode-plugin"],
 

@@ -1,0 +1,44 @@
+{
+  "name": "@skastr0/quartz",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Agent-native TypeScript code intelligence CLI for Quartz.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/skastr0/quartz.git",
+    "directory": "packages/npm/quartz"
+  },
+  "homepage": "https://github.com/skastr0/quartz#readme",
+  "bugs": {
+    "url": "https://github.com/skastr0/quartz/issues"
+  },
+  "keywords": [
+    "quartz",
+    "cli",
+    "typescript",
+    "code-intelligence",
+    "static-analysis",
+    "agent-tools"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "quartz": "bin/quartz.js"
+  },
+  "files": [
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {
+    "@skastr0/quartz-darwin-arm64": "0.1.0",
+    "@skastr0/quartz-darwin-x64": "0.1.0",
+    "@skastr0/quartz-linux-arm64": "0.1.0",
+    "@skastr0/quartz-linux-x64": "0.1.0"
+  }
+}
