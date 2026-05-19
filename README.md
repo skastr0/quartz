@@ -4,11 +4,36 @@ Generic TypeScript type-analysis core, an agent-native CLI, and a thin OpenCode 
 
 Quartz is built for agents that need to inspect TypeScript projects without scraping editor UI or guessing from text search. It answers questions about packages, exported symbols, type expansion, diagnostics, snippets, source positions, compatibility, dependency graphs, refactor previews, and structural transform candidates.
 
+## Status
+
+Experimental. Quartz is usable for local agent workflows, but the CLI protocol, package exports, plugin tool surface, and distribution channels may change while the project is in `0.y.z`.
+
 ## Layout
 
 - `packages/core`: reusable type-analysis behavior, independent of OpenCode.
 - `apps/cli`: Effect-powered CLI protocol for agents and scripts.
 - `apps/opencode-plugin`: OpenCode-specific tool registration, event hooks, logging, and session context behavior.
+
+## Distribution
+
+The repository is prepared for these release lanes:
+
+- `@skastr0/quartz-core`: npm package with built ESM output and TypeScript declarations.
+- `@skastr0/quartz-opencode-plugin`: npm package with built ESM output and TypeScript declarations.
+- `@skastr0/quartz`: npm CLI wrapper with per-platform prebuilt binary packages for `npx`, `bunx`, and `pnpm dlx`.
+- `quartz`: standalone CLI binaries for GitHub Releases.
+
+The workspace root and `@skastr0/quartz-cli` source app stay private and are not published. The public npm CLI package is `@skastr0/quartz`, which exposes the `quartz` command through a Node launcher and optional platform binary packages.
+
+After the first npm release:
+
+```bash
+npx -y @skastr0/quartz capabilities
+bunx @skastr0/quartz capabilities
+pnpm dlx @skastr0/quartz capabilities
+```
+
+See `docs/publishing.md` and `release.md` before publishing packages, dispatching release workflows, or changing repository visibility.
 
 ## Install And Run Locally
 
@@ -205,6 +230,12 @@ Graphs, diagnostics, declaration dumps, transform search results, refactor previ
 
 The OpenCode plugin exposes the same analyzer through tool calls rooted at the OpenCode project directory.
 
+After the first npm release, the package export is:
+
+```ts
+import plugin from "@skastr0/quartz-opencode-plugin/server"
+```
+
 Build the plugin bundle:
 
 ```bash
@@ -225,6 +256,7 @@ Tool arguments mirror CLI payload fields except `root`, because the plugin root 
 
 ```bash
 bun run verify
+bun run pack:dry-run
 bun run verify:docs-examples
 bun run verify:regression-guard
 bun run verify:external-matrix
@@ -242,4 +274,14 @@ Release checks:
 bun run release:check
 ```
 
-Do not publish npm packages or flip repository visibility until `release.md` says the public-release gates have been completed.
+Do not publish npm packages, create release tags, dispatch release workflows, or flip repository visibility until `release.md` and `docs/publishing.md` say the public-release gates have been completed.
+
+## Community And Security
+
+Quartz is solo-maintained. Use GitHub issues for reproducible bugs, documentation corrections, and scoped proposals. External code changes are not the default support path.
+
+Please report suspected vulnerabilities privately through GitHub private vulnerability reporting for this repository. See `SECURITY.md` for scope and reporting details.
+
+## License
+
+MIT. See `LICENSE`.

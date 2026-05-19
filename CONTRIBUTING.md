@@ -1,13 +1,13 @@
 # Contributing
 
-Thanks for considering a contribution to quartz. This is an experimental, solo-maintained project. Contributions are welcome when they are focused, maintainable, and aligned with the project direction.
+quartz is an experimental, solo-maintained project. The most useful outside help is clear evidence: reproducible bugs, documentation corrections, and scoped proposals that explain the maintenance cost.
 
 ## What Helps
 
 - Reproducible bug reports
-- Small fixes with tests or clear verification notes
 - Documentation corrections
-- Scoped proposals discussed before a large implementation
+- Small fixes tied to an accepted issue, with tests or clear verification notes
+- Scoped proposals before implementation work starts
 
 ## What Is Out Of Scope
 
@@ -17,10 +17,10 @@ Thanks for considering a contribution to quartz. This is an experimental, solo-m
 
 ## Local Workflow
 
-Use the commands documented in README.md and release.md for this repository. Before opening a pull request, run the available verification commands and include the results in the PR description.
+Use the commands documented in README.md and release.md for this repository. Before sending a code change for review, run the relevant verification commands and include the results with the change.
 
-## Pull Requests
+## Code Changes
 
-Keep PRs small when possible. A PR may be declined for scope, maintenance cost, compatibility risk, or product direction even when the implementation is technically sound.
+External code changes are not the default support path. Small changes connected to a confirmed issue may be reviewed, but they can still be declined for scope, maintenance cost, compatibility risk, or product direction even when the implementation is technically sound.
 
 By contributing, you agree that your contribution is licensed under the MIT license used by this project.
