@@ -40,6 +40,7 @@
     "@opencode-ai/plugin": ">=1.4.0"
   },
   "overrides": {
+    "brace-expansion": "5.0.6",
     "uuid": "13.0.2"
   },
   "license": "MIT",
