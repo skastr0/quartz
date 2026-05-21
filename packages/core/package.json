@@ -32,7 +32,7 @@
   },
   "dependencies": {
     "effect": "^3.21.2",
-    "ts-morph": "^27.0.2"
+    "ts-morph": "^28.0.0"
   },
   "license": "MIT",
   "description": "Effect-native TypeScript code intelligence core for quartz.",
