@@ -69,8 +69,7 @@ Quartz already has the right substrate:
   assignability filtering -> synthetic call-site verification -> ranking.
 - Existing verification scripts:
   `verify-doc-examples`, `verify-regression-guard`,
-  `verify-package-boundaries`, `verify-effect-rewrite`,
-  `verify-external-matrix`.
+  `verify-package-boundaries`, and `verify-effect-rewrite`.
 
 Main gap:
 
@@ -242,7 +241,6 @@ Work:
   no accidental runtime creation in core
   docs examples freshness
   regression guard coverage
-  external feature matrix coverage
 - Optionally add `quartz doctor` output that reports local fitness check names
   and how to run them.
 

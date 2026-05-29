@@ -33,6 +33,20 @@ publish-scan .
 
 `publish-scan` output is private evidence and may include sensitive snippets. Review the output directory locally; do not paste raw scan output into public issues or release notes.
 
+## Public Release Gates
+
+Complete these gates before making the repository public, pushing a release tag, dispatching a publish workflow, or publishing a GitHub Release:
+
+- confirm source, docs, fixtures, prompts, screenshots, generated artifacts, and committed history are owned by the project or safe to publish
+- re-run the local preflight from a clean checkout and manually review the latest `publish-scan` output directory
+- enable GitHub secret scanning, push protection, dependency graph, Dependabot alerts, and private vulnerability reporting
+- update the GitHub repository description and topics
+- configure npm trusted publishers for every package listed in the package map
+- create and protect the GitHub `release` environment with maintainer approval and release-tag restrictions
+- configure main-branch protection or a ruleset once repository visibility and the GitHub plan allow it
+- keep `@skastr0/quartz-cli` private; publish `@skastr0/quartz` as the npm runner package
+- get explicit maintainer approval for each external action: visibility flip, tag push, workflow dispatch, protected-environment approval, package upload, draft release publication, or Homebrew tap update
+
 ## npm Trusted Publishing Setup
 
 Before dispatching `.github/workflows/npm-publish.yml`, configure npm trusted publishers for:
@@ -59,7 +73,7 @@ Before dispatching `.github/workflows/release-binaries.yml`:
 
 The workflow builds `darwin-x64`, `darwin-arm64`, `linux-x64`, and `linux-arm64` standalone binaries and creates a draft GitHub Release with `SHA256SUMS`.
 
-As of 2026-05-17, the `release` environment had not been created in GitHub. Create it with maintainer approval, require reviewer approval, and restrict it to release tags before any publish workflow is dispatched.
+Create the `release` environment with maintainer approval, require reviewer approval, and restrict it to release tags before any publish workflow is dispatched.
 
 ## Publish Order
 

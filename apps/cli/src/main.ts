@@ -46,14 +46,6 @@ const fitnessChecks = [
       "agent-facing behavior remains covered by a single guard command",
     ],
   },
-  {
-    name: "External feature matrix",
-    command: "bun run verify:external-matrix",
-    protects: [
-      "Quartz commands run against representative external TypeScript repositories",
-      "failures are classified as Quartz bugs, repo preconditions, timeouts, or matrix harness issues",
-    ],
-  },
 ] as const
 
 const ProjectRoot = Schema.NonEmptyString.pipe(Schema.brand("ProjectRoot"))

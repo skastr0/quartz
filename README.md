@@ -33,7 +33,7 @@ bunx @skastr0/quartz capabilities
 pnpm dlx @skastr0/quartz capabilities
 ```
 
-See `docs/publishing.md` and `release.md` before publishing packages, dispatching release workflows, or changing repository visibility.
+See `docs/publishing.md` before publishing packages, dispatching release workflows, or changing repository visibility.
 
 ## Install And Run Locally
 
@@ -259,14 +259,11 @@ bun run verify
 bun run pack:dry-run
 bun run verify:docs-examples
 bun run verify:regression-guard
-bun run verify:external-matrix
 ```
 
 `verify:docs-examples` backs the public examples in this README against `test/fixtures`.
 
 `verify:regression-guard` is the compact pre-release guard for public-feature and severe legibility drift. It runs the Effect rewrite structural check, the documented CLI example smoke test, and focused CLI/plugin/refactor coverage. Use it before release-readiness work or after changing analyzer services, CLI envelopes, plugin tools, diagnostics/explanations, transform search, snippet checking, source-file inspection, or refactor preview behavior. A failure means either a public feature regressed or a structural guard detected a return to the old analyzer/runtime shape.
-
-`verify:external-matrix` exercises public CLI features against real local repositories and writes JSON/Markdown evidence under `~/.config/quartz/artifacts/external-feature-matrix`, or `$QUARTZ_MATRIX_ARTIFACT_DIR` when set.
 
 Release checks:
 
@@ -274,7 +271,7 @@ Release checks:
 bun run release:check
 ```
 
-Do not publish npm packages, create release tags, dispatch release workflows, or flip repository visibility until `release.md` and `docs/publishing.md` say the public-release gates have been completed.
+Do not publish npm packages, create release tags, dispatch release workflows, or flip repository visibility until the public-release gates in `docs/publishing.md` have been completed.
 
 ## Community And Security
 

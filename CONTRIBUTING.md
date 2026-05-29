@@ -17,7 +17,7 @@ quartz is an experimental, solo-maintained project. The most useful outside help
 
 ## Local Workflow
 
-Use the commands documented in README.md and release.md for this repository. Before sending a code change for review, run the relevant verification commands and include the results with the change.
+Use the commands documented in README.md and docs/publishing.md for this repository. Before sending a code change for review, run the relevant verification commands and include the results with the change.
 
 ## Code Changes
 

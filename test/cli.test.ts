@@ -250,7 +250,6 @@ describe("agentic CLI protocol", () => {
           expect.objectContaining({ command: "bun run verify:package-boundaries" }),
           expect.objectContaining({ command: "bun run verify:docs-examples" }),
           expect.objectContaining({ command: "bun run verify:regression-guard" }),
-          expect.objectContaining({ command: "bun run verify:external-matrix" }),
         ]),
       },
     })

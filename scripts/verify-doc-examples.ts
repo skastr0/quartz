@@ -83,7 +83,6 @@ const checks: readonly CommandCheck[] = [
         "bun run verify:package-boundaries",
         "bun run verify:docs-examples",
         "bun run verify:regression-guard",
-        "bun run verify:external-matrix",
       ]) {
         if (!commands.includes(expected)) {
           throw new Error(`doctor did not report fitness check ${expected}: ${commands.join(", ")}`)
