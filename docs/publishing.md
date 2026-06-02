@@ -41,15 +41,35 @@ Complete these gates before making the repository public, pushing a release tag,
 - re-run the local preflight from a clean checkout and manually review the latest `publish-scan` output directory
 - enable GitHub secret scanning, push protection, dependency graph, Dependabot alerts, and private vulnerability reporting
 - update the GitHub repository description and topics
-- configure npm trusted publishers for every package listed in the package map
+- choose and complete the first npm package creation path before relying on trusted publishing
 - create and protect the GitHub `release` environment with maintainer approval and release-tag restrictions
 - configure main-branch protection or a ruleset once repository visibility and the GitHub plan allow it
 - keep `@skastr0/quartz-cli` private; publish `@skastr0/quartz` as the npm runner package
 - get explicit maintainer approval for each external action: visibility flip, tag push, workflow dispatch, protected-environment approval, package upload, draft release publication, or Homebrew tap update
 
+## First npm Package Creation
+
+The target publishing model is CI-first trusted publishing through `.github/workflows/npm-publish.yml`.
+
+npm trusted publishing setup through `npm trust` requires the package to already exist on the npm registry. Because all Quartz npm packages are new, the first upload needs an explicit bootstrap decision before trusted publishing can take over.
+
+Preferred bootstrap path:
+
+1. Make the repository public so future trusted-publishing releases can generate provenance.
+2. Create and protect the GitHub `release` environment.
+3. Create a short-lived npm token with package publish rights for the `@skastr0` scope.
+4. Store it as `NPM_TOKEN` only in the protected `release` environment.
+5. Dispatch `.github/workflows/npm-bootstrap-publish.yml` from the reviewed release commit.
+6. Verify all seven packages exist on npm.
+7. Revoke the npm token and delete the `NPM_TOKEN` environment secret.
+8. Configure npm trusted publishers for all seven packages.
+9. Use `.github/workflows/npm-publish.yml` for future package releases.
+
+Local `npm publish` is a bootstrap exception only when the maintainer explicitly approves that exact local-publish path. Do not use local publish as the default.
+
 ## npm Trusted Publishing Setup
 
-Before dispatching `.github/workflows/npm-publish.yml`, configure npm trusted publishers for:
+After the packages exist on npm, configure npm trusted publishers for:
 
 - `@skastr0/quartz-core`
 - `@skastr0/quartz-opencode-plugin`
@@ -59,7 +79,7 @@ Before dispatching `.github/workflows/npm-publish.yml`, configure npm trusted pu
 - `@skastr0/quartz-linux-x64`
 - `@skastr0/quartz`
 
-Use repository `skastr0/quartz`, workflow filename `npm-publish.yml`, and environment name `release`. npm asks for the filename only, not the full `.github/workflows/` path. Keep the GitHub `release` environment protected for the first public release.
+Use repository `skastr0/quartz`, workflow filename `npm-publish.yml`, environment name `release`, and allow `npm publish`. npm asks for the filename only, not the full `.github/workflows/` path.
 
 Trusted publishing requires a GitHub-hosted runner, `permissions.id-token: write`, Node `22.14.0` or newer, and npm `11.5.1` or newer. npm generates provenance automatically for public packages published from public repositories through trusted publishing.
 
@@ -77,7 +97,7 @@ Create the `release` environment with maintainer approval, require reviewer appr
 
 ## Publish Order
 
-`@skastr0/quartz-core` publishes before `@skastr0/quartz-opencode-plugin` because the plugin depends on the exact core package version. The platform CLI packages publish before `@skastr0/quartz` because the main CLI package lists them as optional dependencies. The publish workflow uses explicit local package paths such as `npm publish "./packages/core" --access public` so npm cannot interpret workspace paths as remote package specs.
+`@skastr0/quartz-core` publishes before `@skastr0/quartz-opencode-plugin` because the plugin depends on the exact core package version. The platform CLI packages publish before `@skastr0/quartz` because the main CLI package lists them as optional dependencies. The publish workflows use explicit local package paths such as `npm publish "./packages/core" --access public` so npm cannot interpret workspace paths as remote package specs. They skip package versions that already exist so a partially completed first release can be resumed from the same commit.
 
 Publish order:
 

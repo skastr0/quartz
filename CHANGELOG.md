@@ -6,8 +6,16 @@ The project follows Semantic Versioning for the declared public package, CLI, an
 
 ## [Unreleased]
 
+No unreleased changes.
+
+## [0.1.0] - 2026-06-02
+
 ### Added
 
+- Initial experimental Quartz CLI for TypeScript code intelligence.
+- Reusable analyzer core with package discovery, symbol inspection, type expansion, diagnostics, snippet checking, graphing, refactor preview, and transform search.
+- OpenCode plugin wrapper exposing the analyzer through tool calls.
+- Local verification gates for typechecking, tests, documentation examples, package boundaries, and regression coverage.
 - Publishable npm package boundary for `@skastr0/quartz-core`, including built ESM output and TypeScript declarations.
 - Publishable npm package boundary for `@skastr0/quartz-opencode-plugin`, including built ESM output and TypeScript declarations.
 - Publishable npm CLI package boundary for `@skastr0/quartz`, backed by per-platform optional binary packages.
@@ -23,12 +31,3 @@ The project follows Semantic Versioning for the declared public package, CLI, an
 - npm package manifests now include repository directories, keywords, and explicit public publish config.
 - OpenCode plugin package build now stays thin by externalizing `@skastr0/quartz-core`, `effect`, and `@opencode-ai/plugin`.
 - Release gates now live in `docs/publishing.md`; the temporary coordination file has been removed.
-
-## [0.1.0] - 2026-05-15
-
-### Added
-
-- Initial experimental Quartz CLI for TypeScript code intelligence.
-- Reusable analyzer core with package discovery, symbol inspection, type expansion, diagnostics, snippet checking, graphing, refactor preview, and transform search.
-- OpenCode plugin wrapper exposing the analyzer through tool calls.
-- Local verification gates for typechecking, tests, documentation examples, package boundaries, and regression coverage.

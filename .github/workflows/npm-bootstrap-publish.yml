@@ -1,10 +1,7 @@
-name: Publish npm packages
+name: Bootstrap npm packages
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - "v*"
 
 permissions:
   contents: read
@@ -15,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: release
     concurrency:
-      group: npm-publish-${{ github.ref }}
+      group: npm-bootstrap-${{ github.ref }}
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v6
@@ -37,24 +34,9 @@ jobs:
       - name: Build npm CLI packages
         run: bun run build:npm-cli
 
-      - name: Inspect package contents
-        run: |
-          set -euo pipefail
-
-          for package_dir in \
-            packages/core \
-            apps/opencode-plugin \
-            packages/npm/quartz-darwin-arm64 \
-            packages/npm/quartz-darwin-x64 \
-            packages/npm/quartz-linux-arm64 \
-            packages/npm/quartz-linux-x64 \
-            packages/npm/quartz
-          do
-            echo "Inspecting ${package_dir}"
-            npm pack --dry-run "./${package_dir}"
-          done
-
-      - name: Publish packages
+      - name: Publish bootstrap packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
 
