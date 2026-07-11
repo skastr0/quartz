@@ -149,3 +149,76 @@ describe("engine selection", () => {
     },
   )
 })
+
+describe.runIf(isNativeRuntimeSupported())("native vs morph parity (check-snippet + eval-type)", () => {
+  const runBoth = async <A>(
+    run: (analyzer: import("@skastr0/quartz-core").TypeAnalyzer) => Effect.Effect<A, import("@skastr0/quartz-core").QuartzError>,
+  ): Promise<{ morph: A; native: A }> => {
+    const morph = createAnalyzerRuntime(fixturesRoot, { QUARTZ_ENGINE: "morph" })
+    const native = createNativeTypeAnalyzer(fixturesRoot)
+    try {
+      const [morphResult, nativeResult] = await Promise.all([
+        Effect.runPromise(run(morph.analyzer)),
+        Effect.runPromise(run(native.analyzer)),
+      ])
+      return { morph: morphResult, native: nativeResult }
+    } finally {
+      await morph.dispose()
+      await native.dispose()
+    }
+  }
+
+  it("checkSnippet returns morph-shaped envelopes for valid snippets", async () => {
+    const result = await runBoth((analyzer) => analyzer.checkSnippet("const x: string = 'hello';"))
+
+    expect(result.morph.valid).toBe(true)
+    expect(result.native.valid).toBe(true)
+  })
+
+  it("checkSnippet returns morph-shaped envelopes for invalid snippets", async () => {
+    const result = await runBoth((analyzer) => analyzer.checkSnippet("const x: string = 42;"))
+
+    expect(result.morph.valid).toBe(false)
+    expect(result.native.valid).toBe(false)
+    expect(result.morph.errors?.length).toBeGreaterThan(0)
+    expect(result.native.errors?.length).toBeGreaterThan(0)
+    expect(result.native.errors?.[0]).toMatchObject({
+      message: expect.any(String),
+      line: expect.any(Number),
+      column: expect.any(Number),
+      severity: "error",
+    })
+  })
+
+  it("checkSnippet resolves package symbols in user code", async () => {
+    const result = await runBoth((analyzer) =>
+      analyzer.checkSnippet("const u: User = { id: '1', name: 'Ada', email: 'ada@example.com' };"),
+    )
+
+    expect(result.morph.valid).toBe(true)
+    expect(result.native.valid).toBe(true)
+  })
+
+  it("evalType returns morph-shaped results for package symbols", async () => {
+    const result = await runBoth((analyzer) => analyzer.evalType('Pick<User, "id" | "name">'))
+
+    expect("error" in result.morph).toBe(false)
+    expect("error" in result.native).toBe(false)
+    const morphResult = result.morph as { result: string; expanded: string }
+    const nativeResult = result.native as { result: string; expanded: string }
+    expect(morphResult.result).toContain("id")
+    expect(nativeResult.result).toContain("id")
+    expect(nativeResult.expanded).toContain("id")
+    expect(nativeResult.expanded).toContain("string")
+  })
+
+  it("evalType reports errors for expressions referencing non-exported symbols", async () => {
+    const result = await runBoth((analyzer) => analyzer.evalType("InternalConfig"))
+
+    // Native is stricter than morph here: it surfaces the semantic diagnostic as
+    // an error rather than returning the unresolved type text. Morph may return
+    // a result for the same input; that difference is classified by the parity
+    // harness as a native improvement.
+    expect("error" in result.native).toBe(true)
+  })
+})
