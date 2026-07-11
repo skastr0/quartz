@@ -63,6 +63,15 @@ export const loadNativeTarget = (
 ): NativeTarget | null => {
   const packageInfo = resolveNativePackage(ctx, packageName)
   const project = ctx.engine.getProject(packageInfo.tsconfigPath)
+  return findNativeTargetInProject(packageInfo, project, symbolName)
+}
+
+/** Resolve a target against an already-loaded native project. */
+export const findNativeTargetInProject = (
+  packageInfo: PackageInfo,
+  project: Project,
+  symbolName: string,
+): NativeTarget | null => {
   const program = project.program
   const checker = project.checker
 
@@ -179,6 +188,10 @@ const findOutgoingReferences = (target: NativeTarget): RelatedInfo["references"]
   collectReferencedSymbols(target, (symbol) => add(symbol, referenceContextForNode(symbol, target)))
   return references
 }
+
+/** Return only outgoing edges for graph traversal; incoming references are not needed there. */
+export const findNativeOutgoingReferences = (target: NativeTarget): RelatedInfo["references"] =>
+  findOutgoingReferences(target)
 
 const collectReferencedSymbols = (target: NativeTarget, add: (symbol: Symbol | undefined) => void): void => {
   const visit = (node: Node): void => {

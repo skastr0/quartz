@@ -1,12 +1,4 @@
-import {
-  API,
-  DiagnosticCategory,
-  ModifierFlags,
-  type Program,
-  type Project,
-  SymbolFlags,
-  type Snapshot,
-} from "typescript/unstable/sync"
+import { DiagnosticCategory, ModifierFlags, type Program, type Project, SymbolFlags } from "typescript/unstable/sync"
 import { SyntaxKind } from "typescript/unstable/ast"
 import { isTypeAliasDeclaration } from "typescript/unstable/ast/is"
 import { relative, dirname, basename, join } from "node:path"
@@ -15,7 +7,6 @@ import { discoverPackages, type PackageInfo } from "../discovery"
 import { QuartzError } from "../errors"
 import type { SnippetDiagnostic, SnippetImportPlan } from "../project-types"
 import type { NativeCommandContext } from "./context"
-import { createHybridFileSystem } from "./vfs"
 
 /**
  * Shared helpers for the native `checkSnippet` and `evalType` commands. These
@@ -31,8 +22,6 @@ export interface SnippetExportSource {
 }
 
 export interface NativeSnippetProject {
-  readonly api: API
-  readonly snapshot: Snapshot
   readonly project: Project
   readonly program: Program
   readonly snippetPath: string
@@ -243,58 +232,34 @@ export const loadSnippetProject = (
   const layoutProgram = ctx.engine.getProgram(pkg.tsconfigPath)
   const snippetDir = resolveSnippetDirectory(layoutProgram, pkg)
   const snippetPath = join(snippetDir, uniqueSnippetFileName())
-  const fs = createHybridFileSystem({ [snippetPath]: snippetContent })
-
-  let api: API
+  let snippetProject: ReturnType<NativeCommandContext["engine"]["createSnippetProject"]>
   try {
-    api = new API({ cwd: ctx.rootDirectory, fs })
+    snippetProject = ctx.engine.createSnippetProject(pkg.tsconfigPath, snippetPath, snippetContent)
   } catch (cause) {
-    throw new QuartzError({
-      message: `Could not start the native TypeScript engine for snippet analysis: ${
-        cause instanceof Error ? cause.message : String(cause)
-      }`,
-      cause,
-    })
+    throw cause instanceof QuartzError
+      ? cause
+      : new QuartzError({
+          message: `Could not load the native TypeScript project for snippet analysis: ${
+            cause instanceof Error ? cause.message : String(cause)
+          }`,
+          cause,
+        })
   }
 
-  const snapshot = api.updateSnapshot({ openProjects: [pkg.tsconfigPath], openFiles: [snippetPath] })
-  const project = snapshot.getProject(pkg.tsconfigPath)
-  if (project === undefined) {
-    api.close()
-    throw new QuartzError({
-      message: `The native engine could not resolve a project for ${pkg.tsconfigPath} during snippet analysis.`,
-    })
-  }
-
-  const program = project.program
+  const { project, program } = snippetProject
   const snippetSourceFile = program.getSourceFile(snippetPath)
   if (snippetSourceFile === undefined) {
-    api.close()
-    throw new QuartzError({
-      message: `The native engine did not load the virtual snippet file ${snippetPath}.`,
-    })
+    snippetProject.dispose()
+    throw new QuartzError({ message: `The native engine did not load the virtual snippet file ${snippetPath}.` })
   }
 
   return {
-    api,
-    snapshot,
     project,
     program,
     snippetPath,
     snippetSourceFile,
     importLineCount: snippetContent.split("\n").filter((line) => line.startsWith("import")).length,
-    dispose: () => {
-      try {
-        snapshot.dispose()
-      } catch {
-        // Best-effort cleanup only.
-      }
-      try {
-        api.close()
-      } catch {
-        // Best-effort cleanup only.
-      }
-    },
+    dispose: snippetProject.dispose,
   }
 }
 

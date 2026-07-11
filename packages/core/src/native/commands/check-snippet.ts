@@ -13,8 +13,8 @@ import {
 
 /**
  * Native `checkSnippet` — compile an in-memory snippet file via an isolated VFS
- * and return diagnostics. Each call spawns its own native API so snippets can
- * run concurrently without shared mutable project state.
+ * and return diagnostics. Snippets reuse the native engine session and its
+ * hybrid VFS; each snapshot is disposed before the virtual file is removed.
  */
 export const checkSnippet =
   (ctx: NativeCommandContext): TypeAnalyzer["checkSnippet"] =>

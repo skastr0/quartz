@@ -2,7 +2,7 @@ import { Effect } from "effect"
 import type { TypeAnalyzer } from "../../analyzer"
 import type { NativeCommandContext } from "../context"
 import { QuartzError } from "../../errors"
-import { findNativeRelated, loadNativeTarget } from "../references"
+import { findNativeOutgoingReferences, findNativeTargetInProject, loadNativeTarget, type NativeTarget } from "../references"
 import type { GraphEdge, GraphResult } from "../../project-types"
 
 /**
@@ -17,26 +17,27 @@ export const generateGraph =
       try: () => {
         const { depth = 2, format = "mermaid", packageName } = options
         const maxDepth = Math.min(depth, 4)
-        if (loadNativeTarget(ctx, packageName, symbolName) === null) return null
-
         const edges: GraphEdge[] = []
         const visited = new Set<string>()
         const nodes = new Set<string>()
-        const traverse = (symbol: string, currentDepth: number): void => {
+        const rootTarget = loadNativeTarget(ctx, packageName, symbolName)
+        if (rootTarget === null) return null
+
+        const traverse = (target: NativeTarget, currentDepth: number): void => {
+          const symbol = target.symbol.name
           if (currentDepth > maxDepth || visited.has(symbol)) return
           visited.add(symbol)
           nodes.add(symbol)
-          const related = findNativeRelated(ctx, symbol, packageName)
-          if (related === null) return
-          for (const reference of related.references) {
+          for (const reference of findNativeOutgoingReferences(target)) {
             if (isPrimitiveOrBuiltin(reference.symbol)) continue
-            if (loadNativeTarget(ctx, packageName, reference.symbol) === null) continue
+            const referencedTarget = findNativeTargetInProject(target.packageInfo, target.project, reference.symbol)
+            if (referencedTarget === null) continue
             nodes.add(reference.symbol)
             edges.push({ from: symbol, to: reference.symbol, label: reference.context })
-            if (currentDepth < maxDepth) traverse(reference.symbol, currentDepth + 1)
+            if (currentDepth < maxDepth) traverse(referencedTarget, currentDepth + 1)
           }
         }
-        traverse(symbolName, 0)
+        traverse(rootTarget, 0)
         return {
           root: symbolName,
           format,

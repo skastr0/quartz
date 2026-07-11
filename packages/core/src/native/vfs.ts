@@ -15,12 +15,11 @@ import type { FileSystem } from "typescript/unstable/fs"
  * disk for paths that are not injected.
  */
 export interface HybridFileSystem extends FileSystem {
-  readonly virtualFiles: ReadonlyMap<string, string>
+  readonly virtualFiles: Map<string, string>
 }
 
 export const createHybridFileSystem = (files: Record<string, string>): HybridFileSystem => {
   const virtualFiles = new Map<string, string>(Object.entries(files))
-  const virtualFileNames = new Set(virtualFiles.keys())
 
   const virtualNamesInDirectory = (directoryName: string): readonly string[] => {
     const names: string[] = []
@@ -43,7 +42,7 @@ export const createHybridFileSystem = (files: Record<string, string>): HybridFil
   }
 
   const fileExists: FileSystem["fileExists"] = (fileName) => {
-    if (virtualFileNames.has(fileName)) return true
+    if (virtualFiles.has(fileName)) return true
     try {
       return statSync(fileName).isFile()
     } catch {

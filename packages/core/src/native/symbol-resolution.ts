@@ -1,5 +1,6 @@
 import { isAbsolute, relative, resolve } from "node:path"
 import type { PackageInfo } from "../discovery"
+import { QuartzError } from "../errors"
 import { SymbolFlags, type Project, type Program, type Symbol, type Type } from "typescript/unstable/sync"
 import { SyntaxKind, type Node, type SourceFile } from "typescript/unstable/ast"
 import {
@@ -18,12 +19,15 @@ export interface NativeSymbolMatch {
   readonly symbol: Symbol
 }
 
+const workspaceSourceFilesCache = new WeakMap<Program, readonly SourceFile[]>()
+const exportedSymbolsCache = new WeakMap<Project, WeakMap<SourceFile, ReadonlyMap<string, readonly NativeSymbolMatch[]>>>()
+
 export const resolvePackage = (packages: readonly PackageInfo[], packageName?: string): PackageInfo => {
   if (packageName === undefined || packageName.length === 0) {
     const rootPackage = packages.find((pkg) => pkg.name === "(root)")
     if (rootPackage !== undefined) return rootPackage
     if (packages.length === 1) return packages[0]!
-    throw new Error(`Multiple packages found. Please specify a package: ${packages.map((pkg) => pkg.name).join(", ")}`)
+    throw new QuartzError({ message: `Multiple packages found. Please specify a package: ${packages.map((pkg) => pkg.name).join(", ")}` })
   }
 
   const normalized = packageName.replace(/^\//, "")
@@ -31,13 +35,16 @@ export const resolvePackage = (packages: readonly PackageInfo[], packageName?: s
     (pkg) => pkg.name === packageName || pkg.name === normalized || pkg.path.endsWith(packageName),
   )
   if (packageInfo === undefined) {
-    throw new Error(`Package "${packageName}" not found. Available: ${packages.map((pkg) => pkg.name).join(", ")}`)
+    throw new QuartzError({ message: `Package "${packageName}" not found. Available: ${packages.map((pkg) => pkg.name).join(", ")}` })
   }
   return packageInfo
 }
 
-export const getWorkspaceSourceFiles = (program: Program, packageInfo: PackageInfo): readonly SourceFile[] =>
-  program
+export const getWorkspaceSourceFiles = (program: Program, packageInfo: PackageInfo): readonly SourceFile[] => {
+  const cached = workspaceSourceFilesCache.get(program)
+  if (cached !== undefined) return cached.filter((sourceFile) => resolve(sourceFile.fileName).startsWith(resolve(packageInfo.path)))
+
+  const sourceFiles = program
     .getSourceFileNames()
     .filter((fileName) => {
       const sourceFile = program.getSourceFile(fileName)
@@ -45,7 +52,9 @@ export const getWorkspaceSourceFiles = (program: Program, packageInfo: PackageIn
     })
     .map((fileName) => program.getSourceFile(fileName))
     .filter((sourceFile): sourceFile is SourceFile => sourceFile !== undefined)
-    .filter((sourceFile) => resolve(sourceFile.fileName).startsWith(resolve(packageInfo.path)))
+  workspaceSourceFilesCache.set(program, sourceFiles)
+  return sourceFiles.filter((sourceFile) => resolve(sourceFile.fileName).startsWith(resolve(packageInfo.path)))
+}
 
 export const resolveSourceFile = (
   filePath: string,
@@ -118,23 +127,41 @@ export const findNativeSymbol = (
 
   const parts = symbolName.split(".")
   const rootName = parts[0]!
-  const matches: NativeSymbolMatch[] = []
-  for (const sourceFile of sourceFiles) {
-    const moduleSymbol = project.checker.getSymbolAtLocation(sourceFile)
-    if (moduleSymbol === undefined) continue
+  const matches = sourceFiles.flatMap((sourceFile) => exportedSymbolsForSourceFile(project, sourceFile).get(rootName) ?? [])
+
+  if (matches.length === 0) return null
+  if (matches.length > 1) throw new QuartzError({ message: `Symbol "${rootName}" is ambiguous. Use a file-qualified symbol reference.` })
+  return navigateSymbolMembers(matches[0]!, parts.slice(1), project)
+}
+
+const exportedSymbolsForSourceFile = (
+  project: Project,
+  sourceFile: SourceFile,
+): ReadonlyMap<string, readonly NativeSymbolMatch[]> => {
+  let perProject = exportedSymbolsCache.get(project)
+  if (perProject === undefined) {
+    perProject = new WeakMap<SourceFile, ReadonlyMap<string, readonly NativeSymbolMatch[]>>()
+    exportedSymbolsCache.set(project, perProject)
+  }
+  const cached = perProject.get(sourceFile)
+  if (cached !== undefined) return cached
+
+  const matches = new Map<string, NativeSymbolMatch[]>()
+  const moduleSymbol = project.checker.getSymbolAtLocation(sourceFile)
+  if (moduleSymbol !== undefined) {
     for (const exportedSymbol of project.checker.getExportsOfModule(moduleSymbol)) {
       const declaration = getDeclaration(project, exportedSymbol)
       const actualName = exportedSymbol.name === "default"
         ? declarationName(declaration?.node ?? exportedSymbol.declarations[0]?.resolve(project))
         : exportedSymbol.name
-      if (actualName !== rootName || declaration === undefined) continue
-      matches.push(declaration)
+      if (actualName === undefined || declaration === undefined) continue
+      const existing = matches.get(actualName)
+      if (existing === undefined) matches.set(actualName, [declaration])
+      else existing.push(declaration)
     }
   }
-
-  if (matches.length === 0) return null
-  if (matches.length > 1) throw new Error(`Symbol "${rootName}" is ambiguous. Use a file-qualified symbol reference.`)
-  return navigateSymbolMembers(matches[0]!, parts.slice(1), project)
+  perProject.set(sourceFile, matches)
+  return matches
 }
 
 const findSymbolInSourceFile = (symbolName: string, sourceFile: SourceFile, project: Project): NativeSymbolMatch | null => {
