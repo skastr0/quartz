@@ -2,7 +2,7 @@ import { execSync } from "node:child_process"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { describe, expect, it } from "vitest"
-import { Effect, Either } from "effect"
+import { Effect } from "effect"
 import {
   analysisTypescriptVersionFor,
   createAnalyzerRuntime,
@@ -87,15 +87,13 @@ describe("native analyzer command surface", () => {
     }
   })
 
-  it("returns an engine-not-supported error for unimplemented type-analysis commands", async () => {
+  it("composes explainType from native eval-type results", async () => {
     const handle = createNativeTypeAnalyzer(fixturesRoot)
     try {
-      const outcome = await Effect.runPromise(Effect.either(handle.analyzer.explainType("User")))
-      expect(Either.isLeft(outcome)).toBe(true)
-      if (Either.isLeft(outcome)) {
-        expect(outcome.left.message).toContain("does not yet support")
-        expect((outcome.left.cause as { kind?: string } | undefined)?.kind).toBe("engine-not-supported")
-      }
+      const explanation = await Effect.runPromise(handle.analyzer.explainType('Pick<User, "id">'))
+      expect(explanation.expression).toBe('Pick<User, "id">')
+      expect(explanation.final).toContain("id")
+      expect(explanation.steps.length).toBeGreaterThan(0)
     } finally {
       await handle.dispose()
     }
