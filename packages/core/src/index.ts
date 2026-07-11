@@ -1,11 +1,15 @@
 export {
+  analysisTypescriptVersionFor,
   AnalyzerConfig,
   CoreLayer,
+  createAnalyzerRuntime,
   Diagnostics,
   FileInspection,
   PackageDiscovery,
   ProjectWorkspace,
   RefactorPreview,
+  resolveRequestedEngine,
+  selectEngine,
   SnippetEvaluation,
   SourceProjectCache,
   SymbolLookup,
@@ -15,6 +19,18 @@ export {
   TypeGraph,
   TypeRelations,
 } from "./service-spine"
+export type { AnalyzerRuntime, EngineId, EngineMeta, EngineSelection } from "./service-spine"
+export {
+  assertNativeRuntimeSupported,
+  createNativeEngine,
+  createNativeTypeAnalyzer,
+  engineNotSupported,
+  isNativeLoadFailure,
+  isNativeRuntimeSupported,
+  nativeAnalysisTypescriptVersion,
+  nativeLoadFailure,
+} from "./native"
+export type { NativeAnalyzerHandle, NativeCommandContext, NativeEngine } from "./native"
 export type {
   BoundaryRef,
   BoundaryRefKind,

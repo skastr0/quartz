@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 import { mkdir, writeFile } from "node:fs/promises"
 import { isAbsolute, join, relative, resolve } from "node:path"
-import { Either, Effect, JSONSchema, ManagedRuntime, ParseResult, Schema } from "effect"
-import { CoreLayer, QuartzError, TypeAnalyzerService } from "@skastr0/quartz-core"
-import type { ListSymbolsOptions, SearchTypesOptions, TypeAnalyzer, VerifyContractOptions } from "@skastr0/quartz-core"
+import { Either, Effect, JSONSchema, ParseResult, Schema } from "effect"
+import { analysisTypescriptVersionFor, createAnalyzerRuntime, QuartzError, resolveRequestedEngine } from "@skastr0/quartz-core"
+import type { EngineMeta, ListSymbolsOptions, SearchTypesOptions, TypeAnalyzer, VerifyContractOptions } from "@skastr0/quartz-core"
 import { defaultArtifactDirectory, quartzHome, QUARTZ_HOME_ENV } from "./runtime-storage"
 
 const VERSION = "0.1.0"
@@ -333,28 +333,34 @@ const rootOf = (payload: PayloadWithRoot): string => payload.root ?? process.cwd
 const cacheRootOf = (payload: PayloadWithRoot): string => resolve(rootOf(payload))
 interface CachedAnalyzer {
   readonly analyzer: TypeAnalyzer
+  readonly meta: EngineMeta
   readonly dispose: () => Promise<void>
 }
 
 const createCliAnalyzerRuntime = (root: string): CachedAnalyzer => {
-  const runtime = ManagedRuntime.make(CoreLayer(root))
+  const runtime = createAnalyzerRuntime(root)
   return {
-    analyzer: runtime.runSync(TypeAnalyzerService),
+    analyzer: runtime.analyzer,
+    meta: runtime.meta,
     dispose: runtime.dispose,
   }
 }
 
 const analyzersByRoot = new Map<string, CachedAnalyzer>()
 
-const analyzerFor = (payload: PayloadWithRoot): TypeAnalyzer => {
+const runtimeFor = (payload: PayloadWithRoot): CachedAnalyzer => {
   const root = cacheRootOf(payload)
   const cached = analyzersByRoot.get(root)
-  if (cached !== undefined) return cached.analyzer
+  if (cached !== undefined) return cached
 
   const runtime = createCliAnalyzerRuntime(root)
   analyzersByRoot.set(root, runtime)
-  return runtime.analyzer
+  return runtime
 }
+
+const analyzerFor = (payload: PayloadWithRoot): TypeAnalyzer => runtimeFor(payload).analyzer
+
+const engineMetaFor = (payload: PayloadWithRoot): EngineMeta => runtimeFor(payload).meta
 
 export const __testing = {
   analyzerFor,
@@ -740,10 +746,16 @@ const commandSpecs = {
     batch: false,
     artifactEligible: false,
     example: { root: "test/fixtures" },
-    execute: (payload: DoctorPayload) =>
-      analyzerFor(payload).getPackages().pipe(
+    execute: (payload: DoctorPayload) => {
+      const meta = engineMetaFor(payload)
+      return analyzerFor(payload).getPackages().pipe(
         Effect.map((packages) => ({
           version: VERSION,
+          engine: meta.engine,
+          requested_engine: meta.requestedEngine,
+          analysis_typescript_version: meta.analysisTypescriptVersion,
+          engine_fallback: meta.fellBack,
+          ...(meta.fallbackReason === undefined ? {} : { engine_fallback_reason: meta.fallbackReason }),
           root: rootOf(payload),
           ok: true,
           package_count: packages.length,
@@ -756,7 +768,8 @@ const commandSpecs = {
             install: "bun run cli:install-local",
           },
         })),
-      ),
+      )
+    },
     target: (payload: DoctorPayload) => ({ root: rootOf(payload) }),
   } satisfies CommandSpec<DoctorPayload>,
 }
@@ -1244,6 +1257,8 @@ const writeArtifact = (
 const capabilities = () => ({
   name: "quartz",
   version: VERSION,
+  engine: resolveRequestedEngine(),
+  analysis_typescript_version: analysisTypescriptVersionFor(resolveRequestedEngine()),
   protocol: "agentic-cli/v1",
   input_modes: ["inline JSON", "@file", "stdin (-)"],
   execution_flags: {

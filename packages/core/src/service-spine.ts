@@ -1,6 +1,12 @@
 import { resolve } from "node:path"
 import type { Project, SourceFile } from "ts-morph"
-import { Context, Effect, Layer, Ref } from "effect"
+import { ts } from "ts-morph"
+import { Context, Effect, Layer, ManagedRuntime, Ref } from "effect"
+import {
+  createNativeTypeAnalyzer,
+  isNativeRuntimeSupported,
+  nativeAnalysisTypescriptVersion,
+} from "./native"
 import {
   parsePackageRef,
   parseSymbolRef,
@@ -947,4 +953,110 @@ export const CoreLayer = (rootDirectory: string): Layer.Layer<CoreServices> => {
     transformSearchLayer,
     typeAnalyzerLayer,
   )
+}
+
+// ---------------------------------------------------------------------------
+// Engine selection
+//
+// Quartz ships two analysis backends behind the same TypeAnalyzer contract: the
+// default ts-morph engine (the whole spine above) and the native TypeScript
+// engine (packages/core/src/native). QUARTZ_ENGINE selects which one the CLI
+// constructs; morph stays the default until the flip decision. When native is
+// requested but cannot run (for example under a non-Node runtime), selection
+// falls back to morph and records why, so nothing hard-fails.
+// ---------------------------------------------------------------------------
+
+export type EngineId = "morph" | "native"
+
+export const resolveRequestedEngine = (
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): EngineId => ((env.QUARTZ_ENGINE ?? "").trim().toLowerCase() === "native" ? "native" : "morph")
+
+export interface EngineSelection {
+  readonly engine: EngineId
+  readonly requestedEngine: EngineId
+  readonly fellBack: boolean
+  readonly fallbackReason?: string
+}
+
+/** Pure engine-selection decision, kept separate from construction so it is directly testable. */
+export const selectEngine = (params: {
+  readonly requestedEngine: EngineId
+  readonly nativeRuntimeSupported: boolean
+}): EngineSelection => {
+  if (params.requestedEngine === "native" && !params.nativeRuntimeSupported) {
+    return {
+      engine: "morph",
+      requestedEngine: "native",
+      fellBack: true,
+      fallbackReason: "The native TypeScript engine requires a Node.js runtime; fell back to the ts-morph engine.",
+    }
+  }
+  return { engine: params.requestedEngine, requestedEngine: params.requestedEngine, fellBack: false }
+}
+
+/** The TypeScript version backing a given engine's analysis (reported by doctor/capabilities). */
+export const analysisTypescriptVersionFor = (engine: EngineId): string =>
+  engine === "native" ? nativeAnalysisTypescriptVersion() : ts.version
+
+export interface EngineMeta {
+  readonly engine: EngineId
+  readonly requestedEngine: EngineId
+  readonly analysisTypescriptVersion: string
+  readonly fellBack: boolean
+  readonly fallbackReason?: string
+}
+
+export interface AnalyzerRuntime {
+  readonly analyzer: TypeAnalyzer
+  readonly meta: EngineMeta
+  readonly dispose: () => Promise<void>
+}
+
+const engineMetaFrom = (selection: EngineSelection): EngineMeta => ({
+  engine: selection.engine,
+  requestedEngine: selection.requestedEngine,
+  analysisTypescriptVersion: analysisTypescriptVersionFor(selection.engine),
+  fellBack: selection.fellBack,
+  ...(selection.fallbackReason === undefined ? {} : { fallbackReason: selection.fallbackReason }),
+})
+
+const createMorphRuntime = (rootDirectory: string, selection: EngineSelection): AnalyzerRuntime => {
+  const runtime = ManagedRuntime.make(CoreLayer(rootDirectory))
+  return {
+    analyzer: runtime.runSync(TypeAnalyzerService),
+    dispose: () => runtime.dispose(),
+    meta: engineMetaFrom(selection),
+  }
+}
+
+/**
+ * Construct the analyzer for the configured engine, honoring QUARTZ_ENGINE and
+ * falling back to morph when native cannot run. This is the single entry point
+ * the CLI uses; doctor/capabilities read `meta` to report the active engine and
+ * its analysis TypeScript version.
+ */
+export const createAnalyzerRuntime = (
+  rootDirectory: string,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): AnalyzerRuntime => {
+  const requestedEngine = resolveRequestedEngine(env)
+  const selection = selectEngine({ requestedEngine, nativeRuntimeSupported: isNativeRuntimeSupported() })
+
+  if (selection.engine === "native") {
+    try {
+      const native = createNativeTypeAnalyzer(rootDirectory)
+      return { analyzer: native.analyzer, dispose: native.dispose, meta: engineMetaFrom(selection) }
+    } catch (cause) {
+      // A native construction failure is itself a fallback trigger.
+      return createMorphRuntime(rootDirectory, {
+        engine: "morph",
+        requestedEngine: "native",
+        fellBack: true,
+        fallbackReason: cause instanceof Error ? cause.message : String(cause),
+      })
+    }
+  }
+
+  return createMorphRuntime(rootDirectory, selection)
 }
