@@ -1,7 +1,8 @@
 import { Effect } from "effect"
 import type { TypeAnalyzer } from "../../analyzer"
 import type { NativeCommandContext } from "../context"
-import { engineNotSupported } from "../errors"
+import { QuartzError } from "../../errors"
+import { findNativeRelated } from "../references"
 
 /**
  * Native `findRelated` — not yet implemented. Its owning builder replaces this
@@ -9,6 +10,9 @@ import { engineNotSupported } from "../errors"
  * the engine-not-supported error so callers get a clean, actionable failure.
  */
 export const findRelated =
-  (_ctx: NativeCommandContext): TypeAnalyzer["findRelated"] =>
-  () =>
-    Effect.fail(engineNotSupported("findRelated"))
+  (ctx: NativeCommandContext): TypeAnalyzer["findRelated"] =>
+  (symbolName, packageName) =>
+    Effect.try({
+      try: () => findNativeRelated(ctx, symbolName, packageName),
+      catch: (cause) => cause instanceof QuartzError ? cause : new QuartzError({ message: "Could not find related symbols", cause }),
+    })
