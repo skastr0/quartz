@@ -90,7 +90,7 @@ describe("native analyzer command surface", () => {
   it("returns an engine-not-supported error for unimplemented type-analysis commands", async () => {
     const handle = createNativeTypeAnalyzer(fixturesRoot)
     try {
-      const outcome = await Effect.runPromise(Effect.either(handle.analyzer.listSymbols()))
+      const outcome = await Effect.runPromise(Effect.either(handle.analyzer.explainType("User")))
       expect(Either.isLeft(outcome)).toBe(true)
       if (Either.isLeft(outcome)) {
         expect(outcome.left.message).toContain("does not yet support")
