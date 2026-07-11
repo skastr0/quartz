@@ -10,8 +10,13 @@ import {
 const here = dirname(fileURLToPath(import.meta.url))
 const fixturesRoot = join(here, "fixtures")
 
+// Dual-engine comparisons boot the tsgo compiler process; under a full parallel
+// suite the first native call can exceed the 5s unit default, so these carry an
+// integration-scale budget.
+const INTEGRATION_TIMEOUT = 60_000
+
 describe.runIf(isNativeRuntimeSupported())("native diagnostics and position commands", () => {
-  it("matches morph diagnostics on the shared fixture", async () => {
+  it("matches morph diagnostics on the shared fixture", { timeout: INTEGRATION_TIMEOUT }, async () => {
     const morph = createAnalyzerRuntime(fixturesRoot, { QUARTZ_ENGINE: "morph" })
     const native = createAnalyzerRuntime(fixturesRoot, { QUARTZ_ENGINE: "native" })
     try {
@@ -25,7 +30,7 @@ describe.runIf(isNativeRuntimeSupported())("native diagnostics and position comm
     }
   })
 
-  it("matches morph type-at-position data on the shared fixture", async () => {
+  it("matches morph type-at-position data on the shared fixture", { timeout: INTEGRATION_TIMEOUT }, async () => {
     const morph = createAnalyzerRuntime(fixturesRoot, { QUARTZ_ENGINE: "morph" })
     const native = createAnalyzerRuntime(fixturesRoot, { QUARTZ_ENGINE: "native" })
     try {
