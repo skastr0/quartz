@@ -24,6 +24,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "verify": "bun run typecheck && bun run build && bun run test && bun run verify:package-boundaries",
+    "verify:native-engine": "bunx vitest run test/engine-*.test.ts",
     "verify:package-boundaries": "bun scripts/verify-package-boundaries.ts",
     "verify:docs-examples": "bun scripts/verify-doc-examples.ts",
     "verify:regression-guard": "bun scripts/verify-regression-guard.ts",

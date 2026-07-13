@@ -248,7 +248,7 @@ Plugin tools:
 
 - Discovery: `type_packages`, `type_symbols`, `type_info`, `type_expand`, `type_related`, `type_search`
 - Analysis: `type_eval`, `type_diagnostics`, `type_check_snippet`, `type_at_position`, `type_file`, `type_refresh`
-- Relationships and refactors: `type_compatible`, `type_graph`, `type_refactor_preview`, `type_why_error`, `type_explain`, `type_transform_search`
+- Relationships, refactors, and composed evidence: `type_compatible`, `type_graph`, `type_refactor_preview`, `type_why_error`, `type_explain`, `type_transform_search`, `type_verify_contract`
 
 Tool arguments mirror CLI payload fields except `root`, because the plugin root is the OpenCode workspace directory. Use `package` for multi-package workspaces.
 
@@ -263,7 +263,7 @@ bun run verify:regression-guard
 
 `verify:docs-examples` backs the public examples in this README against `test/fixtures`.
 
-`verify:regression-guard` is the compact pre-release guard for public-feature and severe legibility drift. It runs the Effect rewrite structural check, the documented CLI example smoke test, and focused CLI/plugin/refactor coverage. Use it before release-readiness work or after changing analyzer services, CLI envelopes, plugin tools, diagnostics/explanations, transform search, snippet checking, source-file inspection, or refactor preview behavior. A failure means either a public feature regressed or a structural guard detected a return to the old analyzer/runtime shape.
+`verify:regression-guard` is the compact pre-release guard for public behavior and engine invariants. It runs the native-engine suite, documented CLI examples, focused CLI/plugin checks, and property-style regressions. Use it before release-readiness work or after changing engine lifecycle, CLI envelopes, plugin tools, diagnostics/explanations, transform search, snippet checking, source-file inspection, or refactor preview behavior. A failure means a public feature or native-engine contract regressed.
 
 Release checks:
 

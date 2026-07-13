@@ -22,7 +22,7 @@ const AUTO_ARTIFACT_THRESHOLD_BYTES = 8_000
 const fitnessChecks = [
   {
     name: "Native engine behavior",
-    command: "bunx vitest run test/engine-*.test.ts",
+    command: "bun run verify:native-engine",
     protects: [
       "persistent workspace lifecycle and refresh semantics",
       "compiler-native analysis, references, transforms, and verification",

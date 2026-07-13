@@ -79,7 +79,7 @@ const checks: readonly CommandCheck[] = [
     assert: (envelope) => {
       const commands = envelope.data?.fitness_checks?.map((check: any) => check.command) ?? []
       for (const expected of [
-        "bunx vitest run test/engine-*.test.ts",
+        "bun run verify:native-engine",
         "bun run verify:package-boundaries",
         "bun run verify:docs-examples",
         "bun run verify:regression-guard",
