@@ -1,11 +1,7 @@
 import type { Plugin } from "@opencode-ai/plugin"
 import { tool } from "@opencode-ai/plugin"
-import { Effect, ManagedRuntime } from "effect"
-import { CoreLayer, TypeAnalyzerService } from "@skastr0/quartz-core"
-import type { TypeAnalyzer } from "@skastr0/quartz-core"
-
-const run = <A>(effect: Effect.Effect<A, unknown>) =>
-  Effect.runPromise(effect.pipe(Effect.mapError((error) => (error instanceof Error ? error : new Error(String(error))))))
+import { createTypeAnalyzer } from "@skastr0/quartz-engine"
+import type { QuartzAnalyzer } from "@skastr0/quartz-engine"
 
 const optionalPackageArg = tool.schema
   .string()
@@ -25,12 +21,12 @@ const optionalOption = <K extends string, V>(
 ): V extends undefined ? Record<never, never> : { readonly [P in K]?: V } =>
   (value === undefined ? {} : { [key]: value }) as V extends undefined ? Record<never, never> : { readonly [P in K]?: V }
 
-const createDiscoveryTools = (analyzer: TypeAnalyzer) => ({
+const createDiscoveryTools = (analyzer: QuartzAnalyzer) => ({
   type_packages: tool({
     description: "List TypeScript packages discovered from tsconfig.json files.",
     args: {},
     async execute() {
-      return json(await run(analyzer.getPackages()))
+      return json(await analyzer.getPackages())
     },
   }),
   type_symbols: tool({
@@ -43,14 +39,12 @@ const createDiscoveryTools = (analyzer: TypeAnalyzer) => ({
     },
     async execute(args) {
       return json(
-        await run(
-          analyzer.listSymbols({
-            ...packageOption(args.package),
-            ...optionalOption("pattern", args.pattern),
-            ...optionalOption("kind", args.kind),
-            ...optionalOption("limit", args.limit),
-          }),
-        ),
+        await analyzer.listSymbols({
+          ...packageOption(args.package),
+          ...optionalOption("pattern", args.pattern),
+          ...optionalOption("kind", args.kind),
+          ...optionalOption("limit", args.limit),
+        }),
       )
     },
   }),
@@ -61,7 +55,7 @@ const createDiscoveryTools = (analyzer: TypeAnalyzer) => ({
       package: optionalPackageArg,
     },
     async execute(args) {
-      return json(await run(analyzer.getTypeInfo(args.symbol, args.package)))
+      return json(await analyzer.getTypeInfo(args.symbol, args.package))
     },
   }),
   type_expand: tool({
@@ -71,7 +65,7 @@ const createDiscoveryTools = (analyzer: TypeAnalyzer) => ({
       package: optionalPackageArg,
     },
     async execute(args) {
-      return json(await run(analyzer.expandType(args.symbol, args.package)))
+      return json(await analyzer.expandType(args.symbol, args.package))
     },
   }),
   type_related: tool({
@@ -81,7 +75,7 @@ const createDiscoveryTools = (analyzer: TypeAnalyzer) => ({
       package: optionalPackageArg,
     },
     async execute(args) {
-      return json(await run(analyzer.findRelated(args.symbol, args.package)))
+      return json(await analyzer.findRelated(args.symbol, args.package))
     },
   }),
   type_search: tool({
@@ -96,22 +90,20 @@ const createDiscoveryTools = (analyzer: TypeAnalyzer) => ({
     },
     async execute(args) {
       return json(
-        await run(
-          analyzer.searchTypes({
-            query: args.query,
-            ...optionalOption("pattern", args.pattern),
-            ...optionalOption("hasProperty", args.hasProperty),
-            ...optionalOption("extends", args.extends),
-            ...packageOption(args.package),
-            ...optionalOption("limit", args.limit),
-          }),
-        ),
+        await analyzer.searchTypes({
+          query: args.query,
+          ...optionalOption("pattern", args.pattern),
+          ...optionalOption("hasProperty", args.hasProperty),
+          ...optionalOption("extends", args.extends),
+          ...packageOption(args.package),
+          ...optionalOption("limit", args.limit),
+        }),
       )
     },
   }),
 })
 
-const createAnalysisTools = (analyzer: TypeAnalyzer) => ({
+const createAnalysisTools = (analyzer: QuartzAnalyzer) => ({
   type_eval: tool({
     description: "Evaluate a TypeScript type expression and return the computed type.",
     args: {
@@ -119,7 +111,7 @@ const createAnalysisTools = (analyzer: TypeAnalyzer) => ({
       package: optionalPackageArg,
     },
     async execute(args) {
-      return json(await run(analyzer.evalType(args.expression, args.package)))
+      return json(await analyzer.evalType(args.expression, args.package))
     },
   }),
   type_diagnostics: tool({
@@ -130,12 +122,10 @@ const createAnalysisTools = (analyzer: TypeAnalyzer) => ({
     },
     async execute(args) {
       return json(
-        await run(
-          analyzer.getDiagnostics({
-            ...packageOption(args.package),
-            ...optionalOption("explain", args.explain),
-          }),
-        ),
+        await analyzer.getDiagnostics({
+          ...packageOption(args.package),
+          ...optionalOption("explain", args.explain),
+        }),
       )
     },
   }),
@@ -146,7 +136,7 @@ const createAnalysisTools = (analyzer: TypeAnalyzer) => ({
       package: optionalPackageArg,
     },
     async execute(args) {
-      return json(await run(analyzer.checkSnippet(args.code, args.package)))
+      return json(await analyzer.checkSnippet(args.code, args.package))
     },
   }),
   type_at_position: tool({
@@ -158,7 +148,7 @@ const createAnalysisTools = (analyzer: TypeAnalyzer) => ({
       package: optionalPackageArg,
     },
     async execute(args) {
-      return json(await run(analyzer.getTypeAtPosition(args.file, args.line, args.column, args.package)))
+      return json(await analyzer.getTypeAtPosition(args.file, args.line, args.column, args.package))
     },
   }),
   type_file: tool({
@@ -171,13 +161,11 @@ const createAnalysisTools = (analyzer: TypeAnalyzer) => ({
     },
     async execute(args) {
       return json(
-        await run(
-          analyzer.getFileDeclarations(args.file, {
-            ...packageOption(args.package),
-            ...optionalOption("symbol", args.symbol),
-            ...optionalOption("includePrivate", args.includePrivate),
-          }),
-        ),
+        await analyzer.getFileDeclarations(args.file, {
+          ...packageOption(args.package),
+          ...optionalOption("symbol", args.symbol),
+          ...optionalOption("includePrivate", args.includePrivate),
+        }),
       )
     },
   }),
@@ -187,12 +175,12 @@ const createAnalysisTools = (analyzer: TypeAnalyzer) => ({
       package: optionalPackageArg,
     },
     async execute(args) {
-      return await run(analyzer.refresh(args.package))
+      return await analyzer.refresh(args.package)
     },
   }),
 })
 
-const createRelationshipTools = (analyzer: TypeAnalyzer) => ({
+const createRelationshipTools = (analyzer: QuartzAnalyzer) => ({
   ...createCompatibilityTools(analyzer),
   ...createGraphTools(analyzer),
   ...createRefactorTools(analyzer),
@@ -201,7 +189,7 @@ const createRelationshipTools = (analyzer: TypeAnalyzer) => ({
   ...createVerifyContractTools(analyzer),
 })
 
-const createCompatibilityTools = (analyzer: TypeAnalyzer) => ({
+const createCompatibilityTools = (analyzer: QuartzAnalyzer) => ({
   type_compatible: tool({
     description: "Check if one type is assignable to another.",
     args: {
@@ -210,12 +198,12 @@ const createCompatibilityTools = (analyzer: TypeAnalyzer) => ({
       package: optionalPackageArg,
     },
     async execute(args) {
-      return json(await run(analyzer.checkCompatibility(args.from, args.to, args.package)))
+      return json(await analyzer.checkCompatibility(args.from, args.to, args.package))
     },
   }),
 })
 
-const createGraphTools = (analyzer: TypeAnalyzer) => ({
+const createGraphTools = (analyzer: QuartzAnalyzer) => ({
   type_graph: tool({
     description: "Generate a type dependency graph as Mermaid or DOT.",
     args: {
@@ -226,19 +214,17 @@ const createGraphTools = (analyzer: TypeAnalyzer) => ({
     },
     async execute(args) {
       return json(
-        await run(
-          analyzer.generateGraph(args.symbol, {
-            ...packageOption(args.package),
-            ...optionalOption("depth", args.depth),
-            ...optionalOption("format", args.format),
-          }),
-        ),
+        await analyzer.generateGraph(args.symbol, {
+          ...packageOption(args.package),
+          ...optionalOption("depth", args.depth),
+          ...optionalOption("format", args.format),
+        }),
       )
     },
   }),
 })
 
-const createRefactorTools = (analyzer: TypeAnalyzer) => ({
+const createRefactorTools = (analyzer: QuartzAnalyzer) => ({
   type_refactor_preview: tool({
     description: "Preview a rename refactor without applying it.",
     args: {
@@ -248,20 +234,18 @@ const createRefactorTools = (analyzer: TypeAnalyzer) => ({
     },
     async execute(args) {
       return json(
-        await run(
-          analyzer.previewRefactor({
-            action: "rename",
-            symbol: args.symbol,
-            to: args.to,
-            ...packageOption(args.package),
-          }),
-        ),
+        await analyzer.previewRefactor({
+          action: "rename",
+          symbol: args.symbol,
+          to: args.to,
+          ...packageOption(args.package),
+        }),
       )
     },
   }),
 })
 
-const createExplanationTools = (analyzer: TypeAnalyzer) => ({
+const createExplanationTools = (analyzer: QuartzAnalyzer) => ({
   type_why_error: tool({
     description: "Explain a TypeScript diagnostic in human terms.",
     args: {
@@ -273,15 +257,13 @@ const createExplanationTools = (analyzer: TypeAnalyzer) => ({
     },
     async execute(args) {
       return json(
-        await run(
-          analyzer.explainError({
-            ...packageOption(args.package),
-            ...optionalOption("code", args.code),
-            ...optionalOption("message", args.message),
-            ...optionalOption("file", args.file),
-            ...optionalOption("line", args.line),
-          }),
-        ),
+        await analyzer.explainError({
+          ...packageOption(args.package),
+          ...optionalOption("code", args.code),
+          ...optionalOption("message", args.message),
+          ...optionalOption("file", args.file),
+          ...optionalOption("line", args.line),
+        }),
       )
     },
   }),
@@ -292,12 +274,12 @@ const createExplanationTools = (analyzer: TypeAnalyzer) => ({
       package: optionalPackageArg,
     },
     async execute(args) {
-      return json(await run(analyzer.explainType(args.expression, args.package)))
+      return json(await analyzer.explainType(args.expression, args.package))
     },
   }),
 })
 
-const createTransformSearchTools = (analyzer: TypeAnalyzer) => ({
+const createTransformSearchTools = (analyzer: QuartzAnalyzer) => ({
   type_transform_search: tool({
     description: "Search for functions by structural input/output type compatibility.",
     args: {
@@ -319,28 +301,26 @@ const createTransformSearchTools = (analyzer: TypeAnalyzer) => ({
       package: optionalPackageArg,
     },
     async execute(args) {
-      return await run(
-        analyzer.transformSearch({
-          ...packageOption(args.package),
-          ...optionalOption("from", args.from),
-          ...optionalOption("to", args.to),
-          ...optionalOption("paramPosition", args.paramPosition),
-          ...optionalOption("unwrapReturn", args.unwrapReturn),
-          ...optionalOption("exportedOnly", args.exportedOnly),
-          ...optionalOption("limit", args.limit),
-          ...optionalOption("allowTypeErasure", args.allowTypeErasure),
-          ...optionalOption("verifiedOnly", args.verifiedOnly),
-          ...optionalOption("minVerificationStatus", args.minVerificationStatus),
-          ...optionalOption("includeDiagnostics", args.includeDiagnostics),
-          ...optionalOption("includeSyntheticCode", args.includeSyntheticCode),
-          ...optionalOption("includeFailedVerification", args.includeFailedVerification),
-        }),
-      )
+      return json(await analyzer.transformSearch({
+        ...packageOption(args.package),
+        ...optionalOption("from", args.from),
+        ...optionalOption("to", args.to),
+        ...optionalOption("paramPosition", args.paramPosition),
+        ...optionalOption("unwrapReturn", args.unwrapReturn),
+        ...optionalOption("exportedOnly", args.exportedOnly),
+        ...optionalOption("limit", args.limit),
+        ...optionalOption("allowTypeErasure", args.allowTypeErasure),
+        ...optionalOption("verifiedOnly", args.verifiedOnly),
+        ...optionalOption("minVerificationStatus", args.minVerificationStatus),
+        ...optionalOption("includeDiagnostics", args.includeDiagnostics),
+        ...optionalOption("includeSyntheticCode", args.includeSyntheticCode),
+        ...optionalOption("includeFailedVerification", args.includeFailedVerification),
+      }))
     },
   }),
 })
 
-const createVerifyContractTools = (analyzer: TypeAnalyzer) => ({
+const createVerifyContractTools = (analyzer: QuartzAnalyzer) => ({
   type_verify_contract: tool({
     description: "Compose compatibility, snippet, diagnostics, and transform evidence for a proposed type contract.",
     args: {
@@ -355,32 +335,29 @@ const createVerifyContractTools = (analyzer: TypeAnalyzer) => ({
     },
     async execute(args) {
       return json(
-        await run(
-          analyzer.verifyContract({
-            ...packageOption(args.package),
-            ...optionalOption("from", args.from),
-            ...optionalOption("to", args.to),
-            ...optionalOption("symbol", args.symbol),
-            ...optionalOption("snippet", args.snippet),
-            ...optionalOption("includeDiagnostics", args.includeDiagnostics),
-            ...optionalOption("includeTransformEvidence", args.includeTransformEvidence),
-            ...optionalOption("transformLimit", args.transformLimit),
-          }),
-        ),
+        await analyzer.verifyContract({
+          ...packageOption(args.package),
+          ...optionalOption("from", args.from),
+          ...optionalOption("to", args.to),
+          ...optionalOption("symbol", args.symbol),
+          ...optionalOption("snippet", args.snippet),
+          ...optionalOption("includeDiagnostics", args.includeDiagnostics),
+          ...optionalOption("includeTransformEvidence", args.includeTransformEvidence),
+          ...optionalOption("transformLimit", args.transformLimit),
+        }),
       )
     },
   }),
 })
 
-const createToolDefinitions = (analyzer: TypeAnalyzer) => ({
+const createToolDefinitions = (analyzer: QuartzAnalyzer) => ({
   ...createDiscoveryTools(analyzer),
   ...createAnalysisTools(analyzer),
   ...createRelationshipTools(analyzer),
 })
 
 export const QuartzPlugin: Plugin = async (ctx) => {
-  const runtime = ManagedRuntime.make(CoreLayer(ctx.directory))
-  const analyzer = runtime.runSync(TypeAnalyzerService)
+  const analyzer = await createTypeAnalyzer(ctx.directory)
   const client = ctx.client as { app?: { log?: (input: unknown) => Promise<unknown> } }
 
   return {
@@ -398,7 +375,7 @@ export const QuartzPlugin: Plugin = async (ctx) => {
     },
     "tool.execute.after": async (input) => {
       if (FILE_MODIFYING_TOOLS.has(input.tool)) {
-        await run(analyzer.markDirty())
+        await analyzer.markDirty()
       }
     },
     tool: createToolDefinitions(analyzer),

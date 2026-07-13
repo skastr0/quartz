@@ -17,12 +17,11 @@
     "README.md"
   ],
   "scripts": {
-    "build": "rm -rf dist && bun build ./src/server.ts --outdir ./dist --target bun --format esm --external @opencode-ai/plugin --external @skastr0/quartz-core --external effect && tsc -p tsconfig.build.json",
+    "build": "rm -rf dist && bun build ./src/server.ts --outdir ./dist --target bun --format esm --external @opencode-ai/plugin --external @skastr0/quartz-engine && tsc -p tsconfig.build.json",
     "prepack": "bun run build"
   },
   "dependencies": {
-    "@skastr0/quartz-core": "0.1.0",
-    "effect": "^3.21.2"
+    "@skastr0/quartz-engine": "0.1.0"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": ">=1.4.0"

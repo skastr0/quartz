@@ -15,7 +15,7 @@
     "install:local": "bun run build && bun link"
   },
   "dependencies": {
-    "@skastr0/quartz-core": "workspace:*",
+    "@skastr0/quartz-engine": "workspace:*",
     "effect": "^3.21.2"
   },
   "license": "MIT",

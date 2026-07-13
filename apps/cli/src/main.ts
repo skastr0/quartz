@@ -2,8 +2,17 @@
 import { mkdir, writeFile } from "node:fs/promises"
 import { isAbsolute, join, relative, resolve } from "node:path"
 import { Either, Effect, JSONSchema, ParseResult, Schema } from "effect"
-import { analysisTypescriptVersionFor, createAnalyzerRuntime, QuartzError, resolveRequestedEngine } from "@skastr0/quartz-core"
-import type { EngineMeta, ListSymbolsOptions, SearchTypesOptions, TypeAnalyzer, VerifyContractOptions } from "@skastr0/quartz-core"
+import {
+  analysisTypeScriptVersion,
+  createTypeAnalyzer,
+  QuartzEngineError,
+} from "@skastr0/quartz-engine"
+import type {
+  ListSymbolsOptions,
+  QuartzAnalyzer,
+  SearchTypesOptions,
+  VerifyContractOptions,
+} from "@skastr0/quartz-engine"
 import { defaultArtifactDirectory, quartzHome, QUARTZ_HOME_ENV } from "./runtime-storage"
 
 const VERSION = "0.1.0"
@@ -215,7 +224,7 @@ class NotFoundError extends Schema.TaggedError<NotFoundError>()("NotFoundError",
   details: Schema.optional(Schema.Unknown),
 }) {}
 
-type CliError = CommandInputError | CommandExecutionError | CommandTimeoutError | NotFoundError | QuartzError
+type CliError = CommandInputError | CommandExecutionError | CommandTimeoutError | NotFoundError | QuartzEngineError
 
 interface ProtocolError {
   readonly type: string
@@ -332,17 +341,17 @@ const packageNameOf = (payload: PayloadWithPackage): string | undefined => paylo
 const rootOf = (payload: PayloadWithRoot): string => payload.root ?? process.cwd()
 const cacheRootOf = (payload: PayloadWithRoot): string => resolve(rootOf(payload))
 interface CachedAnalyzer {
-  readonly analyzer: TypeAnalyzer
-  readonly meta: EngineMeta
+  readonly analyzer: Promise<QuartzAnalyzer>
   readonly dispose: () => Promise<void>
 }
 
 const createCliAnalyzerRuntime = (root: string): CachedAnalyzer => {
-  const runtime = createAnalyzerRuntime(root)
+  const analyzer = createTypeAnalyzer(root)
   return {
-    analyzer: runtime.analyzer,
-    meta: runtime.meta,
-    dispose: runtime.dispose,
+    analyzer,
+    dispose: async () => {
+      await (await analyzer).dispose()
+    },
   }
 }
 
@@ -358,9 +367,22 @@ const runtimeFor = (payload: PayloadWithRoot): CachedAnalyzer => {
   return runtime
 }
 
-const analyzerFor = (payload: PayloadWithRoot): TypeAnalyzer => runtimeFor(payload).analyzer
+const analyzerFor = (payload: PayloadWithRoot): Promise<QuartzAnalyzer> => runtimeFor(payload).analyzer
 
-const engineMetaFor = (payload: PayloadWithRoot): EngineMeta => runtimeFor(payload).meta
+const callAnalyzer = <A>(
+  payload: PayloadWithRoot,
+  operation: (analyzer: QuartzAnalyzer) => Promise<A>,
+): Effect.Effect<A, QuartzEngineError | CommandExecutionError> =>
+  Effect.tryPromise({
+    try: async () => operation(await analyzerFor(payload)),
+    catch: (cause) =>
+      cause instanceof QuartzEngineError
+        ? cause
+        : new CommandExecutionError({
+            message: "Quartz engine operation failed",
+            details: { cause: cause instanceof Error ? cause.message : String(cause), retryable: true },
+          }),
+  })
 
 export const __testing = {
   analyzerFor,
@@ -422,7 +444,7 @@ const commandSpecs = {
     batch: false,
     artifactEligible: false,
     example: { root: "test/fixtures" },
-    execute: (payload: PackagesPayload) => analyzerFor(payload).getPackages(),
+    execute: (payload: PackagesPayload) => callAnalyzer(payload, (analyzer) => analyzer.getPackages()),
     target: (payload: PackagesPayload) => ({ root: rootOf(payload) }),
   } satisfies CommandSpec<PackagesPayload>,
   symbols: {
@@ -439,7 +461,7 @@ const commandSpecs = {
       if (payload.file !== undefined) options.file = payload.file
       if (payload.limit !== undefined) options.limit = payload.limit
       if (payload.package !== undefined) options.packageName = payload.package
-      return analyzerFor(payload).listSymbols(options)
+      return callAnalyzer(payload, (analyzer) => analyzer.listSymbols(options))
     },
     target: (payload: SymbolsPayload) => ({ pattern: payload.pattern, kind: payload.kind, file: payload.file }),
   } satisfies CommandSpec<SymbolsPayload>,
@@ -451,8 +473,7 @@ const commandSpecs = {
     artifactEligible: false,
     example: { root: "test/fixtures", symbol: "User" },
     execute: (payload: SymbolPayload) =>
-      analyzerFor(payload)
-        .getTypeInfo(payload.symbol, packageNameOf(payload))
+      callAnalyzer(payload, (analyzer) => analyzer.getTypeInfo(payload.symbol, packageNameOf(payload)))
         .pipe(Effect.flatMap((value) => requireFound(value, `Symbol not found: ${payload.symbol}`, { symbol: payload.symbol }))),
     target: (payload: SymbolPayload) => ({ symbol: payload.symbol }),
   } satisfies CommandSpec<SymbolPayload>,
@@ -464,8 +485,7 @@ const commandSpecs = {
     artifactEligible: true,
     example: { root: "test/fixtures", symbol: "User" },
     execute: (payload: SymbolPayload) =>
-      analyzerFor(payload)
-        .expandType(payload.symbol, packageNameOf(payload))
+      callAnalyzer(payload, (analyzer) => analyzer.expandType(payload.symbol, packageNameOf(payload)))
         .pipe(Effect.flatMap((value) => requireFound(value, `Symbol not found: ${payload.symbol}`, { symbol: payload.symbol }))),
     target: (payload: SymbolPayload) => ({ symbol: payload.symbol }),
   } satisfies CommandSpec<SymbolPayload>,
@@ -483,7 +503,7 @@ const commandSpecs = {
       if (payload.extends !== undefined) options.extends = payload.extends
       if (payload.limit !== undefined) options.limit = payload.limit
       if (payload.package !== undefined) options.packageName = payload.package
-      return analyzerFor(payload).searchTypes(options)
+      return callAnalyzer(payload, (analyzer) => analyzer.searchTypes(options))
     },
     target: (payload: SearchPayload) => ({
       query: payload.query,
@@ -500,10 +520,10 @@ const commandSpecs = {
     artifactEligible: true,
     example: { root: "test/fixtures", explain: true },
     execute: (payload: DiagnosticsPayload) =>
-      analyzerFor(payload).getDiagnostics({
+      callAnalyzer(payload, (analyzer) => analyzer.getDiagnostics({
         ...packageField(payload),
         explain: payload.explain ?? false,
-      }),
+      })),
     target: (payload: DiagnosticsPayload) => ({ root: rootOf(payload), package: payload.package }),
   } satisfies CommandSpec<DiagnosticsPayload>,
   "at-position": {
@@ -514,8 +534,7 @@ const commandSpecs = {
     artifactEligible: false,
     example: { root: "test/fixtures", file: "types/basic.ts", line: 9, column: 3 },
     execute: (payload: AtPositionPayload) =>
-      analyzerFor(payload)
-        .getTypeAtPosition(payload.file, payload.line, payload.column, packageNameOf(payload))
+      callAnalyzer(payload, (analyzer) => analyzer.getTypeAtPosition(payload.file, payload.line, payload.column, packageNameOf(payload)))
         .pipe(
           Effect.flatMap((value) =>
             requireFound(value, `No source node found at ${payload.file}:${payload.line}:${payload.column}`, {
@@ -535,8 +554,7 @@ const commandSpecs = {
     artifactEligible: false,
     example: { root: "test/fixtures", symbol: "User" },
     execute: (payload: SymbolPayload) =>
-      analyzerFor(payload)
-        .findRelated(payload.symbol, packageNameOf(payload))
+      callAnalyzer(payload, (analyzer) => analyzer.findRelated(payload.symbol, packageNameOf(payload)))
         .pipe(Effect.flatMap((value) => requireFound(value, `Symbol not found: ${payload.symbol}`, { symbol: payload.symbol }))),
     target: (payload: SymbolPayload) => ({ symbol: payload.symbol }),
   } satisfies CommandSpec<SymbolPayload>,
@@ -547,7 +565,7 @@ const commandSpecs = {
     batch: true,
     artifactEligible: false,
     example: { root: "test/fixtures", expression: "Pick<User, \"id\" | \"name\">" },
-    execute: (payload: EvalPayload) => analyzerFor(payload).evalType(payload.expression, packageNameOf(payload)),
+    execute: (payload: EvalPayload) => callAnalyzer(payload, (analyzer) => analyzer.evalType(payload.expression, packageNameOf(payload))),
     target: (payload: EvalPayload) => ({ expression: payload.expression }),
   } satisfies CommandSpec<EvalPayload>,
   "check-snippet": {
@@ -557,7 +575,7 @@ const commandSpecs = {
     batch: true,
     artifactEligible: false,
     example: { root: "test/fixtures", code: "const x: string = 42;" },
-    execute: (payload: CheckSnippetPayload) => analyzerFor(payload).checkSnippet(payload.code, packageNameOf(payload)),
+    execute: (payload: CheckSnippetPayload) => callAnalyzer(payload, (analyzer) => analyzer.checkSnippet(payload.code, packageNameOf(payload))),
     target: () => ({ kind: "snippet" }),
   } satisfies CommandSpec<CheckSnippetPayload>,
   file: {
@@ -568,12 +586,11 @@ const commandSpecs = {
     artifactEligible: true,
     example: { root: "test/fixtures", file: "types/basic.ts", includePrivate: false },
     execute: (payload: FilePayload) =>
-      analyzerFor(payload)
-        .getFileDeclarations(payload.file, {
-          ...packageField(payload),
-          ...(payload.symbol === undefined ? {} : { symbol: payload.symbol }),
-          includePrivate: payload.includePrivate ?? false,
-        })
+      callAnalyzer(payload, (analyzer) => analyzer.getFileDeclarations(payload.file, {
+        ...packageField(payload),
+        ...(payload.symbol === undefined ? {} : { symbol: payload.symbol }),
+        includePrivate: payload.includePrivate ?? false,
+      }))
         .pipe(Effect.flatMap((value) => requireFound(value, `File not found: ${payload.file}`, { file: payload.file }))),
     target: (payload: FilePayload) => ({ file: payload.file }),
   } satisfies CommandSpec<FilePayload>,
@@ -585,7 +602,7 @@ const commandSpecs = {
     artifactEligible: false,
     example: { root: "test/fixtures", from: "ExtendedUser", to: "User" },
     execute: (payload: CompatiblePayload) =>
-      analyzerFor(payload).checkCompatibility(payload.from, payload.to, packageNameOf(payload)),
+      callAnalyzer(payload, (analyzer) => analyzer.checkCompatibility(payload.from, payload.to, packageNameOf(payload))),
     target: (payload: CompatiblePayload) => ({ from: payload.from, to: payload.to }),
   } satisfies CommandSpec<CompatiblePayload>,
   graph: {
@@ -596,12 +613,11 @@ const commandSpecs = {
     artifactEligible: true,
     example: { root: "test/fixtures", symbol: "ExtendedUser", depth: 2, format: "mermaid" },
     execute: (payload: GraphPayload) =>
-      analyzerFor(payload)
-        .generateGraph(payload.symbol, {
-          ...packageField(payload),
-          depth: payload.depth ?? 2,
-          format: payload.format ?? "mermaid",
-        })
+      callAnalyzer(payload, (analyzer) => analyzer.generateGraph(payload.symbol, {
+        ...packageField(payload),
+        depth: payload.depth ?? 2,
+        format: payload.format ?? "mermaid",
+      }))
         .pipe(Effect.flatMap((value) => requireFound(value, `Symbol not found: ${payload.symbol}`, { symbol: payload.symbol }))),
     target: (payload: GraphPayload) => ({ symbol: payload.symbol }),
   } satisfies CommandSpec<GraphPayload>,
@@ -613,12 +629,12 @@ const commandSpecs = {
     artifactEligible: true,
     example: { root: "test/fixtures", symbol: "RefactorUser", to: "RenamedUser" },
     execute: (payload: RefactorPreviewPayload) =>
-      analyzerFor(payload).previewRefactor({
+      callAnalyzer(payload, (analyzer) => analyzer.previewRefactor({
         action: "rename",
         symbol: payload.symbol,
         to: payload.to,
         ...packageField(payload),
-      }),
+      })),
     target: (payload: RefactorPreviewPayload) => ({ symbol: payload.symbol, to: payload.to }),
   } satisfies CommandSpec<RefactorPreviewPayload>,
   "why-error": {
@@ -635,14 +651,13 @@ const commandSpecs = {
     execute: (payload: WhyErrorPayload) =>
       requireAnyField(payload, ["code", "message"], "Provide a TypeScript diagnostic code or message.").pipe(
         Effect.flatMap(() =>
-          analyzerFor(payload)
-            .explainError({
-              ...packageField(payload),
-              ...(payload.code === undefined ? {} : { code: payload.code }),
-              ...(payload.message === undefined ? {} : { message: payload.message }),
-              ...(payload.file === undefined ? {} : { file: payload.file }),
-              ...(payload.line === undefined ? {} : { line: payload.line }),
-            })
+          callAnalyzer(payload, (analyzer) => analyzer.explainError({
+            ...packageField(payload),
+            ...(payload.code === undefined ? {} : { code: payload.code }),
+            ...(payload.message === undefined ? {} : { message: payload.message }),
+            ...(payload.file === undefined ? {} : { file: payload.file }),
+            ...(payload.line === undefined ? {} : { line: payload.line }),
+          }))
             .pipe(Effect.flatMap((value) => requireFound(value, "Diagnostic could not be explained", { code: payload.code }))),
         ),
       ),
@@ -655,7 +670,7 @@ const commandSpecs = {
     batch: true,
     artifactEligible: true,
     example: { root: "test/fixtures", expression: "Pick<User, \"id\" | \"name\">" },
-    execute: (payload: EvalPayload) => analyzerFor(payload).explainType(payload.expression, packageNameOf(payload)),
+    execute: (payload: EvalPayload) => callAnalyzer(payload, (analyzer) => analyzer.explainType(payload.expression, packageNameOf(payload))),
     target: (payload: EvalPayload) => ({ expression: payload.expression }),
   } satisfies CommandSpec<EvalPayload>,
   "transform-search": {
@@ -701,7 +716,7 @@ const commandSpecs = {
               : { includeFailedVerification: payload.includeFailedVerification }),
             ...(payload.limit === undefined ? {} : { limit: payload.limit }),
           }
-          return analyzerFor(payload).transformSearch(options)
+          return callAnalyzer(payload, (analyzer) => analyzer.transformSearch(options))
         }),
     ),
     target: (payload: TransformSearchPayload) => ({ from: payload.from, to: payload.to }),
@@ -734,7 +749,7 @@ const commandSpecs = {
               : { includeTransformEvidence: payload.includeTransformEvidence }),
             ...(payload.transformLimit === undefined ? {} : { transformLimit: payload.transformLimit }),
           }
-          return analyzerFor(payload).verifyContract(options)
+          return callAnalyzer(payload, (analyzer) => analyzer.verifyContract(options))
         }),
       ),
     target: (payload: VerifyContractPayload) => ({ from: payload.from, to: payload.to, symbol: payload.symbol }),
@@ -746,16 +761,17 @@ const commandSpecs = {
     batch: false,
     artifactEligible: false,
     example: { root: "test/fixtures" },
-    execute: (payload: DoctorPayload) => {
-      const meta = engineMetaFor(payload)
-      return analyzerFor(payload).getPackages().pipe(
-        Effect.map((packages) => ({
+    execute: (payload: DoctorPayload) =>
+      callAnalyzer(payload, async (analyzer) => ({
+        metadata: analyzer.metadata,
+        packages: await analyzer.getPackages(),
+      })).pipe(
+        Effect.map(({ metadata, packages }) => ({
           version: VERSION,
-          engine: meta.engine,
-          requested_engine: meta.requestedEngine,
-          analysis_typescript_version: meta.analysisTypescriptVersion,
-          engine_fallback: meta.fellBack,
-          ...(meta.fallbackReason === undefined ? {} : { engine_fallback_reason: meta.fallbackReason }),
+          engine: "native",
+          requested_engine: "native",
+          analysis_typescript_version: metadata.analysisTypescriptVersion,
+          engine_fallback: false,
           root: rootOf(payload),
           ok: true,
           package_count: packages.length,
@@ -768,8 +784,7 @@ const commandSpecs = {
             install: "bun run cli:install-local",
           },
         })),
-      )
-    },
+      ),
     target: (payload: DoctorPayload) => ({ root: rootOf(payload) }),
   } satisfies CommandSpec<DoctorPayload>,
 }
@@ -1257,8 +1272,8 @@ const writeArtifact = (
 const capabilities = () => ({
   name: "quartz",
   version: VERSION,
-  engine: resolveRequestedEngine(),
-  analysis_typescript_version: analysisTypescriptVersionFor(resolveRequestedEngine()),
+  engine: "native",
+  analysis_typescript_version: analysisTypeScriptVersion,
   protocol: "agentic-cli/v1",
   input_modes: ["inline JSON", "@file", "stdin (-)"],
   execution_flags: {
