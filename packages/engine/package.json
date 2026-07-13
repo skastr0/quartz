@@ -1,0 +1,38 @@
+{
+  "name": "@skastr0/quartz-engine",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && bun build ./src/index.ts --outdir ./dist --target bun --format esm --external typescript && tsc -p tsconfig.build.json",
+    "prepack": "bun run build"
+  },
+  "dependencies": {
+    "typescript": "7.1.0-dev.20260711.1"
+  },
+  "license": "MIT",
+  "description": "Persistent TypeScript 7 native workspace engine for Quartz.",
+  "keywords": [
+    "quartz",
+    "typescript",
+    "type-analysis",
+    "code-intelligence"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/skastr0/quartz.git",
+    "directory": "packages/engine"
+  }
+}
