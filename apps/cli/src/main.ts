@@ -21,12 +21,12 @@ const AUTO_ARTIFACT_THRESHOLD_BYTES = 8_000
 
 const fitnessChecks = [
   {
-    name: "Effect rewrite structure",
-    command: "bun run verify:effect-rewrite",
+    name: "Native engine behavior",
+    command: "bunx vitest run test/engine-*.test.ts",
     protects: [
-      "core internals do not regain Effect.runPromise",
-      "old analyzer/project manager path stays deleted",
-      "runtime ownership remains at CLI/plugin edges",
+      "persistent workspace lifecycle and refresh semantics",
+      "compiler-native analysis, references, transforms, and verification",
+      "package selection, virtual files, and disposal",
     ],
   },
   {
@@ -51,7 +51,7 @@ const fitnessChecks = [
     name: "Regression guard",
     command: "bun run verify:regression-guard",
     protects: [
-      "effect rewrite, docs examples, CLI/plugin wrapper tests, refactor coverage, transform-search coverage, and property-style invariants run together",
+      "native engine, docs examples, CLI/plugin wrappers, and property-style invariants run together",
       "agent-facing behavior remains covered by a single guard command",
     ],
   },
@@ -387,8 +387,8 @@ const callAnalyzer = <A>(
 export const __testing = {
   analyzerFor,
   cacheRootOf,
-  clearAnalyzerCache: () => {
-    for (const runtime of analyzersByRoot.values()) void runtime.dispose()
+  clearAnalyzerCache: async () => {
+    await Promise.all([...analyzersByRoot.values()].map((runtime) => runtime.dispose()))
     analyzersByRoot.clear()
   },
   analyzerCacheSize: () => analyzersByRoot.size,
@@ -769,9 +769,7 @@ const commandSpecs = {
         Effect.map(({ metadata, packages }) => ({
           version: VERSION,
           engine: "native",
-          requested_engine: "native",
           analysis_typescript_version: metadata.analysisTypescriptVersion,
-          engine_fallback: false,
           root: rootOf(payload),
           ok: true,
           package_count: packages.length,

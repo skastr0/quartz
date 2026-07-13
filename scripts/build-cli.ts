@@ -38,7 +38,7 @@ await rm(DIST_DIR, { recursive: true, force: true })
 await mkdir(DIST_DIR, { recursive: true })
 
 console.log("\nBuilding workspace packages...")
-await run("Building core package", ["bun", "run", "core:build"])
+await run("Building engine package", ["bun", "run", "engine:build"])
 await run("Building CLI package", ["bun", "run", "cli:build"])
 
 console.log(`\nCompiling quartz CLI v${version} binaries...`)

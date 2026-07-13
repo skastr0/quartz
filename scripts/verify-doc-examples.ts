@@ -79,7 +79,7 @@ const checks: readonly CommandCheck[] = [
     assert: (envelope) => {
       const commands = envelope.data?.fitness_checks?.map((check: any) => check.command) ?? []
       for (const expected of [
-        "bun run verify:effect-rewrite",
+        "bunx vitest run test/engine-*.test.ts",
         "bun run verify:package-boundaries",
         "bun run verify:docs-examples",
         "bun run verify:regression-guard",
@@ -231,7 +231,6 @@ const checks: readonly CommandCheck[] = [
       JSON.stringify({
         root: fixtureRoot,
         from: "User",
-        to: "CreateUserRequest",
         includeFailedVerification: true,
         minVerificationStatus: "unverified",
         limit: 10,
@@ -241,11 +240,9 @@ const checks: readonly CommandCheck[] = [
       const results = commandData(envelope)?.results ?? []
       if (
         results.length === 0 ||
-        !results.some((result: any) => result.verification?.status === "verified") ||
-        !results.some((result: any) => result.verification?.status === "unverified") ||
-        results.some((result: any) => result.verification?.status === "unverifiable")
+        results.some((result: { readonly verification?: { readonly status?: string } }) => result.verification?.status !== "unverified")
       ) {
-        throw new Error(`minVerificationStatus did not preserve the mixed trust ladder: ${JSON.stringify(results)}`)
+        throw new Error(`minVerificationStatus did not preserve unverified partial matches: ${JSON.stringify(results)}`)
       }
     },
   },

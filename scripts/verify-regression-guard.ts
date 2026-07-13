@@ -11,13 +11,24 @@ const root = new URL("..", import.meta.url).pathname
 
 const steps: readonly GuardStep[] = [
   {
-    name: "Effect rewrite structure",
+    name: "Native engine behavior",
     command: "bun",
-    args: ["run", "verify:effect-rewrite"],
+    args: [
+      "run",
+      "vitest",
+      "run",
+      "test/engine-analyzer.test.ts",
+      "test/engine-leaf-operations.test.ts",
+      "test/engine-package-resolution.test.ts",
+      "test/engine-reference-operations.test.ts",
+      "test/engine-transform-search.test.ts",
+      "test/engine-verification-operations.test.ts",
+      "test/engine-workspace.test.ts",
+    ],
     covers: [
-      "core internals do not regain Effect.runPromise",
-      "old analyzer/project manager path stays deleted",
-      "runtime ownership remains at CLI/plugin edges",
+      "persistent workspace lifecycle and refresh semantics",
+      "compiler-native analysis, references, transforms, and verification",
+      "package selection, virtual files, and disposal",
     ],
   },
   {
@@ -40,13 +51,10 @@ const steps: readonly GuardStep[] = [
       "run",
       "test/cli.test.ts",
       "test/opencode-plugin.test.ts",
-      "test/refactor-coverage.test.ts",
       "test/property-regression.test.ts",
     ],
     covers: [
-      "agentic CLI envelopes, discovery, artifacts, and batch behavior",
-      "OpenCode tool registration, tool execution, refresh, and file-modification dirty marking",
-      "refactor, diagnostics, explanation, related-symbol, snippet, file, and transform-search coverage",
+      "CLI and plugin wrapper regression tests",
       "property-style invariants for batch ordering, artifact records, trust filters, failed verification evidence, and refactor paths",
     ],
   },

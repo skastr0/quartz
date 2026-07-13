@@ -14,7 +14,7 @@
     "verbatimModuleSyntax": true,
     "ignoreDeprecations": "6.0",
     "paths": {
-      "@skastr0/quartz-core": ["./packages/core/src/index.ts"]
+    "@skastr0/quartz-engine": ["./packages/engine/src/index.ts"]
     }
   },
   "include": ["apps/**/*.ts", "packages/**/*.ts", "scripts/**/*.ts", "test/**/*.ts", "vitest.config.ts"]

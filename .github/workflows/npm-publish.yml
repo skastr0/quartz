@@ -42,7 +42,7 @@ jobs:
           set -euo pipefail
 
           for package_dir in \
-            packages/core \
+            packages/engine \
             apps/opencode-plugin \
             packages/npm/quartz-darwin-arm64 \
             packages/npm/quartz-darwin-x64 \
@@ -59,7 +59,7 @@ jobs:
           set -euo pipefail
 
           for package_dir in \
-            packages/core \
+            packages/engine \
             apps/opencode-plugin \
             packages/npm/quartz-darwin-arm64 \
             packages/npm/quartz-darwin-x64 \

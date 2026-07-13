@@ -1,10 +1,45 @@
-import { resolve } from "node:path"
+import { existsSync } from "node:fs"
+import { createRequire } from "node:module"
+import { dirname, join, resolve } from "node:path"
+import { pathToFileURL } from "node:url"
 import { version } from "typescript"
 import { API, type Project, type Snapshot } from "typescript/unstable/async"
 import { QuartzEngineError } from "./errors"
 import { createHybridFileSystem, type HybridFileSystem } from "./filesystem"
 import { collectDiagnostics } from "./diagnostics"
 import type { EngineDiagnostic, WorkspaceFileChanges, WorkspaceMetadata, WorkspaceOptions } from "./types"
+
+const resolveTypeScriptExecutable = (): string => {
+  const platformPackage = `@typescript/typescript-${process.platform}-${process.arch}`
+  const executableName = process.platform === "win32" ? "tsc.exe" : "tsc"
+  const executableBase = pathToFileURL(join(dirname(process.execPath), "__quartz_resolver.cjs")).href
+  const resolvers = [createRequire(import.meta.url), createRequire(executableBase)]
+
+  for (const resolver of resolvers) {
+    const packageJsonCandidates: string[] = []
+    try {
+      const typescriptPackageJson = resolver.resolve("typescript/package.json")
+      packageJsonCandidates.push(createRequire(pathToFileURL(typescriptPackageJson)).resolve(`${platformPackage}/package.json`))
+    } catch {
+      // A compiled Quartz binary does not expose the bundled TypeScript package.
+    }
+    try {
+      packageJsonCandidates.push(resolver.resolve(`${platformPackage}/package.json`))
+    } catch {
+      // Continue to the next resolver base.
+    }
+
+    for (const packageJson of packageJsonCandidates) {
+      const executable = join(dirname(packageJson), "lib", executableName)
+      if (existsSync(executable)) return executable
+    }
+  }
+
+  throw new QuartzEngineError(
+    "WORKSPACE_OPEN_FAILED",
+    `Unable to resolve ${platformPackage}. Reinstall Quartz with platform dependencies enabled.`,
+  )
+}
 
 interface RevisionState {
   readonly snapshot: Snapshot
@@ -67,8 +102,8 @@ export class QuartzWorkspace {
     const api = new API({
       cwd: resolvedRoot,
       fs: fileSystem,
+      tsserverPath: options.tsserverPath ?? resolveTypeScriptExecutable(),
       ...(options.collectTiming === undefined ? {} : { collectTiming: options.collectTiming }),
-      ...(options.tsserverPath === undefined ? {} : { tsserverPath: options.tsserverPath }),
     })
 
     try {
@@ -150,7 +185,7 @@ export class QuartzWorkspace {
           }
           state.readers += 1
           this.#current = state
-          void this.#retire(previous)
+          this.#retire(previous)
           return { state, project }
         })
         leasedState = acquired.state
@@ -166,7 +201,7 @@ export class QuartzWorkspace {
               })
               const next = createRevisionState(snapshot, previous.revision + 1)
               this.#current = next
-              void this.#retire(previous)
+              this.#retire(previous)
             })
           }
         } finally {
@@ -205,7 +240,7 @@ export class QuartzWorkspace {
         }
 
         this.#current = createRevisionState(snapshot, previous.revision + 1)
-        void this.#retire(previous)
+        this.#retire(previous)
         return this.metadata
       } catch (cause) {
         if (cause instanceof QuartzEngineError) throw cause
@@ -222,7 +257,7 @@ export class QuartzWorkspace {
       await this.#enqueueMutation(async () => {
         const current = this.#current
         this.#current = null
-        if (current !== null) await this.#retire(current)
+        if (current !== null) this.#retire(current)
         await Promise.all([...this.#retirements])
         await this.#api.close()
         this.#closed = true
@@ -280,18 +315,17 @@ export class QuartzWorkspace {
   }
 
 
-  #retire(state: RevisionState): Promise<void> {
-    if (state.disposePromise !== null) return state.disposePromise
+  #retire(state: RevisionState): void {
+    if (state.disposePromise !== null) return
     state.retired = true
     if (state.readers === 0) state.drained.resolve()
     const retirement = state.drained.promise.then(() => state.snapshot.dispose())
     state.disposePromise = retirement
     this.#retirements.add(retirement)
-    void retirement.then(
+    retirement.then(
       () => this.#retirements.delete(retirement),
       () => this.#retirements.delete(retirement),
     )
-    return retirement
   }
 
   #assertAcceptingWork(): void {

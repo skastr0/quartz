@@ -10,7 +10,7 @@ Quartz is experimental. The CLI protocol, package exports, plugin tool surface, 
 
 | Artifact | Status | Channel |
 | --- | --- | --- |
-| `@skastr0/quartz-core` | publishable | npm |
+| `@skastr0/quartz-engine` | publishable | npm |
 | `@skastr0/quartz-opencode-plugin` | publishable | npm |
 | `@skastr0/quartz` npm CLI wrapper | publishable | npm |
 | `@skastr0/quartz-darwin-arm64` | publishable | npm optional platform package |
@@ -71,7 +71,7 @@ Local `npm publish` is a bootstrap exception only when the maintainer explicitly
 
 After the packages exist on npm, configure npm trusted publishers for:
 
-- `@skastr0/quartz-core`
+- `@skastr0/quartz-engine`
 - `@skastr0/quartz-opencode-plugin`
 - `@skastr0/quartz-darwin-arm64`
 - `@skastr0/quartz-darwin-x64`
@@ -91,17 +91,17 @@ Before dispatching `.github/workflows/release-binaries.yml`:
 - confirm `CHANGELOG.md` has the intended release notes
 - confirm the GitHub `release` environment requires approval
 
-The workflow builds `darwin-x64`, `darwin-arm64`, `linux-x64`, and `linux-arm64` standalone binaries and creates a draft GitHub Release with `SHA256SUMS`.
+The workflow builds `darwin-x64`, `darwin-arm64`, `linux-x64`, and `linux-arm64` CLI binaries and creates a draft GitHub Release with `SHA256SUMS`. The npm platform packages are the self-contained install lane because each declares the matching TypeScript native executable dependency.
 
 Create the `release` environment with maintainer approval, require reviewer approval, and restrict it to release tags before any publish workflow is dispatched.
 
 ## Publish Order
 
-`@skastr0/quartz-core` publishes before `@skastr0/quartz-opencode-plugin` because the plugin depends on the exact core package version. The platform CLI packages publish before `@skastr0/quartz` because the main CLI package lists them as optional dependencies. The publish workflows use explicit local package paths such as `npm publish "./packages/core" --access public` so npm cannot interpret workspace paths as remote package specs. They skip package versions that already exist so a partially completed first release can be resumed from the same commit.
+`@skastr0/quartz-engine` publishes before `@skastr0/quartz-opencode-plugin` because the plugin depends on the exact engine package version. The platform CLI packages publish before `@skastr0/quartz` because the main CLI package lists them as optional dependencies. Each platform package also depends on the matching `@typescript/typescript-<platform>-<arch>` executable used by the native engine. The publish workflows use explicit local package paths such as `npm publish "./packages/engine" --access public` so npm cannot interpret workspace paths as remote package specs. They skip package versions that already exist so a partially completed first release can be resumed from the same commit.
 
 Publish order:
 
-1. `packages/core`
+1. `packages/engine`
 2. `apps/opencode-plugin`
 3. `packages/npm/quartz-darwin-arm64`
 4. `packages/npm/quartz-darwin-x64`

@@ -109,12 +109,25 @@ describe("native engine transform search", () => {
     const response = await search({ from: "UserInput", to: "CreateUserReturn", paramPosition: "any", verifiedOnly: true })
     const createUser = response.results.find((result) => result.name === "createUser")
     expect(createUser?.matchDetails.toMatch).toMatchObject({ queryType: "CreateUserReturn", exact: false })
-    expect(createUser?.verification).toMatchObject({ status: "verified", method: "assignability_only" })
+    expect(createUser?.verification).toMatchObject({ status: "verified", method: "synthetic" })
   })
 
-  it("rejects unsupported evidence options instead of echoing them as implemented", async () => {
-    await expect(search({ from: "User", includeDiagnostics: true })).rejects.toThrow(/evidence options are not supported/)
-    await expect(search({ from: "User", includeSyntheticCode: true })).rejects.toThrow(/evidence options are not supported/)
-    await expect(search({ from: "User", includeFailedVerification: true })).rejects.toThrow(/evidence options are not supported/)
+  it("returns requested synthetic verification evidence", async () => {
+    const response = await search({
+      from: "User",
+      to: "UserDTO",
+      includeDiagnostics: true,
+      includeSyntheticCode: true,
+      includeFailedVerification: true,
+    })
+    const toDTO = response.results.find((result) => result.name === "toDTO")
+
+    expect(toDTO?.verification).toMatchObject({
+      status: "verified",
+      method: "synthetic",
+      reason: "synthetic_check_passed",
+      syntheticCode: expect.stringContaining("toDTO(__input)"),
+    })
+    expect(toDTO?.verification.diagnostics).toBeUndefined()
   })
 })

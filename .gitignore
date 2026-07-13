@@ -5,3 +5,4 @@ coverage
 .quartz/
 .taste-codec/cache
 packages/npm/quartz-*/bin/
+.atlas/

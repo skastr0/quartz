@@ -26,5 +26,8 @@
     "bin",
     "README.md",
     "LICENSE"
-  ]
+  ],
+  "dependencies": {
+    "@typescript/typescript-darwin-arm64": "7.1.0-dev.20260711.1"
+  }
 }

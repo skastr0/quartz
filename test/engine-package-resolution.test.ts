@@ -85,9 +85,9 @@ describe("AnalyzerContext package resolution", () => {
     try {
       expect(() => context.package()).toThrowError(/Multiple packages found/)
       expect(() => context.package("")).toThrowError(/Multiple packages found/)
-      expect(() => createLeafOperations(context).listSymbols()).toThrowError(
-        expect.objectContaining({ code: "WORKSPACE_OPEN_FAILED" }),
-      )
+      await expect(createLeafOperations(context).listSymbols()).rejects.toMatchObject({
+        code: "WORKSPACE_OPEN_FAILED",
+      })
     } finally {
       await context.close()
     }

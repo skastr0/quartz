@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -54,20 +54,19 @@ const main = async (): Promise<void> => {
 
   try {
     await run(
-      "core export map",
+      "engine export map",
       [
         "bun",
         "-e",
         [
-          'import { CoreLayer, TypeAnalyzerService } from "@skastr0/quartz-core";',
-          'import { discoverPackages } from "@skastr0/quartz-core/discovery";',
-          'import type { GraphResult, RefactorPreviewResult } from "@skastr0/quartz-core";',
+          'import { createTypeAnalyzer, analysisTypeScriptVersion } from "@skastr0/quartz-engine";',
+          'import type { GraphResult, RefactorPreviewResult } from "@skastr0/quartz-engine";',
           "const _graph: GraphResult | null = null;",
           "const _refactor: RefactorPreviewResult | null = null;",
-          "console.log(typeof CoreLayer, typeof TypeAnalyzerService, typeof discoverPackages, _graph, _refactor);",
+          "console.log(typeof createTypeAnalyzer, analysisTypeScriptVersion, _graph, _refactor);",
         ].join(" "),
       ],
-      join(root, "packages/core"),
+      join(root, "packages/engine"),
     )
 
     await run(
@@ -84,14 +83,9 @@ const main = async (): Promise<void> => {
       join(root, "apps/opencode-plugin"),
     )
 
-    await verifyPack("@skastr0/quartz-core", join(root, "packages/core"), destination, [
+    await verifyPack("@skastr0/quartz-engine", join(root, "packages/engine"), destination, [
       "dist/index.js",
       "dist/index.d.ts",
-      "dist/discovery.js",
-      "dist/discovery.d.ts",
-      "dist/project-types.js",
-      "dist/project-types.d.ts",
-      "README.md",
       "LICENSE",
     ])
     await verifyPack("@skastr0/quartz-cli", join(root, "apps/cli"), destination, ["dist/main.js"])
@@ -101,6 +95,21 @@ const main = async (): Promise<void> => {
       "README.md",
       "LICENSE",
     ])
+
+    const platformDependencies = {
+      "quartz-darwin-arm64": "@typescript/typescript-darwin-arm64",
+      "quartz-darwin-x64": "@typescript/typescript-darwin-x64",
+      "quartz-linux-arm64": "@typescript/typescript-linux-arm64",
+      "quartz-linux-x64": "@typescript/typescript-linux-x64",
+    } as const
+    for (const [packageDirectory, dependency] of Object.entries(platformDependencies)) {
+      const manifest = JSON.parse(
+        await readFile(join(root, "packages/npm", packageDirectory, "package.json"), "utf8"),
+      ) as { readonly dependencies?: Readonly<Record<string, string>> }
+      if (manifest.dependencies?.[dependency] !== "7.1.0-dev.20260711.1") {
+        throw new Error(`${packageDirectory} must depend on ${dependency}@7.1.0-dev.20260711.1`)
+      }
+    }
 
     await run("npm CLI package build", ["bun", "run", "build:npm-cli"])
     await verifyPack("@skastr0/quartz-darwin-arm64", join(root, "packages/npm/quartz-darwin-arm64"), destination, [

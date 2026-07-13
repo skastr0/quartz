@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import { join, relative } from "node:path"
 import { spawnSync } from "node:child_process"
-import { describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it } from "vitest"
 import { fixturesPath } from "./helpers/analyzer"
 import { __testing } from "../apps/cli/src/main"
 
@@ -20,9 +20,13 @@ const runCli = (args: readonly string[], input?: string, env: NodeJS.ProcessEnv 
 const parse = (text: string) => JSON.parse(text) as Record<string, any>
 const cliTestTimeout = 20_000
 
+afterEach(async () => {
+  await __testing.clearAnalyzerCache()
+})
+
 describe("agentic CLI protocol", () => {
-  it("reuses analyzers by normalized root without changing payload-facing roots", () => {
-    __testing.clearAnalyzerCache()
+  it("reuses analyzers by normalized root without changing payload-facing roots", async () => {
+    await __testing.clearAnalyzerCache()
 
     const first = __testing.analyzerFor({ root: "test/fixtures" })
     const second = __testing.analyzerFor({ root: "./test/fixtures" })
@@ -246,7 +250,7 @@ describe("agentic CLI protocol", () => {
         ok: true,
         package_count: 1,
         fitness_checks: expect.arrayContaining([
-          expect.objectContaining({ command: "bun run verify:effect-rewrite" }),
+          expect.objectContaining({ command: "bunx vitest run test/engine-*.test.ts" }),
           expect.objectContaining({ command: "bun run verify:package-boundaries" }),
           expect.objectContaining({ command: "bun run verify:docs-examples" }),
           expect.objectContaining({ command: "bun run verify:regression-guard" }),

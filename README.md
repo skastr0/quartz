@@ -1,6 +1,6 @@
 # quartz
 
-Generic TypeScript type-analysis core, an agent-native CLI, and a thin OpenCode plugin app.
+Compiler-native TypeScript analysis engine, an agent-native CLI, and a thin OpenCode plugin.
 
 Quartz is built for agents that need to inspect TypeScript projects without scraping editor UI or guessing from text search. It answers questions about packages, exported symbols, type expansion, diagnostics, snippets, source positions, compatibility, dependency graphs, refactor previews, and structural transform candidates.
 
@@ -10,7 +10,7 @@ Experimental. Quartz is usable for local agent workflows, but the CLI protocol, 
 
 ## Layout
 
-- `packages/core`: reusable type-analysis behavior, independent of OpenCode.
+- `packages/engine`: persistent TypeScript 7 native workspace and public analysis API.
 - `apps/cli`: Effect-powered CLI protocol for agents and scripts.
 - `apps/opencode-plugin`: OpenCode-specific tool registration, event hooks, logging, and session context behavior.
 
@@ -18,12 +18,12 @@ Experimental. Quartz is usable for local agent workflows, but the CLI protocol, 
 
 The repository is prepared for these release lanes:
 
-- `@skastr0/quartz-core`: npm package with built ESM output and TypeScript declarations.
+- `@skastr0/quartz-engine`: npm package with built ESM output and TypeScript declarations.
 - `@skastr0/quartz-opencode-plugin`: npm package with built ESM output and TypeScript declarations.
 - `@skastr0/quartz`: npm CLI wrapper with per-platform prebuilt binary packages for `npx`, `bunx`, and `pnpm dlx`.
 - `quartz`: standalone CLI binaries for GitHub Releases.
 
-The workspace root and `@skastr0/quartz-cli` source app stay private and are not published. The public npm CLI package is `@skastr0/quartz`, which exposes the `quartz` command through a Node launcher and optional platform binary packages.
+The workspace root and `@skastr0/quartz-cli` source app stay private and are not published. The public npm CLI package is `@skastr0/quartz`, which exposes the `quartz` command through a Node launcher and optional platform binary packages. Every platform package carries the matching TypeScript native executable required by the engine.
 
 After the first npm release:
 

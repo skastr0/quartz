@@ -1,12 +1,10 @@
 import { spawnSync } from "node:child_process"
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { isAbsolute, join, relative, resolve } from "node:path"
-import { Effect } from "effect"
-import { Project } from "ts-morph"
+import { isAbsolute, join, relative } from "node:path"
 import { describe, expect, it } from "vitest"
-import { createFixtureAnalyzer, fixturesPath } from "./helpers/analyzer"
-import { TransformSearchEngine, type VerificationStatus } from "../packages/core/src/transform-search"
+import { createTypeAnalyzer, type VerificationStatus } from "@skastr0/quartz-engine"
+import { fixturesPath } from "./helpers/analyzer"
 
 const repoRoot = join(fixturesPath, "..", "..")
 const cliEntry = "apps/cli/src/main.ts"
@@ -63,19 +61,6 @@ const expectExampleData = (command: string, data: Record<string, any>) => {
   }
 }
 
-const createProject = (root: string): Project => {
-  const project = new Project({
-    tsConfigFilePath: join(root, "tsconfig.json"),
-  })
-  project.addSourceFilesAtPaths(join(root, "**/*.ts"))
-  return project
-}
-
-const createTransformEngine = (root: string): TransformSearchEngine => {
-  const project = createProject(root)
-  const sourceFiles = project.getSourceFiles().filter((sourceFile) => !sourceFile.isInNodeModules())
-  return new TransformSearchEngine(project, root, sourceFiles)
-}
 
 describe("property-style regression invariants", () => {
   it("preserves batch result ordering across payload families and concurrency settings", () => {
@@ -179,34 +164,38 @@ describe("property-style regression invariants", () => {
     }
   }, cliTestTimeout)
 
-  it("preserves transform-search trust filter and failed evidence invariants", async () => {
-    const engine = createTransformEngine(fixturesPath)
+  it("preserves transform-search trust filters and failed evidence invariants", async () => {
+    const analyzer = await createTypeAnalyzer(fixturesPath)
     const minimumStatuses = ["unverifiable", "unverified", "verified"] as const
 
-    for (const minimum of minimumStatuses) {
-      const response = await engine.search({
+    try {
+      for (const minimum of minimumStatuses) {
+        const response = await analyzer.transformSearch({
+          from: "User",
+          to: "CreateUserRequest",
+          includeFailedVerification: true,
+          minVerificationStatus: minimum,
+          limit: 50,
+        })
+
+        expect(response.query.options.minVerificationStatus).toBe(minimum)
+        expect(response.results.every((result) => (
+          verificationRank[result.verification.status] >= verificationRank[minimum]
+        ))).toBe(true)
+      }
+
+      const verifiedOnly = await analyzer.transformSearch({
         from: "User",
         to: "CreateUserRequest",
         includeFailedVerification: true,
-        minVerificationStatus: minimum,
+        verifiedOnly: true,
         limit: 50,
       })
-
-      expect(response.query.options.minVerificationStatus).toBe(minimum)
-      expect(response.results.every((result) => (
-        verificationRank[result.verification.status] >= verificationRank[minimum]
-      ))).toBe(true)
+      expect(verifiedOnly.results.length).toBeGreaterThan(0)
+      expect(verifiedOnly.results.every((result) => result.verification.status === "verified")).toBe(true)
+    } finally {
+      await analyzer.dispose()
     }
-
-    const verifiedOnly = await engine.search({
-      from: "User",
-      to: "CreateUserRequest",
-      includeFailedVerification: true,
-      verifiedOnly: true,
-      limit: 50,
-    })
-    expect(verifiedOnly.results.length).toBeGreaterThan(0)
-    expect(verifiedOnly.results.every((result) => result.verification.status === "verified")).toBe(true)
 
     const failingRoot = mkdtempSync(join(tmpdir(), "quartz-property-transform-failure-"))
     mkdirSync(join(failingRoot, "src"), { recursive: true })
@@ -240,67 +229,67 @@ describe("property-style regression invariants", () => {
       ].join("\n"),
       "utf8",
     )
-    const failingEngine = createTransformEngine(failingRoot)
-    const failedEvidenceCases = [
-      { includeFailedVerification: false, includeDiagnostics: true, includeSyntheticCode: true, exposesFailure: false },
-      { includeFailedVerification: true, includeDiagnostics: false, includeSyntheticCode: false, exposesFailure: true },
-      { includeFailedVerification: true, includeDiagnostics: true, includeSyntheticCode: true, exposesFailure: true },
-    ] as const
+    const failingAnalyzer = await createTypeAnalyzer(failingRoot)
+    try {
+      const failedEvidenceCases = [
+        { includeFailedVerification: false, includeDiagnostics: true, includeSyntheticCode: true, exposesFailure: false },
+        { includeFailedVerification: true, includeDiagnostics: false, includeSyntheticCode: false, exposesFailure: true },
+        { includeFailedVerification: true, includeDiagnostics: true, includeSyntheticCode: true, exposesFailure: true },
+      ] as const
 
-    for (const options of failedEvidenceCases) {
-      const response = await failingEngine.search({
-        from: "SourceShape",
-        to: "TargetShape",
-        ...options,
-        limit: 10,
-      })
-      const failed = response.results.find((result) => result.verification.reason === "synthetic_check_failed")
+      for (const options of failedEvidenceCases) {
+        const response = await failingAnalyzer.transformSearch({
+          from: "SourceShape",
+          to: "TargetShape",
+          ...options,
+          limit: 10,
+        })
+        const failed = response.results.find((result) => result.verification.reason === "synthetic_check_failed")
 
-      expect(Boolean(failed)).toBe(options.exposesFailure)
-      if (failed === undefined) continue
+        expect(Boolean(failed)).toBe(options.exposesFailure)
+        if (failed === undefined) continue
 
-      expect(failed.verification.status).not.toBe("verified")
-      expect(failed.verification.diagnostics === undefined).toBe(!options.includeDiagnostics)
-      expect(failed.verification.syntheticCode === undefined).toBe(!options.includeSyntheticCode)
+        expect(failed.verification.status).not.toBe("verified")
+        expect(failed.verification.diagnostics === undefined).toBe(!options.includeDiagnostics)
+        expect(failed.verification.syntheticCode === undefined).toBe(!options.includeSyntheticCode)
+      }
+    } finally {
+      await failingAnalyzer.dispose()
     }
   }, cliTestTimeout)
 
   it("keeps refactor preview locations inside project-relative TypeScript files", async () => {
-    const analyzer = createFixtureAnalyzer()
-    const fixtureSourceFiles = new Set(
-      createProject(fixturesPath)
-        .getSourceFiles()
-        .filter((sourceFile) => !sourceFile.isInNodeModules())
-        .map((sourceFile) => relative(fixturesPath, sourceFile.getFilePath())),
-    )
+    const analyzer = await createTypeAnalyzer(fixturesPath)
     const renameTargets = [
       { symbol: "RefactorUser", to: "RenamedUser" },
       { symbol: "RefactorUserProfile", to: "RenamedProfile" },
     ] as const
 
-    for (const target of renameTargets) {
-      const preview = await Effect.runPromise(
-        analyzer.previewRefactor({ action: "rename", symbol: target.symbol, to: target.to }),
-      )
-      const files = [
-        ...preview.locations.map((location) => location.file),
-        ...preview.predictedErrors.map((error) => error.file),
-        ...preview.stringLiteralLocations.map((location) => location.file),
-        ...preview.commentLocations.map((location) => location.file),
-      ]
+    try {
+      for (const target of renameTargets) {
+        const preview = await analyzer.previewRefactor({ action: "rename", symbol: target.symbol, to: target.to })
+        const files = [
+          ...preview.locations.map((location) => location.file),
+          ...preview.predictedErrors.map((error) => error.file),
+          ...preview.stringLiteralLocations.map((location) => location.file),
+          ...preview.commentLocations.map((location) => location.file),
+        ]
 
-      expect(preview.totalLocations).toBeGreaterThan(0)
-      expect(files.length).toBeGreaterThan(0)
-      for (const file of files) {
-        const resolvedPath = resolve(fixturesPath, file)
-        const relativeToFixtureRoot = relative(fixturesPath, resolvedPath)
+        expect(preview.totalLocations).toBeGreaterThan(0)
+        expect(files.length).toBeGreaterThan(0)
+        for (const file of files) {
+          const resolvedPath = join(fixturesPath, file)
+          const relativeToFixtureRoot = relative(fixturesPath, resolvedPath)
 
-        expect(file).not.toBe("")
-        expect(file).not.toMatch(/^(\.\.|\/)/)
-        expect(relativeToFixtureRoot.startsWith("..")).toBe(false)
-        expect(file.endsWith(".ts")).toBe(true)
-        expect(fixtureSourceFiles.has(file)).toBe(true)
+          expect(file).not.toBe("")
+          expect(file).not.toMatch(/^(\.\.|\/)/)
+          expect(relativeToFixtureRoot.startsWith("..")).toBe(false)
+          expect(file.endsWith(".ts")).toBe(true)
+          expect(existsSync(resolvedPath)).toBe(true)
+        }
       }
+    } finally {
+      await analyzer.dispose()
     }
   })
 })
