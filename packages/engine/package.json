@@ -20,7 +20,7 @@
     "prepack": "bun run build"
   },
   "dependencies": {
-    "typescript": "7.1.0-dev.20260711.1"
+    "typescript": "7.1.0-dev.20260723.1"
   },
   "license": "MIT",
   "description": "Persistent TypeScript 7 native workspace engine for Quartz.",

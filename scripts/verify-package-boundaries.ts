@@ -96,6 +96,22 @@ const main = async (): Promise<void> => {
       "LICENSE",
     ])
 
+    const rootManifest = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as {
+      readonly devDependencies?: Readonly<Record<string, string>>
+    }
+    const pinnedTypescript = rootManifest.devDependencies?.typescript
+    if (pinnedTypescript === undefined || pinnedTypescript === "next" || pinnedTypescript.includes("@")) {
+      throw new Error("Root package.json must pin an exact typescript nightly (never @next / range)")
+    }
+    const engineManifest = JSON.parse(await readFile(join(root, "packages/engine/package.json"), "utf8")) as {
+      readonly dependencies?: Readonly<Record<string, string>>
+    }
+    if (engineManifest.dependencies?.typescript !== pinnedTypescript) {
+      throw new Error(
+        `packages/engine must pin typescript@${pinnedTypescript} (found ${engineManifest.dependencies?.typescript ?? "missing"})`,
+      )
+    }
+
     const platformDependencies = {
       "quartz-darwin-arm64": "@typescript/typescript-darwin-arm64",
       "quartz-darwin-x64": "@typescript/typescript-darwin-x64",
@@ -106,8 +122,8 @@ const main = async (): Promise<void> => {
       const manifest = JSON.parse(
         await readFile(join(root, "packages/npm", packageDirectory, "package.json"), "utf8"),
       ) as { readonly dependencies?: Readonly<Record<string, string>> }
-      if (manifest.dependencies?.[dependency] !== "7.1.0-dev.20260711.1") {
-        throw new Error(`${packageDirectory} must depend on ${dependency}@7.1.0-dev.20260711.1`)
+      if (manifest.dependencies?.[dependency] !== pinnedTypescript) {
+        throw new Error(`${packageDirectory} must depend on ${dependency}@${pinnedTypescript}`)
       }
     }
 

@@ -1,0 +1,45 @@
+/**
+ * Compile-time + runtime contract for the unstable TypeScript APIs Quartz consumes.
+ * Fails loudly when a nightly removes or renames a required surface.
+ */
+import { describe, expect, it } from "vitest"
+import { version } from "typescript"
+import { API } from "typescript/unstable/async"
+import type { Project, Snapshot } from "typescript/unstable/async"
+
+describe("typescript unstable API contract", () => {
+  it("pins a concrete 7.x nightly (never a moving tag)", () => {
+    expect(version).toMatch(/^7\.\d+\.\d+-dev\.\d{8}\.\d+$/)
+  })
+
+  it("exposes the workspace lifecycle methods Quartz uses", () => {
+    const proto = API.prototype as API
+    expect(typeof proto.updateSnapshot).toBe("function")
+    expect(typeof proto.close).toBe("function")
+    expect(typeof proto.clearSourceFileCache).toBe("function")
+    expect(typeof proto.getTimingInfo).toBe("function")
+    expect(typeof proto.resetTimingInfo).toBe("function")
+  })
+
+  it("exposes runWithTemporaryFileUpdate for ephemeral analysis", () => {
+    const proto = API.prototype as API
+    expect(typeof proto.runWithTemporaryFileUpdate).toBe("function")
+  })
+
+  it("types Snapshot project accessors used by QuartzWorkspace", () => {
+    // Compile-time presence: if these renames break, tsc/vitest typecheck fails.
+    type SnapshotContract = {
+      getProject: Snapshot["getProject"]
+      getDefaultProjectForFile: Snapshot["getDefaultProjectForFile"]
+      dispose: Snapshot["dispose"]
+    }
+    type ProjectContract = {
+      program: Project["program"]
+      checker: Project["checker"]
+    }
+    const _snapshot: SnapshotContract | null = null
+    const _project: ProjectContract | null = null
+    expect(_snapshot).toBeNull()
+    expect(_project).toBeNull()
+  })
+})

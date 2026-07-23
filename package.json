@@ -31,6 +31,7 @@
     "bench": "bun scripts/bench.ts",
     "bench:pr": "bun scripts/bench.ts --profile pr --out .quartz/bench/pr-latest.json",
     "bench:release": "bun scripts/bench.ts --profile release --out .quartz/bench/release-latest.json",
+    "canary:typescript": "bun scripts/nightly-canary.ts",
     "pack:dry-run": "bun run build && bun run build:npm-cli && npm pack --dry-run \"./packages/engine\" && npm pack --dry-run \"./apps/opencode-plugin\" && npm pack --dry-run \"./packages/npm/quartz-darwin-arm64\" && npm pack --dry-run \"./packages/npm/quartz-darwin-x64\" && npm pack --dry-run \"./packages/npm/quartz-linux-arm64\" && npm pack --dry-run \"./packages/npm/quartz-linux-x64\" && npm pack --dry-run \"./packages/npm/quartz\"",
     "smoke:npm-cli": "bun run build:npm-cli && node packages/npm/quartz/bin/quartz.js capabilities",
     "release:check": "bun run verify && bun run pack:dry-run && bun run smoke:npm-cli && bun run verify:regression-guard && bun audit && publish-scan ."
@@ -38,7 +39,7 @@
   "devDependencies": {
     "@opencode-ai/plugin": "^1.14.46",
     "@types/bun": "^1.3.11",
-    "typescript": "7.1.0-dev.20260711.1",
+    "typescript": "7.1.0-dev.20260723.1",
     "vitest": "^4.1.2"
   },
   "peerDependencies": {
