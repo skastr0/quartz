@@ -202,6 +202,17 @@ const exportedMatches = async (project: Project, sourceFiles: readonly SourceFil
   return all.flat()
 }
 
+const exportedMatchesFor = (
+  context: AnalyzerContext,
+  project: Project,
+  packageInfo: PackageInfo,
+  revision: number,
+  sourceFiles: readonly SourceFile[],
+): Promise<readonly SymbolMatch[]> =>
+  context.cacheForRevision(`exported-matches:${packageInfo.tsconfigPath}`, revision, () =>
+    exportedMatches(project, sourceFiles),
+  )
+
 const parseFileReference = (value: string): { readonly file: string; readonly symbol: string } | null => {
   if (!value.startsWith("@file:")) return null
   const rest = value.slice(6)
@@ -214,9 +225,9 @@ const findMatch = async (
   sourceFiles: readonly SourceFile[],
   root: string,
   symbolName: string,
+  matches: readonly SymbolMatch[],
 ): Promise<SymbolMatch | null> => {
   const reference = parseFileReference(symbolName)
-  const matches = await exportedMatches(project, sourceFiles)
   if (reference !== null) {
     const source = sourceFiles.find((candidate) => resolve(candidate.fileName) === resolve(root, reference.file) || candidate.fileName.endsWith(reference.file))
     if (source === undefined || reference.symbol === "*") return null
@@ -271,22 +282,61 @@ const propertiesFor = async (
 ): Promise<readonly TypePropertyInfo[]> => {
   const properties = await project.checker.getPropertiesOfType(type)
   if (properties.length === 0 || properties.length > MAX_PROPERTIES) return []
-  const values = await Promise.all(properties.map(async (property): Promise<TypePropertyInfo | null> => {
-    const handle = property.declarations[0]
-    const declaration = handle === undefined ? undefined : await handle.resolve(project)
-    if (includeFrom && declaration !== undefined && resolve(declaration.getSourceFile().fileName).includes(`${resolve(root)}/node_modules/`)) return null
-    const propertyType = declaration === undefined
-      ? await project.checker.getTypeOfSymbol(property)
-      : await project.checker.getTypeAtLocation(declaration)
-    const result: TypePropertyInfo = {
-      name: property.name,
-      type: await project.checker.typeToString(propertyType, declaration ?? location, flags),
-      ...(hasOptional(property) ? { optional: true } : {}),
+
+  const declarations = await Promise.all(
+    properties.map(async (property) => {
+      const handle = property.declarations[0]
+      return handle === undefined ? undefined : await handle.resolve(project)
+    }),
+  )
+
+  const packageRoot = resolve(root)
+  const included: { readonly property: Symbol; readonly declaration: Node | undefined }[] = []
+  for (let index = 0; index < properties.length; index += 1) {
+    const property = properties[index]!
+    const declaration = declarations[index]
+    if (
+      includeFrom &&
+      declaration !== undefined &&
+      resolve(declaration.getSourceFile().fileName).includes(`${packageRoot}/node_modules/`)
+    ) {
+      continue
     }
-    if (includeFrom && declaration !== undefined) return { ...result, from: relativePath(root, declaration.getSourceFile().fileName) }
-    return result
-  }))
-  return values.filter((property): property is TypePropertyInfo => property !== null)
+    included.push({ property, declaration })
+  }
+  if (included.length === 0) return []
+
+  // Batch type resolution: getTypeAtLocation / getTypeOfSymbol accept symbol|node arrays.
+  const withDeclaration = included.filter((item) => item.declaration !== undefined)
+  const withoutDeclaration = included.filter((item) => item.declaration === undefined)
+  const typeByProperty = new Map<Symbol, Type>()
+  if (withDeclaration.length > 0) {
+    const types = await project.checker.getTypeAtLocation(withDeclaration.map((item) => item.declaration!))
+    for (let index = 0; index < withDeclaration.length; index += 1) {
+      typeByProperty.set(withDeclaration[index]!.property, types[index]!)
+    }
+  }
+  if (withoutDeclaration.length > 0) {
+    const types = await project.checker.getTypeOfSymbol(withoutDeclaration.map((item) => item.property))
+    for (let index = 0; index < withoutDeclaration.length; index += 1) {
+      typeByProperty.set(withoutDeclaration[index]!.property, types[index]!)
+    }
+  }
+
+  return Promise.all(
+    included.map(async ({ property, declaration }): Promise<TypePropertyInfo> => {
+      const propertyType = typeByProperty.get(property)!
+      const result: TypePropertyInfo = {
+        name: property.name,
+        type: await project.checker.typeToString(propertyType, declaration ?? location, flags),
+        ...(hasOptional(property) ? { optional: true } : {}),
+      }
+      if (includeFrom && declaration !== undefined) {
+        return { ...result, from: relativePath(root, declaration.getSourceFile().fileName) }
+      }
+      return result
+    }),
+  )
 }
 
 const makeTypeInfo = async (match: SymbolMatch, project: Project, packageInfo: PackageInfo, root: string): Promise<TypeInfo> => {
@@ -393,9 +443,14 @@ const evaluateTypeExpression = async (
       )
       if (diagnostics[0] !== undefined) return { error: diagnostics[0].text }
       const type = await project.checker.getTypeAtLocation(declaration)
+      const [result, expanded] = await Promise.all([
+        project.checker.typeToString(type, declaration, TYPE_FLAGS),
+        project.checker.typeToString(type, declaration, EXPAND_FLAGS),
+      ])
       return {
-        result: await project.checker.typeToString(type, declaration, TYPE_FLAGS),
-        expanded: await project.checker.typeToString(type, declaration, EXPAND_FLAGS),
+        result,
+        // Reuse when expansion flags do not change the rendering.
+        expanded: expanded === result ? result : expanded,
       }
     })
   })
@@ -420,7 +475,7 @@ export const createLeafOperations = (context: AnalyzerContext): LeafOperations =
   const getPackages = async (): Promise<readonly PackageInfo[]> => context.packages
   const listSymbols = (options: ListSymbolsOptions = {}): Promise<SymbolListResult> => context.withProject(async (project, pkg, revision) => {
     const sourceFiles = await sourceFilesFor(context, project, pkg, revision)
-    const matches = await exportedMatches(project, sourceFiles)
+    const matches = await exportedMatchesFor(context, project, pkg, revision, sourceFiles)
     const namePattern = options.pattern === undefined ? undefined : new RegExp(options.pattern, "i")
     const filePattern = options.file === undefined ? undefined : new RegExp(options.file, "i")
     const all: SymbolInfo[] = []
@@ -443,21 +498,28 @@ export const createLeafOperations = (context: AnalyzerContext): LeafOperations =
 
   const getTypeInfo = (symbolName: string, packageName?: string): Promise<TypeInfo | null> => context.withProject(async (project, pkg, revision) => {
     const sourceFiles = await sourceFilesFor(context, project, pkg, revision)
-    const match = await findMatch(project, sourceFiles, context.root, symbolName)
+    const matches = await exportedMatchesFor(context, project, pkg, revision, sourceFiles)
+    const match = await findMatch(project, sourceFiles, context.root, symbolName, matches)
     return match === null ? null : makeTypeInfo(match, project, pkg, context.root)
   }, packageName)
 
   const expandType = (symbolName: string, packageName?: string): Promise<ExpandedType | null> => context.withProject(async (project, pkg, revision) => {
     const sourceFiles = await sourceFilesFor(context, project, pkg, revision)
-    const match = await findMatch(project, sourceFiles, context.root, symbolName)
+    const matches = await exportedMatchesFor(context, project, pkg, revision, sourceFiles)
+    const match = await findMatch(project, sourceFiles, context.root, symbolName, matches)
     if (match === null) return null
     const type = await typeForNode(match.node, match.symbol, project)
-    return { original: await project.checker.typeToString(type, match.node, EXPAND_FLAGS), expanded: await project.checker.typeToString(type, match.node, EXPAND_FLAGS), properties: await propertiesFor(type, project, match.node, context.root, true, EXPAND_FLAGS) }
+    // original/expanded previously issued identical EXPAND_FLAGS typeToString calls — share one render.
+    const [rendered, properties] = await Promise.all([
+      project.checker.typeToString(type, match.node, EXPAND_FLAGS),
+      propertiesFor(type, project, match.node, context.root, true, EXPAND_FLAGS),
+    ])
+    return { original: rendered, expanded: rendered, properties }
   }, packageName)
 
   const searchTypes = (options: SearchTypesOptions): Promise<readonly TypeInfo[]> => context.withProject(async (project, pkg, revision) => {
     const sourceFiles = await sourceFilesFor(context, project, pkg, revision)
-    const matches = await exportedMatches(project, sourceFiles)
+    const matches = await exportedMatchesFor(context, project, pkg, revision, sourceFiles)
     const pattern = options.pattern ?? options.query
     const regex = pattern === undefined ? undefined : new RegExp(pattern, "i")
     const results: TypeInfo[] = []
@@ -513,8 +575,9 @@ export const createLeafOperations = (context: AnalyzerContext): LeafOperations =
 
   const checkCompatibility = (from: string, to: string, packageName?: string): Promise<CompatibilityResult> => context.withProject(async (project, pkg, revision) => {
     const sourceFiles = await sourceFilesFor(context, project, pkg, revision)
-    const fromMatch = await findMatch(project, sourceFiles, context.root, from)
-    const toMatch = await findMatch(project, sourceFiles, context.root, to)
+    const matches = await exportedMatchesFor(context, project, pkg, revision, sourceFiles)
+    const fromMatch = await findMatch(project, sourceFiles, context.root, from, matches)
+    const toMatch = await findMatch(project, sourceFiles, context.root, to, matches)
     if (fromMatch === null || toMatch === null) {
       const missing = fromMatch === null ? from : to
       const message = `Symbol "${missing}" not found`
@@ -522,17 +585,27 @@ export const createLeafOperations = (context: AnalyzerContext): LeafOperations =
     }
     const fromType = await typeForNode(fromMatch.node, fromMatch.symbol, project)
     const toType = await typeForNode(toMatch.node, toMatch.symbol, project)
-    const fromText = await project.checker.typeToString(fromType, fromMatch.node)
-    const toText = await project.checker.typeToString(toType, toMatch.node)
+    const [fromText, toText] = await Promise.all([
+      project.checker.typeToString(fromType, fromMatch.node),
+      project.checker.typeToString(toType, toMatch.node),
+    ])
     if (await project.checker.isTypeAssignableTo(fromType, toType)) return { compatible: true, from: fromText, to: toText }
     const issues: ErrorExplanationIssue[] = []
     const reasons: string[] = []
-    const fromProperties = await project.checker.getPropertiesOfType(fromType)
-    const targetProperties = await project.checker.getPropertiesOfType(toType)
+    const [fromProperties, targetProperties] = await Promise.all([
+      project.checker.getPropertiesOfType(fromType),
+      project.checker.getPropertiesOfType(toType),
+    ])
     const fromNames = new Set(fromProperties.map((property) => property.name))
-    for (const property of targetProperties) {
-      if (!hasOptional(property) && !fromNames.has(property.name)) {
-        const expected = await project.checker.typeToString(await project.checker.getTypeOfSymbol(property), toMatch.node)
+    const missingRequired = targetProperties.filter((property) => !hasOptional(property) && !fromNames.has(property.name))
+    if (missingRequired.length > 0) {
+      const missingTypes = await project.checker.getTypeOfSymbol(missingRequired)
+      const expectedTexts = await Promise.all(
+        missingTypes.map((missingType) => project.checker.typeToString(missingType, toMatch.node)),
+      )
+      for (let index = 0; index < missingRequired.length; index += 1) {
+        const property = missingRequired[index]!
+        const expected = expectedTexts[index]!
         const message = `Property '${property.name}' is missing in type '${fromText}' but required in type '${toText}' (expected: ${expected})`
         reasons.push(message)
         issues.push({ kind: "missing_property", property: property.name, expectedType: expected, message })
@@ -541,11 +614,15 @@ export const createLeafOperations = (context: AnalyzerContext): LeafOperations =
     for (const property of fromProperties) {
       const target = await project.checker.getPropertyOfType(toType, property.name)
       if (target === undefined) continue
-      const actualType = await project.checker.getTypeOfSymbolAtLocation(property, fromMatch.node)
-      const expectedType = await project.checker.getTypeOfSymbolAtLocation(target, toMatch.node)
+      const [actualType, expectedType] = await Promise.all([
+        project.checker.getTypeOfSymbolAtLocation(property, fromMatch.node),
+        project.checker.getTypeOfSymbolAtLocation(target, toMatch.node),
+      ])
       if (await project.checker.isTypeAssignableTo(actualType, expectedType)) continue
-      const actual = await project.checker.typeToString(actualType, fromMatch.node)
-      const expected = await project.checker.typeToString(expectedType, toMatch.node)
+      const [actual, expected] = await Promise.all([
+        project.checker.typeToString(actualType, fromMatch.node),
+        project.checker.typeToString(expectedType, toMatch.node),
+      ])
       const message = `Property '${property.name}' has incompatible types: '${actual}' is not assignable to '${expected}'`
       reasons.push(message)
       issues.push({ kind: "type_mismatch", property: property.name, actualType: actual, expectedType: expected, message })
@@ -585,7 +662,25 @@ export const createLeafOperations = (context: AnalyzerContext): LeafOperations =
     const type = await project.checker.getTypeAtPosition(source.fileName, position)
     if (type === undefined) return null
     const point = source.getLineAndCharacterOfPosition(node.getStart())
-    return { type: await project.checker.typeToString(type, node), expanded: await project.checker.typeToString(type, node, EXPAND_FLAGS), nodeKind: SyntaxKind[node.kind] ?? "unknown", nodeText: node.getText(source).slice(0, MAX_NODE_TEXT) + (node.getText(source).length > MAX_NODE_TEXT ? "..." : ""), location: { file: relativePath(context.root, source.fileName), line: point.line + 1, column: point.character + 1 } }
+    // Default flags vs EXPAND_FLAGS are different renders — issue both in one round-trip window.
+    // When the expanded form equals the default form, share the string reference.
+    const [typeText, expandedText] = await Promise.all([
+      project.checker.typeToString(type, node),
+      project.checker.typeToString(type, node, EXPAND_FLAGS),
+    ])
+    const text = node.getText(source)
+    const nodeText = text.length > MAX_NODE_TEXT ? `${text.slice(0, MAX_NODE_TEXT)}...` : text
+    return {
+      type: typeText,
+      expanded: expandedText === typeText ? typeText : expandedText,
+      nodeKind: SyntaxKind[node.kind] ?? "unknown",
+      nodeText,
+      location: {
+        file: relativePath(context.root, source.fileName),
+        line: point.line + 1,
+        column: point.character + 1,
+      },
+    }
   }, packageName)
 
   const explainType = async (expression: string, packageName?: string): Promise<TypeExplanationResult> => {
