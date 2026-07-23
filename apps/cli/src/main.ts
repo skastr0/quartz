@@ -15,7 +15,7 @@ import type {
 } from "@skastr0/quartz-engine"
 import { defaultArtifactDirectory, quartzHome, QUARTZ_HOME_ENV } from "./runtime-storage"
 
-const VERSION = "0.1.0"
+const VERSION = "0.2.0-next.0"
 const DEFAULT_CONCURRENCY = 5
 const AUTO_ARTIFACT_THRESHOLD_BYTES = 8_000
 

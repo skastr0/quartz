@@ -6,18 +6,37 @@ The project follows Semantic Versioning for the declared public package, CLI, an
 
 ## [Unreleased]
 
+## [0.2.0-next.0] - 2026-07-23
+
+Prerelease of the native-engine product path. Publish only with explicit release authority; keep `0.1.0` and the previous exact nightly available as rollback targets.
+
 ### Changed
 
 - Replaced the legacy `@skastr0/quartz-core` ts-morph service spine with `@skastr0/quartz-engine`, a single persistent TypeScript 7 native workspace and direct Promise-based analyzer API.
 - Removed runtime engine selection and fallback fields; CLI and OpenCode plugin now report and use the native engine unconditionally.
 - Platform npm packages now carry the matching TypeScript native executable dependency required by the engine.
+- Pinned TypeScript / TS-Go to exact `7.1.0-dev.20260723.1` (never `@next`).
+- Temporary analysis (snippets, synthetic transform verification) uses `runWithTemporaryFileUpdate` so the base snapshot stays immutable; the JS hybrid filesystem is no longer on the normal project-read path.
+- OpenCode plugin keeps one analyzer for the process and disposes on `session.deleted` / process exit.
+
+### Performance
+
+- Restored a durable multi-mode benchmark harness (`bun run bench:pr` / `bench:release`) with frozen baseline artifacts under `docs/bench/`.
+- Refactor preview uses compiler-native `getReferencedSymbolsForNode` (monorepo warm p50 ~3.4s → ~12ms on the measured M1 host).
+- Transform-search caches its candidate/type index by workspace revision and bounds synthetic verification to `limit + 10` overscan.
+- Measured pin and architecture deltas are recorded in `docs/bench/`; treat any 10× claim as workload-specific evidence only.
+
+### Added
+
+- Unstable API contract tests for surfaces Quartz consumes (including `runWithTemporaryFileUpdate`).
+- Isolated `typescript@next` canary (`bun run canary:typescript`, scheduled GitHub workflow) that never auto-bumps the repository pin.
+- `docs/performance.md` describing cold CLI vs warm batch vs plugin paths.
 
 ### Fixed
 
 - Native project loading now canonicalizes package-store symlinks, preserving referenced `@types` dependencies.
 - Native related-symbol and graph results now resolve imported aliases, avoid duplicate semantic edges, treat primitive literal unions as graph leaves, and report one-based rename columns.
 - Native project-cache expiry now invalidates disk state from the original load time instead of extending stale snapshots on cache hits or snippet analysis; disposed snippets are closed and removed from native snapshots.
-- Native benchmark execution now requires zero parity regressions and zero unsupported public operations.
 
 ## [0.1.0] - 2026-06-02
 
