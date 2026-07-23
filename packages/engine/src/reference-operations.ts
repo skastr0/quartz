@@ -190,7 +190,123 @@ export const createReferenceOperations = (context: AnalyzerContext) => ({
     }, options.packageName),
 })
 
-const findTarget = async (project: Project, packagePath: string, rootPath: string, requestedName: string): Promise<Target | null> => {
+const findTarget = (
+  context: AnalyzerContext,
+  project: Project,
+  pkg: PackageInfo,
+  revision: number,
+  requestedName: string,
+): Promise<Target | null> => targetIndexFor(context, project, pkg, revision).lookup(requestedName)
+
+/**
+ * Revision-keyed name → Target index. Built once per package revision so recursive
+ * graph expansion (and repeated findTarget callers) do not re-scan the project for
+ * every child symbol name.
+ */
+const targetIndexFor = (
+  context: AnalyzerContext,
+  project: Project,
+  pkg: PackageInfo,
+  revision: number,
+): TargetIndex =>
+  context.cacheForRevision(`target-index:${pkg.tsconfigPath}`, revision, () => {
+    const memo = new Map<string, Promise<Target | null>>()
+    let declarationIndex: Promise<Map<string, Target>> | undefined
+    const loadDeclarationIndex = (): Promise<Map<string, Target>> => {
+      declarationIndex ??= buildDeclarationTargetIndex(project, pkg.path, context.root)
+      return declarationIndex
+    }
+    return {
+      lookup: (requestedName: string): Promise<Target | null> => {
+        const cached = memo.get(requestedName)
+        if (cached !== undefined) return cached
+        const pending = (async (): Promise<Target | null> => {
+          const byName = await loadDeclarationIndex()
+          const fromIndex = byName.get(requestedName)
+          if (fromIndex !== undefined) return fromIndex
+          // Preserve full-scan semantics for names that only appear as usages / default.
+          return findTargetByScan(project, pkg.path, context.root, requestedName)
+        })()
+        memo.set(requestedName, pending)
+        return pending
+      },
+    }
+  })
+
+const buildDeclarationTargetIndex = async (
+  project: Project,
+  packagePath: string,
+  rootPath: string,
+): Promise<Map<string, Target>> => {
+  const byName = new Map<string, Target>()
+  const sourceFiles = await projectSourceFiles(project, packagePath)
+
+  for (const sourceFile of sourceFiles) {
+    const named: Node[] = []
+    visit(sourceFile, (node) => {
+      if (node.kind === SyntaxKind.Identifier && declarationForName(node) !== undefined) {
+        named.push(node)
+        return
+      }
+      if (node.kind === SyntaxKind.ExportSpecifier) {
+        const exportName = (node as ExportSpecifierNode).name
+        if (exportName.kind === SyntaxKind.Identifier) named.push(exportName)
+      }
+    })
+    if (named.length === 0) continue
+
+    const symbols = await project.checker.getSymbolAtLocation(named)
+    for (let index = 0; index < named.length; index += 1) {
+      const nameNode = named[index]!
+      const key = nameNode.getText(sourceFile)
+      if (byName.has(key)) continue
+      const symbol = symbols[index]
+      if (symbol === undefined) continue
+      const resolved = await resolveSymbol(project, symbol)
+      const declaration =
+        declarationForName(nameNode)
+        ?? (await findDeclarationForSymbol(sourceFile, project, resolved))
+      if (declaration !== undefined) {
+        byName.set(key, { symbol: resolved, declaration, packagePath, rootPath })
+        continue
+      }
+      const first = resolved.declarations[0]
+      const fallback = first === undefined ? undefined : await first.resolve(project)
+      if (fallback !== undefined) byName.set(key, { symbol: resolved, declaration: fallback, packagePath, rootPath })
+    }
+  }
+
+  if (!byName.has("default")) {
+    for (const sourceFile of sourceFiles) {
+      const moduleSymbol = await project.checker.getSymbolAtLocation(sourceFile)
+      if (moduleSymbol === undefined) continue
+      const exports = await project.checker.getExportsOfModule(moduleSymbol)
+      const defaultExport = exports.find((candidate) => candidate.name === "default")
+      if (defaultExport === undefined) continue
+      const resolved = await resolveSymbol(project, defaultExport)
+      const declaration = await findDeclarationForSymbol(sourceFile, project, resolved)
+      if (declaration !== undefined) {
+        byName.set("default", { symbol: resolved, declaration, packagePath, rootPath })
+        break
+      }
+      const first = resolved.declarations[0]
+      const node = first === undefined ? undefined : await first.resolve(project)
+      if (node !== undefined) {
+        byName.set("default", { symbol: resolved, declaration: node, packagePath, rootPath })
+        break
+      }
+    }
+  }
+
+  return byName
+}
+
+const findTargetByScan = async (
+  project: Project,
+  packagePath: string,
+  rootPath: string,
+  requestedName: string,
+): Promise<Target | null> => {
   const sourceFiles = await projectSourceFiles(project, packagePath)
   let canonical: Symbol | undefined
 
