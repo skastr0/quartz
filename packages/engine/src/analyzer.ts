@@ -47,6 +47,9 @@ export class QuartzAnalyzer implements TypeAnalyzer {
     return this.#context.workspace.metadata
   }
 
+  getTimingInfo = (): Promise<unknown> => this.#context.workspace.getTimingInfo()
+  resetTimingInfo = (): Promise<void> => this.#context.workspace.resetTimingInfo()
+
   getPackages = async () => {
     this.#assertOpen()
     return this.#leaf.getPackages()

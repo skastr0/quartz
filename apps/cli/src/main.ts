@@ -346,7 +346,9 @@ interface CachedAnalyzer {
 }
 
 const createCliAnalyzerRuntime = (root: string): CachedAnalyzer => {
-  const analyzer = createTypeAnalyzer(root)
+  // Batch mode reuses this analyzer across items in one process (warm path).
+  // One-shot CLI still pays cold open+exit cost when the process ends.
+  const analyzer = createTypeAnalyzer(root, { collectTiming: process.env.QUARTZ_TIMING === "1" })
   return {
     analyzer,
     dispose: async () => {
@@ -762,11 +764,22 @@ const commandSpecs = {
     artifactEligible: false,
     example: { root: "test/fixtures" },
     execute: (payload: DoctorPayload) =>
-      callAnalyzer(payload, async (analyzer) => ({
-        metadata: analyzer.metadata,
-        packages: await analyzer.getPackages(),
-      })).pipe(
-        Effect.map(({ metadata, packages }) => ({
+      callAnalyzer(payload, async (analyzer) => {
+        let timing: unknown = null
+        if (process.env.QUARTZ_TIMING === "1") {
+          try {
+            timing = await analyzer.getTimingInfo()
+          } catch {
+            timing = null
+          }
+        }
+        return {
+          metadata: analyzer.metadata,
+          packages: await analyzer.getPackages(),
+          timing,
+        }
+      }).pipe(
+        Effect.map(({ metadata, packages, timing }) => ({
           version: VERSION,
           engine: "native",
           analysis_typescript_version: metadata.analysisTypescriptVersion,
@@ -774,6 +787,12 @@ const commandSpecs = {
           ok: true,
           package_count: packages.length,
           packages,
+          ...(timing === null ? {} : { timing }),
+          warm_path: {
+            batch: "array payloads reuse one analyzer per root inside the process",
+            plugin: "OpenCode plugin keeps one analyzer for the process lifetime",
+            cold_cli: "each one-shot process opens and exits — do not claim plugin warm latency for isolated CLI",
+          },
           input_modes: ["inline-json", "@file", "stdin"],
           fitness_checks: fitnessChecks,
           local_install: {

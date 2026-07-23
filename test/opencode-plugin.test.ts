@@ -161,6 +161,37 @@ describe("OpenCode plugin wrapper", () => {
     })
   }, 20_000)
 
+  it("disposes the persistent analyzer on explicit dispose and session terminal events", async () => {
+    const log = vi.fn()
+    const plugin: any = await QuartzPlugin({
+      directory: new URL("./fixtures", import.meta.url).pathname,
+      client: { app: { log } },
+    } as never)
+
+    expect(typeof plugin.dispose).toBe("function")
+    await plugin.dispose()
+    expect(log).toHaveBeenCalledWith({
+      body: expect.objectContaining({
+        service: "quartz",
+        message: "quartz analyzer disposed",
+        extra: expect.objectContaining({ reason: "explicit" }),
+      }),
+    })
+
+    const again: any = await QuartzPlugin({
+      directory: new URL("./fixtures", import.meta.url).pathname,
+      client: { app: { log } },
+    } as never)
+    await again.event({ event: { type: "session.deleted", properties: { sessionID: "gone" } } })
+    expect(log).toHaveBeenCalledWith({
+      body: expect.objectContaining({
+        service: "quartz",
+        message: "quartz analyzer disposed",
+        extra: expect.objectContaining({ reason: "session.deleted" }),
+      }),
+    })
+  })
+
   it("preserves idle logging and dirty-cache hook behavior", async () => {
     const root = mkdtempSync(join(tmpdir(), "tlt-plugin-"))
     mkdirSync(join(root, "src"))

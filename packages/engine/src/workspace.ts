@@ -134,6 +134,17 @@ export class QuartzWorkspace {
     return this.withProject((project) => collectDiagnostics(project), configFile)
   }
 
+  /** TS-Go client/server timing snapshot when collectTiming was enabled at open. */
+  getTimingInfo(): Promise<unknown> {
+    this.#assertAcceptingWork()
+    return this.#api.getTimingInfo()
+  }
+
+  resetTimingInfo(): Promise<void> {
+    this.#assertAcceptingWork()
+    return this.#api.resetTimingInfo()
+  }
+
   withProject<T>(
     operation: (project: Project, revision: number) => Promise<T>,
     configFile: string = this.configFile,

@@ -357,8 +357,43 @@ const createToolDefinitions = (analyzer: QuartzAnalyzer) => ({
 })
 
 export const QuartzPlugin: Plugin = async (ctx) => {
-  const analyzer = await createTypeAnalyzer(ctx.directory)
+  // Persistent analyzer is the primary agent integration: one open workspace
+  // per plugin instance, reused across tools until process exit or disposal.
+  const analyzer = await createTypeAnalyzer(ctx.directory, { collectTiming: true })
   const client = ctx.client as { app?: { log?: (input: unknown) => Promise<unknown> } }
+  let disposed = false
+  const disposeAnalyzer = async (reason: string): Promise<void> => {
+    if (disposed) return
+    disposed = true
+    try {
+      await analyzer.dispose()
+      await client.app?.log?.({
+        body: {
+          service: "quartz",
+          level: "debug",
+          message: "quartz analyzer disposed",
+          extra: { reason },
+        },
+      })
+    } catch (cause) {
+      await client.app?.log?.({
+        body: {
+          service: "quartz",
+          level: "warn",
+          message: "quartz analyzer dispose failed",
+          extra: { reason, cause: cause instanceof Error ? cause.message : String(cause) },
+        },
+      })
+    }
+  }
+
+  // OpenCode Hooks have no plugin-level teardown yet; bind process lifetime and
+  // known session terminal events so child TS-Go processes do not leak.
+  const onProcessExit = () => {
+    void disposeAnalyzer("process-exit")
+  }
+  process.once("beforeExit", onProcessExit)
+  process.once("exit", onProcessExit)
 
   return {
     event: async ({ event }) => {
@@ -368,9 +403,15 @@ export const QuartzPlugin: Plugin = async (ctx) => {
             service: "quartz",
             level: "debug",
             message: "session idle observed by quartz plugin",
-            extra: { sessionID: event.properties.sessionID },
+            extra: { sessionID: (event as { properties?: { sessionID?: string } }).properties?.sessionID },
           },
         })
+      }
+      // Dispose when the host signals session deletion (OpenCode emits session.deleted).
+      if (event.type === "session.deleted") {
+        process.off("beforeExit", onProcessExit)
+        process.off("exit", onProcessExit)
+        await disposeAnalyzer(event.type)
       }
     },
     "tool.execute.after": async (input) => {
@@ -379,7 +420,13 @@ export const QuartzPlugin: Plugin = async (ctx) => {
       }
     },
     tool: createToolDefinitions(analyzer),
-  }
+    // Test/host escape hatch — not part of Hooks, ignored by hosts that strip unknown keys.
+    dispose: () => {
+      process.off("beforeExit", onProcessExit)
+      process.off("exit", onProcessExit)
+      return disposeAnalyzer("explicit")
+    },
+  } as Awaited<ReturnType<Plugin>> & { dispose: () => Promise<void> }
 }
 
 export default {

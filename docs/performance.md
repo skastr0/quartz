@@ -41,6 +41,18 @@ Reports are JSON (`schemaVersion: quartz-bench/v1`) with wall-clock p50/p95, ope
 - **Historical dual-engine (native vs morph) speedups** are superseded once morph is removed. Re-baseline with this harness; do not cite morph ratios as current product truth.
 - Correctness remains in `bun run verify:regression-guard`. Performance thresholds live in measured reports and optional CI ratio/complexity ratchets — not invented budgets.
 
+## Warm vs cold product paths
+
+| Path | Analyzer lifetime | Use when |
+|------|-------------------|----------|
+| One-shot CLI | Open → command → process exit | Ad-hoc shell; always pays cold open |
+| CLI batch (array payload) | One process, analyzer reused per root | Shell agents with multiple targets |
+| OpenCode plugin | One analyzer for process/session | Daily agent workflows (primary) |
+
+Set `QUARTZ_TIMING=1` to enable TS-Go collectTiming and include a `timing` object on `quartz doctor` when available. Do **not** claim the plugin’s warm latency for isolated CLI commands.
+
+Daemon decision: only if cold startup remains a dominant real-workflow cost **and** batch/plugin cannot serve the workflow. Otherwise reject the added lifecycle machinery.
+
 ## After each performance change
 
 1. Run `bench:pr` (or `bench:release` for architectural changes).
