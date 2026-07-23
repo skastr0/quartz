@@ -1,0 +1,127 @@
+{
+  "schemaVersion": "quartz-bench/v1",
+  "generatedAt": "2026-07-23T21:43:08.347Z",
+  "profile": "pr",
+  "root": "/Users/guilhermecastro/Projects/quartz/test/fixtures",
+  "quartzCommit": "be3c98ebf075c851f074c34d39b99f9a6214e76e",
+  "analysisTypescriptVersion": "7.1.0-dev.20260723.1",
+  "process": {
+    "runtime": "bun 1.3.14",
+    "platform": "darwin",
+    "arch": "arm64",
+    "hostname": "macmini.local",
+    "cpuModel": "Apple M1",
+    "cpuCount": 8,
+    "totalMemGb": 16
+  },
+  "config": {
+    "warmup": 1,
+    "timed": 3,
+    "modes": [
+      "cold-cli",
+      "warm-analyzer"
+    ]
+  },
+  "cliBinary": "/Users/guilhermecastro/.local/bin/quartz",
+  "results": [
+    {
+      "mode": "cold-cli",
+      "command": "transform-search",
+      "stats": {
+        "samplesMs": [
+          216.24,
+          218.655,
+          220.267
+        ],
+        "p50Ms": 218.655,
+        "p95Ms": 220.106,
+        "meanMs": 218.387,
+        "minMs": 216.24,
+        "maxMs": 220.267
+      }
+    },
+    {
+      "mode": "warm-analyzer",
+      "command": "transform-search",
+      "stats": {
+        "samplesMs": [
+          4.474,
+          5.648,
+          5.014
+        ],
+        "p50Ms": 5.014,
+        "p95Ms": 5.584,
+        "meanMs": 5.045,
+        "minMs": 4.474,
+        "maxMs": 5.648
+      },
+      "openMs": 51.792
+    },
+    {
+      "mode": "cold-cli",
+      "command": "refactor-preview",
+      "stats": {
+        "samplesMs": [
+          166.849,
+          154.549,
+          139.728
+        ],
+        "p50Ms": 154.549,
+        "p95Ms": 165.619,
+        "meanMs": 153.709,
+        "minMs": 139.728,
+        "maxMs": 166.849
+      }
+    },
+    {
+      "mode": "warm-analyzer",
+      "command": "refactor-preview",
+      "stats": {
+        "samplesMs": [
+          3,
+          1.987,
+          1.89
+        ],
+        "p50Ms": 1.987,
+        "p95Ms": 2.899,
+        "meanMs": 2.292,
+        "minMs": 1.89,
+        "maxMs": 3
+      },
+      "openMs": 45.848
+    },
+    {
+      "mode": "cold-cli",
+      "command": "check-snippet",
+      "stats": {
+        "samplesMs": [
+          142.874,
+          135.207,
+          134.954
+        ],
+        "p50Ms": 135.207,
+        "p95Ms": 142.107,
+        "meanMs": 137.678,
+        "minMs": 134.954,
+        "maxMs": 142.874
+      }
+    },
+    {
+      "mode": "warm-analyzer",
+      "command": "check-snippet",
+      "stats": {
+        "samplesMs": [
+          6.382,
+          5.056,
+          8.046
+        ],
+        "p50Ms": 6.382,
+        "p95Ms": 7.88,
+        "meanMs": 6.495,
+        "minMs": 5.056,
+        "maxMs": 8.046
+      },
+      "openMs": 58.601
+    }
+  ]
+}

@@ -332,6 +332,66 @@ export type TransformSearchOperation = (
   options: TransformSearchOptions & { readonly packageName?: string },
 ) => Promise<TransformSearchResponse>
 
+interface TransformIndex {
+  readonly sourceFiles: readonly SourceFile[]
+  readonly allCandidates: readonly Candidate[]
+  readonly availableTypes: Map<string, { readonly node: TypeNode; readonly type: Type }>
+  readonly byNode: Map<Node, Type>
+  readonly inferredReturnTypes: Map<Candidate, Type | null>
+  readonly inferredReturnTexts: Map<Candidate, string>
+}
+
+const loadTransformIndex = async (project: Project): Promise<TransformIndex> => {
+  const sourceNames = await project.program.getSourceFileNames()
+  const sourceFiles = (await Promise.all(sourceNames.map((name) => project.program.getSourceFile(name))))
+    .filter((sourceFile): sourceFile is SourceFile => sourceFile !== undefined && !sourceFile.isDeclarationFile && !sourceFile.fileName.includes("node_modules"))
+  const allCandidates = enumerate(sourceFiles)
+  const availableNodes: TypeNode[] = []
+  for (const candidate of allCandidates) {
+    for (const param of candidate.params) {
+      const type = (param as Node & { readonly type?: TypeNode }).type
+      if (type !== undefined) availableNodes.push(type)
+    }
+    if (candidate.returnNode !== null) availableNodes.push(candidate.returnNode)
+  }
+  const availableTypes = new Map<string, { readonly node: TypeNode; readonly type: Type }>()
+  const byNode = new Map<Node, Type>()
+  const checkerNodes: Node[] = [...availableNodes, ...allCandidates.map((candidate) => candidate.callable)]
+  if (checkerNodes.length > 0) {
+    const values = await project.checker.getTypeAtLocation(checkerNodes)
+    for (let index = 0; index < checkerNodes.length; index += 1) {
+      const node = checkerNodes[index]!
+      const value = values[index]!
+      byNode.set(node, value)
+      if (index < availableNodes.length) {
+        const typeNode = availableNodes[index]!
+        if (!availableTypes.has(typeNode.getText(typeNode.getSourceFile()).trim())) {
+          availableTypes.set(typeNode.getText(typeNode.getSourceFile()).trim(), { node: typeNode, type: value })
+        }
+      }
+    }
+  }
+  const inferredReturnTypes = new Map<Candidate, Type | null>()
+  const inferredReturnTexts = new Map<Candidate, string>()
+  for (const candidate of allCandidates) {
+    let returnType = candidate.returnNode === null ? null : byNode.get(candidate.returnNode) ?? null
+    if (candidate.returnNode === null) {
+      const callableType = byNode.get(candidate.callable)
+      if (callableType !== undefined) {
+        const signatures = await project.checker.getSignaturesOfType(callableType, SignatureKind.Call)
+        const signature = signatures[0]
+        if (signature !== undefined) returnType = await project.checker.getReturnTypeOfSignature(signature)
+      }
+      if (returnType !== null) inferredReturnTexts.set(candidate, await project.checker.typeToString(returnType, candidate.callable))
+    }
+    inferredReturnTypes.set(candidate, returnType)
+  }
+  return { sourceFiles, allCandidates, availableTypes, byNode, inferredReturnTypes, inferredReturnTexts }
+}
+
+/** Synthetic verification overscan: check this many extra candidates past the requested limit. */
+const SYNTHETIC_OVERSCAN = 10
+
 export const createTransformSearchOperation = (context: AnalyzerContext) => async (
   options: TransformSearchOptions & { readonly packageName?: string },
 ): Promise<TransformSearchResponse> => {
@@ -341,51 +401,14 @@ export const createTransformSearchOperation = (context: AnalyzerContext) => asyn
   const exportedOnly = options.exportedOnly ?? true
   const limit = Math.max(0, options.limit ?? 25)
   if (options.from === undefined && options.to === undefined) throw new Error("At least one of 'from' or 'to' is required")
-  return context.withProject(async (project, pkg) => {
-    const sourceNames = await project.program.getSourceFileNames()
-    const sourceFiles = (await Promise.all(sourceNames.map((name) => project.program.getSourceFile(name))))
-      .filter((sourceFile): sourceFile is SourceFile => sourceFile !== undefined && !sourceFile.isDeclarationFile && !sourceFile.fileName.includes("node_modules"))
-    const candidates = enumerate(sourceFiles).filter((candidate) => !exportedOnly || candidate.exported)
-    const availableNodes: TypeNode[] = []
-    for (const candidate of candidates) {
-      for (const param of candidate.params) {
-        const type = (param as Node & { readonly type?: TypeNode }).type
-        if (type !== undefined) availableNodes.push(type)
-      }
-      if (candidate.returnNode !== null) availableNodes.push(candidate.returnNode)
-    }
-    const availableTypes = new Map<string, { readonly node: TypeNode; readonly type: Type }>()
-    const byNode = new Map<Node, Type>()
-    const checkerNodes: Node[] = [...availableNodes, ...candidates.map((candidate) => candidate.callable)]
-    if (checkerNodes.length > 0) {
-      const values = await project.checker.getTypeAtLocation(checkerNodes)
-      for (let index = 0; index < checkerNodes.length; index += 1) {
-        const node = checkerNodes[index]!
-        const value = values[index]!
-        byNode.set(node, value)
-        if (index < availableNodes.length) {
-          const typeNode = availableNodes[index]!
-          if (!availableTypes.has(typeNode.getText(typeNode.getSourceFile()).trim())) {
-            availableTypes.set(typeNode.getText(typeNode.getSourceFile()).trim(), { node: typeNode, type: value })
-          }
-        }
-      }
-    }
-    const inferredReturnTypes = new Map<Candidate, Type | null>()
-    const inferredReturnTexts = new Map<Candidate, string>()
-    for (const candidate of candidates) {
-      let returnType = candidate.returnNode === null ? null : byNode.get(candidate.returnNode) ?? null
-      if (candidate.returnNode === null) {
-        const callableType = byNode.get(candidate.callable)
-        if (callableType !== undefined) {
-          const signatures = await project.checker.getSignaturesOfType(callableType, SignatureKind.Call)
-          const signature = signatures[0]
-          if (signature !== undefined) returnType = await project.checker.getReturnTypeOfSignature(signature)
-        }
-        if (returnType !== null) inferredReturnTexts.set(candidate, await project.checker.typeToString(returnType, candidate.callable))
-      }
-      inferredReturnTypes.set(candidate, returnType)
-    }
+  return context.withProject(async (project, pkg, revision) => {
+    // Revision is the sole invalidation authority; store the in-flight promise so
+    // concurrent warm queries share one index build.
+    const index = await context.cacheForRevision(`transform-index:${pkg.tsconfigPath}`, revision, () =>
+      loadTransformIndex(project),
+    )
+    const { sourceFiles, availableTypes, byNode, inferredReturnTypes, inferredReturnTexts } = index
+    const candidates = index.allCandidates.filter((candidate) => !exportedOnly || candidate.exported)
     const fromQuery = options.from === undefined ? null : await queryTypeFor(options.from, sourceFiles, project.checker, availableTypes)
     const toQuery = options.to === undefined ? null : await queryTypeFor(options.to, sourceFiles, project.checker, availableTypes)
     const matches: Match[] = []
@@ -458,9 +481,10 @@ export const createTransformSearchOperation = (context: AnalyzerContext) => asyn
     matches.sort((left, right) => right.score - left.score || left.candidate.name.localeCompare(right.candidate.name) || left.candidate.sourceFile.fileName.localeCompare(right.candidate.sourceFile.fileName) || lineFor(left.candidate) - lineFor(right.candidate))
     const assignabilityMs = performance.now() - started
     const syntheticStarted = performance.now()
-    const syntheticLimit = Math.max(50, limit)
-    const rankedMatches = await Promise.all(matches.map(async (match, index) => {
-      if (index >= syntheticLimit || match.verification.status !== "verified") return match
+    // Bound synthetic work to requested results + documented overscan — not max(50, limit).
+    const syntheticLimit = limit + SYNTHETIC_OVERSCAN
+    const rankedMatches = await Promise.all(matches.map(async (match, matchIndex) => {
+      if (matchIndex >= syntheticLimit || match.verification.status !== "verified") return match
       const verification = await verifySyntheticMatch(context, project, pkg, match, options)
       return { ...match, verification }
     }))
