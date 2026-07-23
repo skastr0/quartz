@@ -1,0 +1,127 @@
+{
+  "schemaVersion": "quartz-bench/v1",
+  "generatedAt": "2026-07-23T21:31:23.216Z",
+  "profile": "pr",
+  "root": "/Users/guilhermecastro/Projects/quartz",
+  "quartzCommit": "8a78d546e57d330bca4e08581f2ebb1e41caf601",
+  "analysisTypescriptVersion": "7.1.0-dev.20260711.1",
+  "process": {
+    "runtime": "bun 1.3.14",
+    "platform": "darwin",
+    "arch": "arm64",
+    "hostname": "macmini.local",
+    "cpuModel": "Apple M1",
+    "cpuCount": 8,
+    "totalMemGb": 16
+  },
+  "config": {
+    "warmup": 1,
+    "timed": 3,
+    "modes": [
+      "cold-cli",
+      "warm-analyzer"
+    ]
+  },
+  "cliBinary": "/Users/guilhermecastro/.local/bin/quartz",
+  "results": [
+    {
+      "mode": "cold-cli",
+      "command": "diagnostics",
+      "stats": {
+        "samplesMs": [
+          835.237,
+          641.972,
+          629.931
+        ],
+        "p50Ms": 641.972,
+        "p95Ms": 815.911,
+        "meanMs": 702.38,
+        "minMs": 629.931,
+        "maxMs": 835.237
+      }
+    },
+    {
+      "mode": "warm-analyzer",
+      "command": "diagnostics",
+      "stats": {
+        "samplesMs": [
+          0.374,
+          0.198,
+          0.197
+        ],
+        "p50Ms": 0.198,
+        "p95Ms": 0.356,
+        "meanMs": 0.256,
+        "minMs": 0.197,
+        "maxMs": 0.374
+      },
+      "openMs": 438.191
+    },
+    {
+      "mode": "cold-cli",
+      "command": "transform-search",
+      "stats": {
+        "samplesMs": [
+          1058.328,
+          892.981,
+          915.983
+        ],
+        "p50Ms": 915.983,
+        "p95Ms": 1044.093,
+        "meanMs": 955.764,
+        "minMs": 892.981,
+        "maxMs": 1058.328
+      }
+    },
+    {
+      "mode": "warm-analyzer",
+      "command": "transform-search",
+      "stats": {
+        "samplesMs": [
+          32.227,
+          23.802,
+          24.534
+        ],
+        "p50Ms": 24.534,
+        "p95Ms": 31.457,
+        "meanMs": 26.854,
+        "minMs": 23.802,
+        "maxMs": 32.227
+      },
+      "openMs": 421.032
+    },
+    {
+      "mode": "cold-cli",
+      "command": "refactor-preview",
+      "stats": {
+        "samplesMs": [
+          4121.077,
+          4239.354,
+          4380.325
+        ],
+        "p50Ms": 4239.354,
+        "p95Ms": 4366.228,
+        "meanMs": 4246.919,
+        "minMs": 4121.077,
+        "maxMs": 4380.325
+      }
+    },
+    {
+      "mode": "warm-analyzer",
+      "command": "refactor-preview",
+      "stats": {
+        "samplesMs": [
+          3509.396,
+          3392.736,
+          3347.672
+        ],
+        "p50Ms": 3392.736,
+        "p95Ms": 3497.73,
+        "meanMs": 3416.601,
+        "minMs": 3347.672,
+        "maxMs": 3509.396
+      },
+      "openMs": 482.722
+    }
+  ]
+}

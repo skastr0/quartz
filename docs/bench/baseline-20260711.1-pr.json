@@ -1,0 +1,358 @@
+{
+  "schemaVersion": "quartz-bench/v1",
+  "generatedAt": "2026-07-23T21:30:39.324Z",
+  "profile": "pr",
+  "root": "/Users/guilhermecastro/Projects/quartz/test/fixtures",
+  "quartzCommit": "8a78d546e57d330bca4e08581f2ebb1e41caf601",
+  "analysisTypescriptVersion": "7.1.0-dev.20260711.1",
+  "process": {
+    "runtime": "bun 1.3.14",
+    "platform": "darwin",
+    "arch": "arm64",
+    "hostname": "macmini.local",
+    "cpuModel": "Apple M1",
+    "cpuCount": 8,
+    "totalMemGb": 16
+  },
+  "config": {
+    "warmup": 1,
+    "timed": 3,
+    "modes": [
+      "cold-cli",
+      "warm-analyzer"
+    ]
+  },
+  "cliBinary": "/Users/guilhermecastro/.local/bin/quartz",
+  "results": [
+    {
+      "mode": "cold-cli",
+      "command": "doctor",
+      "stats": {
+        "samplesMs": [
+          134.157,
+          130.376,
+          238.957
+        ],
+        "p50Ms": 134.157,
+        "p95Ms": 228.477,
+        "meanMs": 167.83,
+        "minMs": 130.376,
+        "maxMs": 238.957
+      }
+    },
+    {
+      "mode": "warm-analyzer",
+      "command": "doctor",
+      "stats": {
+        "samplesMs": [
+          0.004,
+          0.005,
+          0.001
+        ],
+        "p50Ms": 0.004,
+        "p95Ms": 0.005,
+        "meanMs": 0.003,
+        "minMs": 0.001,
+        "maxMs": 0.005
+      },
+      "openMs": 130.782
+    },
+    {
+      "mode": "cold-cli",
+      "command": "diagnostics",
+      "stats": {
+        "samplesMs": [
+          173.825,
+          160.956,
+          155.037
+        ],
+        "p50Ms": 160.956,
+        "p95Ms": 172.538,
+        "meanMs": 163.273,
+        "minMs": 155.037,
+        "maxMs": 173.825
+      }
+    },
+    {
+      "mode": "warm-analyzer",
+      "command": "diagnostics",
+      "stats": {
+        "samplesMs": [
+          0.274,
+          0.143,
+          0.154
+        ],
+        "p50Ms": 0.154,
+        "p95Ms": 0.262,
+        "meanMs": 0.19,
+        "minMs": 0.143,
+        "maxMs": 0.274
+      },
+      "openMs": 63.01
+    },
+    {
+      "mode": "cold-cli",
+      "command": "info",
+      "stats": {
+        "samplesMs": [
+          273.496,
+          262.125,
+          289.394
+        ],
+        "p50Ms": 273.496,
+        "p95Ms": 287.804,
+        "meanMs": 275.005,
+        "minMs": 262.125,
+        "maxMs": 289.394
+      }
+    },
+    {
+      "mode": "warm-analyzer",
+      "command": "info",
+      "stats": {
+        "samplesMs": [
+          12.121,
+          10.237,
+          7.881
+        ],
+        "p50Ms": 10.237,
+        "p95Ms": 11.933,
+        "meanMs": 10.08,
+        "minMs": 7.881,
+        "maxMs": 12.121
+      },
+      "openMs": 63.839
+    },
+    {
+      "mode": "cold-cli",
+      "command": "expand",
+      "stats": {
+        "samplesMs": [
+          227.696,
+          224.993,
+          222.349
+        ],
+        "p50Ms": 224.993,
+        "p95Ms": 227.426,
+        "meanMs": 225.013,
+        "minMs": 222.349,
+        "maxMs": 227.696
+      }
+    },
+    {
+      "mode": "warm-analyzer",
+      "command": "expand",
+      "stats": {
+        "samplesMs": [
+          5.693,
+          6.002,
+          11.249
+        ],
+        "p50Ms": 6.002,
+        "p95Ms": 10.724,
+        "meanMs": 7.648,
+        "minMs": 5.693,
+        "maxMs": 11.249
+      },
+      "openMs": 58.359
+    },
+    {
+      "mode": "cold-cli",
+      "command": "compatible",
+      "stats": {
+        "samplesMs": [
+          226.728,
+          210.901,
+          234.228
+        ],
+        "p50Ms": 226.728,
+        "p95Ms": 233.478,
+        "meanMs": 223.953,
+        "minMs": 210.901,
+        "maxMs": 234.228
+      }
+    },
+    {
+      "mode": "warm-analyzer",
+      "command": "compatible",
+      "stats": {
+        "samplesMs": [
+          14.649,
+          10.512,
+          12.87
+        ],
+        "p50Ms": 12.87,
+        "p95Ms": 14.471,
+        "meanMs": 12.677,
+        "minMs": 10.512,
+        "maxMs": 14.649
+      },
+      "openMs": 58.446
+    },
+    {
+      "mode": "cold-cli",
+      "command": "verify-contract",
+      "stats": {
+        "samplesMs": [
+          312.155,
+          363.175,
+          312.659
+        ],
+        "p50Ms": 312.659,
+        "p95Ms": 358.124,
+        "meanMs": 329.33,
+        "minMs": 312.155,
+        "maxMs": 363.175
+      }
+    },
+    {
+      "mode": "warm-analyzer",
+      "command": "verify-contract",
+      "stats": {
+        "samplesMs": [
+          76.034,
+          70.871,
+          70.398
+        ],
+        "p50Ms": 70.871,
+        "p95Ms": 75.517,
+        "meanMs": 72.434,
+        "minMs": 70.398,
+        "maxMs": 76.034
+      },
+      "openMs": 56.066
+    },
+    {
+      "mode": "cold-cli",
+      "command": "related",
+      "stats": {
+        "samplesMs": [
+          229.69,
+          226.058,
+          230.902
+        ],
+        "p50Ms": 229.69,
+        "p95Ms": 230.781,
+        "meanMs": 228.884,
+        "minMs": 226.058,
+        "maxMs": 230.902
+      }
+    },
+    {
+      "mode": "warm-analyzer",
+      "command": "related",
+      "stats": {
+        "samplesMs": [
+          75.202,
+          76.512,
+          72.393
+        ],
+        "p50Ms": 75.202,
+        "p95Ms": 76.381,
+        "meanMs": 74.702,
+        "minMs": 72.393,
+        "maxMs": 76.512
+      },
+      "openMs": 63.342
+    },
+    {
+      "mode": "cold-cli",
+      "command": "transform-search",
+      "stats": {
+        "samplesMs": [
+          228.779,
+          225.531,
+          233.121
+        ],
+        "p50Ms": 228.779,
+        "p95Ms": 232.686,
+        "meanMs": 229.144,
+        "minMs": 225.531,
+        "maxMs": 233.121
+      }
+    },
+    {
+      "mode": "warm-analyzer",
+      "command": "transform-search",
+      "stats": {
+        "samplesMs": [
+          10.198,
+          12.889,
+          11.143
+        ],
+        "p50Ms": 11.143,
+        "p95Ms": 12.714,
+        "meanMs": 11.41,
+        "minMs": 10.198,
+        "maxMs": 12.889
+      },
+      "openMs": 66.888
+    },
+    {
+      "mode": "cold-cli",
+      "command": "refactor-preview",
+      "stats": {
+        "samplesMs": [
+          484.416,
+          538.191,
+          424.029
+        ],
+        "p50Ms": 484.416,
+        "p95Ms": 532.813,
+        "meanMs": 482.212,
+        "minMs": 424.029,
+        "maxMs": 538.191
+      }
+    },
+    {
+      "mode": "warm-analyzer",
+      "command": "refactor-preview",
+      "stats": {
+        "samplesMs": [
+          186.59,
+          204.831,
+          209.978
+        ],
+        "p50Ms": 204.831,
+        "p95Ms": 209.464,
+        "meanMs": 200.467,
+        "minMs": 186.59,
+        "maxMs": 209.978
+      },
+      "openMs": 61.295
+    },
+    {
+      "mode": "cold-cli",
+      "command": "check-snippet",
+      "stats": {
+        "samplesMs": [
+          168.033,
+          169.184,
+          148.332
+        ],
+        "p50Ms": 168.033,
+        "p95Ms": 169.068,
+        "meanMs": 161.85,
+        "minMs": 148.332,
+        "maxMs": 169.184
+      }
+    },
+    {
+      "mode": "warm-analyzer",
+      "command": "check-snippet",
+      "stats": {
+        "samplesMs": [
+          8.39,
+          5.647,
+          4.325
+        ],
+        "p50Ms": 5.647,
+        "p95Ms": 8.116,
+        "meanMs": 6.121,
+        "minMs": 4.325,
+        "maxMs": 8.39
+      },
+      "openMs": 57.097
+    }
+  ]
+}

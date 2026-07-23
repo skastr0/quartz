@@ -28,6 +28,9 @@
     "verify:package-boundaries": "bun scripts/verify-package-boundaries.ts",
     "verify:docs-examples": "bun scripts/verify-doc-examples.ts",
     "verify:regression-guard": "bun scripts/verify-regression-guard.ts",
+    "bench": "bun scripts/bench.ts",
+    "bench:pr": "bun scripts/bench.ts --profile pr --out .quartz/bench/pr-latest.json",
+    "bench:release": "bun scripts/bench.ts --profile release --out .quartz/bench/release-latest.json",
     "pack:dry-run": "bun run build && bun run build:npm-cli && npm pack --dry-run \"./packages/engine\" && npm pack --dry-run \"./apps/opencode-plugin\" && npm pack --dry-run \"./packages/npm/quartz-darwin-arm64\" && npm pack --dry-run \"./packages/npm/quartz-darwin-x64\" && npm pack --dry-run \"./packages/npm/quartz-linux-arm64\" && npm pack --dry-run \"./packages/npm/quartz-linux-x64\" && npm pack --dry-run \"./packages/npm/quartz\"",
     "smoke:npm-cli": "bun run build:npm-cli && node packages/npm/quartz/bin/quartz.js capabilities",
     "release:check": "bun run verify && bun run pack:dry-run && bun run smoke:npm-cli && bun run verify:regression-guard && bun audit && publish-scan ."
