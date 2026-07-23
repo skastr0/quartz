@@ -1,6 +1,21 @@
+import { existsSync } from "node:fs"
 import { dirname, extname, join, relative, resolve } from "node:path"
 import { SymbolFlags, type Project } from "typescript/unstable/async"
 import type { SourceFile } from "typescript/unstable/ast"
+
+/**
+ * Prefer a source directory that is typically covered by tsconfig include
+ * globs (`types/**`, `src/**`, …). Temporary file updates for paths outside
+ * include patterns work but are dramatically slower in TS-Go.
+ */
+export const resolveVirtualFileDirectory = (packageRoot: string): string => {
+  const root = resolve(packageRoot)
+  for (const candidate of ["types", "src", "lib", "source"]) {
+    const directory = join(root, candidate)
+    if (existsSync(directory)) return directory
+  }
+  return root
+}
 
 const modulePathFor = (from: string, fileName: string): string => {
   const withoutExtension = fileName.slice(0, -extname(fileName).length)

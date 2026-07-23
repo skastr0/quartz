@@ -17,7 +17,13 @@ import type {
   VerifyContractOptions,
   VerifyContractResult,
 } from "./contracts"
-import { createVirtualFileRegistry, synthesizePackageImports, withVirtualFile, type VirtualFileRegistry } from "./virtual-files"
+import {
+  createVirtualFileRegistry,
+  resolveVirtualFileDirectory,
+  synthesizePackageImports,
+  withVirtualFile,
+  type VirtualFileRegistry,
+} from "./virtual-files"
 
 export interface VirtualWorkspace {
   withVirtualFile<T>(
@@ -45,7 +51,7 @@ const workspaceWithVirtualFile = (context: AnalyzerContext): VirtualWorkspace =>
   const workspace = context.workspace as unknown as Partial<VirtualWorkspace>
   if (typeof workspace.withVirtualFile !== "function") {
     throw new Error(
-      "checkSnippet requires QuartzWorkspace.withVirtualFile(tsconfigPath, filePath, content, operation), which creates an isolated snapshot and disposes it after operation",
+      "checkSnippet requires QuartzWorkspace.withVirtualFile(tsconfigPath, filePath, content, operation), which runs runWithTemporaryFileUpdate against the immutable base snapshot",
     )
   }
   return workspace as VirtualWorkspace
@@ -150,9 +156,10 @@ export const createVerificationOperations = (
   context: AnalyzerContext,
   dependencies: VerificationOperationDependencies,
 ): VerificationOperations => {
-  const registry = dependencies.virtualFiles ?? createVirtualFileRegistry(context.root)
   const checkSnippet: TypeAnalyzer["checkSnippet"] = async (code, packageName) => {
     const pkg = context.package(packageName)
+    const registry =
+      dependencies.virtualFiles ?? createVirtualFileRegistry(resolveVirtualFileDirectory(pkg.path))
     const workspace = workspaceWithVirtualFile(context)
     return withVirtualFile(registry, code, async (lease) => {
       const imports =

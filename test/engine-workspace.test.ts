@@ -87,4 +87,122 @@ describe("QuartzWorkspace", () => {
       code: "WORKSPACE_CLOSED",
     })
   })
+
+  it("adds an unopened temporary file without mutating the base revision", async () => {
+    const fixture = createFixture("export const count = 1\n")
+    const workspace = await openQuartzWorkspace(fixture.root)
+    try {
+      const temporaryPath = join(fixture.root, "src", "__quartz_temp_add.ts")
+      const before = workspace.metadata.revision
+      const seen = await workspace.withVirtualFile(
+        workspace.configFile,
+        temporaryPath,
+        "export const temporary = 1 as const\n",
+        async (project, filePath) => {
+          const source = await project.program.getSourceFile(filePath)
+          expect(source?.fileName).toBe(filePath)
+          return filePath
+        },
+      )
+      expect(seen).toBe(temporaryPath)
+      expect(workspace.metadata.revision).toBe(before)
+      // Base diagnostics still come from the original file only.
+      expect(await workspace.diagnostics()).toEqual([])
+    } finally {
+      await workspace.close()
+    }
+  })
+
+  it("replaces an existing file temporarily and restores the base view after", async () => {
+    const fixture = createFixture("export const count: number = 1\n")
+    const workspace = await openQuartzWorkspace(fixture.root)
+    try {
+      expect(await workspace.diagnostics()).toEqual([])
+      const temporaryErrors = await workspace.withVirtualFile(
+        workspace.configFile,
+        fixture.sourcePath,
+        "export const count: string = 1\n",
+        async (project) => collectSemanticCodes(project, fixture.sourcePath),
+      )
+      expect(temporaryErrors).toContain(2322)
+      expect(await workspace.diagnostics()).toEqual([])
+      expect(workspace.metadata.revision).toBe(1)
+    } finally {
+      await workspace.close()
+    }
+  })
+
+  it("isolates concurrent temporary operations deterministically", async () => {
+    const fixture = createFixture("export const base = 1\n")
+    const workspace = await openQuartzWorkspace(fixture.root)
+    try {
+      const a = join(fixture.root, "src", "__quartz_a.ts")
+      const b = join(fixture.root, "src", "__quartz_b.ts")
+      const [codeA, codeB] = await Promise.all([
+        workspace.withVirtualFile(
+          workspace.configFile,
+          a,
+          "export const a: string = 1\n",
+          async (project, filePath) => collectSemanticCodes(project, filePath),
+        ),
+        workspace.withVirtualFile(
+          workspace.configFile,
+          b,
+          "export const b: number = 1\n",
+          async (project, filePath) => collectSemanticCodes(project, filePath),
+        ),
+      ])
+      expect(codeA).toContain(2322)
+      expect(codeB).not.toContain(2322)
+      expect(workspace.metadata.revision).toBe(1)
+      expect(await workspace.diagnostics()).toEqual([])
+    } finally {
+      await workspace.close()
+    }
+  })
+
+  it("surfaces temporary callback failures without leaking into later commands", async () => {
+    const fixture = createFixture("export const ok = 1\n")
+    const workspace = await openQuartzWorkspace(fixture.root)
+    try {
+      const temporaryPath = join(fixture.root, "src", "__quartz_fail.ts")
+      await expect(
+        workspace.withVirtualFile(workspace.configFile, temporaryPath, "export const x = 1\n", async () => {
+          throw new Error("synthetic failure")
+        }),
+      ).rejects.toMatchObject({ code: "WORKSPACE_REFRESH_FAILED" })
+
+      expect(workspace.metadata.revision).toBe(1)
+      expect(await workspace.diagnostics()).toEqual([])
+      await workspace.withVirtualFile(
+        workspace.configFile,
+        temporaryPath,
+        "export const recovered = true\n",
+        async (project, filePath) => {
+          expect(await project.program.getSourceFile(filePath)).toBeDefined()
+        },
+      )
+    } finally {
+      await workspace.close()
+    }
+  })
+
+  it("rejects temporary work after disposal", async () => {
+    const fixture = createFixture("export const ok = 1\n")
+    const workspace = await openQuartzWorkspace(fixture.root)
+    await workspace.close()
+    await expect(
+      workspace.withVirtualFile(
+        workspace.configFile,
+        join(fixture.root, "src", "__quartz_closed.ts"),
+        "export const x = 1\n",
+        async () => "nope",
+      ),
+    ).rejects.toMatchObject({ code: "WORKSPACE_CLOSED" })
+  })
 })
+
+const collectSemanticCodes = async (project: import("typescript/unstable/async").Project, filePath: string) => {
+  const diagnostics = await project.program.getSemanticDiagnostics(filePath)
+  return diagnostics.map((diagnostic) => diagnostic.code)
+}

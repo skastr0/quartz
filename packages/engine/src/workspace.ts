@@ -5,7 +5,6 @@ import { pathToFileURL } from "node:url"
 import { version } from "typescript"
 import { API, type Project, type Snapshot } from "typescript/unstable/async"
 import { QuartzEngineError } from "./errors"
-import { createHybridFileSystem, type HybridFileSystem } from "./filesystem"
 import { collectDiagnostics } from "./diagnostics"
 import type { EngineDiagnostic, WorkspaceFileChanges, WorkspaceMetadata, WorkspaceOptions } from "./types"
 
@@ -65,10 +64,8 @@ export class QuartzWorkspace {
   readonly configFiles: readonly string[]
 
   readonly #api: API
-  readonly #fileSystem: HybridFileSystem
   #current: RevisionState | null
   #mutationTail: Promise<void> = Promise.resolve()
-  #virtualTail: Promise<void> = Promise.resolve()
   #closing = false
   #closed = false
   #closePromise: Promise<void> | null = null
@@ -80,14 +77,12 @@ export class QuartzWorkspace {
     root: string,
     configFiles: readonly string[],
     api: API,
-    fileSystem: HybridFileSystem,
     state: RevisionState,
   ) {
     this.root = root
     this.configFiles = configFiles
     this.configFile = configFiles[0]!
     this.#api = api
-    this.#fileSystem = fileSystem
     this.#current = state
   }
 
@@ -98,10 +93,10 @@ export class QuartzWorkspace {
       primaryConfig,
       ...(options.tsconfigPaths ?? []).map((configFile) => resolve(resolvedRoot, configFile)),
     ].filter((configFile, index, all) => all.indexOf(configFile) === index)
-    const fileSystem = createHybridFileSystem()
+    // Native TS-Go filesystem only — temporary analysis uses runWithTemporaryFileUpdate,
+    // so a JS hybrid FS is not on the normal project-read path.
     const api = new API({
       cwd: resolvedRoot,
-      fs: fileSystem,
       tsserverPath: options.tsserverPath ?? resolveTypeScriptExecutable(),
       ...(options.collectTiming === undefined ? {} : { collectTiming: options.collectTiming }),
     })
@@ -116,7 +111,7 @@ export class QuartzWorkspace {
           `TypeScript did not load the configured project at ${missingConfig}`,
         )
       }
-      return new QuartzWorkspace(resolvedRoot, configFiles, api, fileSystem, createRevisionState(snapshot, 1))
+      return new QuartzWorkspace(resolvedRoot, configFiles, api, createRevisionState(snapshot, 1))
     } catch (cause) {
       await api.close().catch(() => undefined)
       if (cause instanceof QuartzEngineError) throw cause
@@ -152,6 +147,12 @@ export class QuartzWorkspace {
       return operation(project, state.revision)
     })
   }
+
+  /**
+   * Run analysis against a temporary file update without mutating the base
+   * snapshot or revision. Concurrent temporary operations are isolated and may
+   * proceed in parallel against the same immutable base.
+   */
   async withVirtualFile<T>(
     tsconfigPath: string,
     filePath: string,
@@ -162,58 +163,38 @@ export class QuartzWorkspace {
     this.#beginOperation()
     const resolvedConfig = resolve(tsconfigPath)
     const resolvedFile = resolve(filePath)
-    return this.#enqueueVirtual(async () => {
-      this.#fileSystem.virtualFiles.set(resolvedFile, content)
-      let leasedState: RevisionState | null = null
-      try {
-        const acquired = await this.#enqueueMutation(async () => {
-          const previous = this.#requireCurrent()
-          const snapshot = await this.#api.updateSnapshot({
-            openFiles: [resolvedFile],
-            fileChanges: { created: [resolvedFile] },
-          })
-          const state = createRevisionState(snapshot, previous.revision + 1)
-          const project =
-            (await snapshot.getDefaultProjectForFile(resolvedFile)) ??
-            snapshot.getProject(resolvedConfig)
-          if (project === undefined) {
-            await snapshot.dispose()
-            throw new QuartzEngineError(
-              "WORKSPACE_REFRESH_FAILED",
-              `TypeScript did not load a project for virtual file ${resolvedFile}`,
-            )
-          }
-          state.readers += 1
-          this.#current = state
-          this.#retire(previous)
-          return { state, project }
-        })
-        leasedState = acquired.state
-        return await operation(acquired.project, resolvedFile)
-      } finally {
-        try {
-          if (!this.#closed) {
-            await this.#enqueueMutation(async () => {
-              const previous = this.#requireCurrent()
-              const snapshot = await this.#api.updateSnapshot({
-                closeFiles: [resolvedFile],
-                fileChanges: { deleted: [resolvedFile] },
-              })
-              const next = createRevisionState(snapshot, previous.revision + 1)
-              this.#current = next
-              this.#retire(previous)
-            })
-          }
-        } finally {
-          this.#fileSystem.virtualFiles.delete(resolvedFile)
-          if (leasedState !== null) this.#releaseState(leasedState)
+    const base = this.#requireCurrent()
+    base.readers += 1
+    try {
+      let result!: T
+      await this.#api.runWithTemporaryFileUpdate(base.snapshot, resolvedFile, content, async (temporarySnapshot) => {
+        this.#assertAcceptingWork()
+        // Concurrent refresh may retire this base; the leased snapshot remains
+        // valid for the temporary callback, and later work uses the new current.
+        const project =
+          (await temporarySnapshot.getDefaultProjectForFile(resolvedFile)) ??
+          temporarySnapshot.getProject(resolvedConfig)
+        if (project === undefined) {
+          throw new QuartzEngineError(
+            "WORKSPACE_REFRESH_FAILED",
+            `TypeScript did not load a project for temporary file ${resolvedFile}`,
+          )
         }
-      }
-    }).finally(() => {
+        result = await operation(project, resolvedFile)
+      })
+      return result
+    } catch (cause) {
+      if (cause instanceof QuartzEngineError) throw cause
+      throw new QuartzEngineError(
+        "WORKSPACE_REFRESH_FAILED",
+        `Temporary file analysis failed for ${resolvedFile}`,
+        cause,
+      )
+    } finally {
+      this.#releaseState(base)
       this.#endOperation()
-    })
+    }
   }
-
 
   refresh(changes?: WorkspaceFileChanges): Promise<WorkspaceMetadata> {
     this.#assertAcceptingWork()
@@ -305,15 +286,6 @@ export class QuartzWorkspace {
     )
     return result
   }
-  #enqueueVirtual<T>(operation: () => Promise<T>): Promise<T> {
-    const result = this.#virtualTail.then(operation)
-    this.#virtualTail = result.then(
-      () => undefined,
-      () => undefined,
-    )
-    return result
-  }
-
 
   #retire(state: RevisionState): void {
     if (state.disposePromise !== null) return

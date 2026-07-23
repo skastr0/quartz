@@ -45,7 +45,7 @@ import type {
   VerificationMeta,
   VerificationStatus,
 } from "../contracts"
-import { synthesizePackageImports } from "../virtual-files"
+import { resolveVirtualFileDirectory, synthesizePackageImports } from "../virtual-files"
 
 type AsyncCallable = FunctionLikeBase & Node
 
@@ -295,7 +295,10 @@ const verifySyntheticMatch = async (
   if (call === null || options.from === undefined || options.to === undefined) {
     return { status: "unverifiable", method: null, reason: "not_importable" }
   }
-  const virtualFilePath = join(packageInfo.path, `__quartz_transform_verify_${(syntheticSequence++).toString(36)}.ts`)
+  const virtualFilePath = join(
+    resolveVirtualFileDirectory(packageInfo.path),
+    `__quartz_transform_verify_${(syntheticSequence++).toString(36)}.ts`,
+  )
   const imports = await synthesizePackageImports(project, packageInfo.path, virtualFilePath)
   const assignment = match.to?.unwrapped && (match.to.wrapper === "Promise" || match.to.wrapper === "PromiseLike")
     ? `async function __quartzVerify() {\n  const __output: __QueryTo = await ${call}\n}`

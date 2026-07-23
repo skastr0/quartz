@@ -46,7 +46,13 @@ import {
   isVariableDeclaration,
   isVariableStatement,
 } from "typescript/unstable/ast/is"
-import { createVirtualFileRegistry, synthesizePackageImports, withVirtualFile, type VirtualFileRegistry } from "./virtual-files"
+import {
+  createVirtualFileRegistry,
+  resolveVirtualFileDirectory,
+  synthesizePackageImports,
+  withVirtualFile,
+  type VirtualFileRegistry,
+} from "./virtual-files"
 const TYPE_FLAGS =
   NodeBuilderFlags.NoTruncation |
   NodeBuilderFlags.UseStructuralFallback |
@@ -410,7 +416,7 @@ export interface LeafOperations {
 }
 
 export const createLeafOperations = (context: AnalyzerContext): LeafOperations => {
-  const virtualFiles = createVirtualFileRegistry(context.root, "__quartz_type_eval_")
+  const virtualFiles = createVirtualFileRegistry(resolveVirtualFileDirectory(context.root), "__quartz_type_eval_")
   const getPackages = async (): Promise<readonly PackageInfo[]> => context.packages
   const listSymbols = (options: ListSymbolsOptions = {}): Promise<SymbolListResult> => context.withProject(async (project, pkg, revision) => {
     const sourceFiles = await sourceFilesFor(context, project, pkg, revision)

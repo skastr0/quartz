@@ -1,0 +1,160 @@
+{
+  "schemaVersion": "quartz-bench/v1",
+  "generatedAt": "2026-07-23T21:40:53.029Z",
+  "profile": "pr",
+  "root": "/Users/guilhermecastro/Projects/quartz/test/fixtures",
+  "quartzCommit": "6fe845571e2e809b2872985f123fe65b3462487a",
+  "analysisTypescriptVersion": "7.1.0-dev.20260723.1",
+  "process": {
+    "runtime": "bun 1.3.14",
+    "platform": "darwin",
+    "arch": "arm64",
+    "hostname": "macmini.local",
+    "cpuModel": "Apple M1",
+    "cpuCount": 8,
+    "totalMemGb": 16
+  },
+  "config": {
+    "warmup": 1,
+    "timed": 3,
+    "modes": [
+      "cold-cli",
+      "warm-analyzer"
+    ]
+  },
+  "cliBinary": "/Users/guilhermecastro/.local/bin/quartz",
+  "results": [
+    {
+      "mode": "cold-cli",
+      "command": "diagnostics",
+      "stats": {
+        "samplesMs": [
+          122.273,
+          129.416,
+          126.587
+        ],
+        "p50Ms": 126.587,
+        "p95Ms": 129.133,
+        "meanMs": 126.092,
+        "minMs": 122.273,
+        "maxMs": 129.416
+      }
+    },
+    {
+      "mode": "warm-analyzer",
+      "command": "diagnostics",
+      "stats": {
+        "samplesMs": [
+          0.367,
+          0.56,
+          0.257
+        ],
+        "p50Ms": 0.367,
+        "p95Ms": 0.541,
+        "meanMs": 0.395,
+        "minMs": 0.257,
+        "maxMs": 0.56
+      },
+      "openMs": 48.886
+    },
+    {
+      "mode": "cold-cli",
+      "command": "verify-contract",
+      "stats": {
+        "samplesMs": [
+          244.899,
+          274.686,
+          237.068
+        ],
+        "p50Ms": 244.899,
+        "p95Ms": 271.707,
+        "meanMs": 252.217,
+        "minMs": 237.068,
+        "maxMs": 274.686
+      }
+    },
+    {
+      "mode": "warm-analyzer",
+      "command": "verify-contract",
+      "stats": {
+        "samplesMs": [
+          39.49,
+          32.617,
+          28.724
+        ],
+        "p50Ms": 32.617,
+        "p95Ms": 38.802,
+        "meanMs": 33.61,
+        "minMs": 28.724,
+        "maxMs": 39.49
+      },
+      "openMs": 43.349
+    },
+    {
+      "mode": "cold-cli",
+      "command": "transform-search",
+      "stats": {
+        "samplesMs": [
+          203.784,
+          206.581,
+          208.076
+        ],
+        "p50Ms": 206.581,
+        "p95Ms": 207.927,
+        "meanMs": 206.147,
+        "minMs": 203.784,
+        "maxMs": 208.076
+      }
+    },
+    {
+      "mode": "warm-analyzer",
+      "command": "transform-search",
+      "stats": {
+        "samplesMs": [
+          6.749,
+          6.053,
+          7.409
+        ],
+        "p50Ms": 6.749,
+        "p95Ms": 7.343,
+        "meanMs": 6.737,
+        "minMs": 6.053,
+        "maxMs": 7.409
+      },
+      "openMs": 41.397
+    },
+    {
+      "mode": "cold-cli",
+      "command": "check-snippet",
+      "stats": {
+        "samplesMs": [
+          141.033,
+          134.153,
+          130.427
+        ],
+        "p50Ms": 134.153,
+        "p95Ms": 140.345,
+        "meanMs": 135.205,
+        "minMs": 130.427,
+        "maxMs": 141.033
+      }
+    },
+    {
+      "mode": "warm-analyzer",
+      "command": "check-snippet",
+      "stats": {
+        "samplesMs": [
+          4.393,
+          3.998,
+          3.764
+        ],
+        "p50Ms": 3.998,
+        "p95Ms": 4.354,
+        "meanMs": 4.052,
+        "minMs": 3.764,
+        "maxMs": 4.393
+      },
+      "openMs": 41.824
+    }
+  ]
+}
