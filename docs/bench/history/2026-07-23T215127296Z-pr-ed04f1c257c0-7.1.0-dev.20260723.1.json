@@ -1,0 +1,94 @@
+{
+  "schemaVersion": "quartz-bench/v1",
+  "generatedAt": "2026-07-23T21:51:27.296Z",
+  "profile": "pr",
+  "root": "/Users/guilhermecastro/Projects/quartz",
+  "quartzCommit": "ed04f1c257c0fa7bdcef61d5a337e162cf748c14",
+  "analysisTypescriptVersion": "7.1.0-dev.20260723.1",
+  "process": {
+    "runtime": "bun 1.3.14",
+    "platform": "darwin",
+    "arch": "arm64",
+    "hostname": "macmini.local",
+    "cpuModel": "Apple M1",
+    "cpuCount": 8,
+    "totalMemGb": 16
+  },
+  "config": {
+    "warmup": 1,
+    "timed": 3,
+    "modes": [
+      "cold-cli",
+      "warm-analyzer"
+    ]
+  },
+  "cliBinary": "/Users/guilhermecastro/.local/bin/quartz",
+  "results": [
+    {
+      "mode": "cold-cli",
+      "command": "related",
+      "stats": {
+        "samplesMs": [
+          1083.745,
+          746.002,
+          738.292
+        ],
+        "p50Ms": 746.002,
+        "p95Ms": 1049.97,
+        "meanMs": 856.013,
+        "minMs": 738.292,
+        "maxMs": 1083.745
+      }
+    },
+    {
+      "mode": "warm-analyzer",
+      "command": "related",
+      "stats": {
+        "samplesMs": [
+          379.969,
+          352.281,
+          337.081
+        ],
+        "p50Ms": 352.281,
+        "p95Ms": 377.2,
+        "meanMs": 356.444,
+        "minMs": 337.081,
+        "maxMs": 379.969
+      },
+      "openMs": 175.052
+    },
+    {
+      "mode": "cold-cli",
+      "command": "refactor-preview",
+      "stats": {
+        "samplesMs": [
+          333.057,
+          364.823,
+          355.468
+        ],
+        "p50Ms": 355.468,
+        "p95Ms": 363.888,
+        "meanMs": 351.116,
+        "minMs": 333.057,
+        "maxMs": 364.823
+      }
+    },
+    {
+      "mode": "warm-analyzer",
+      "command": "refactor-preview",
+      "stats": {
+        "samplesMs": [
+          20.019,
+          16.629,
+          22.53
+        ],
+        "p50Ms": 20.019,
+        "p95Ms": 22.279,
+        "meanMs": 19.726,
+        "minMs": 16.629,
+        "maxMs": 22.53
+      },
+      "openMs": 226.018
+    }
+  ]
+}
