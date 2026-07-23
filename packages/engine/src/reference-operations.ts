@@ -7,6 +7,7 @@ import type { AnalyzerContext } from "./context"
 import type {
   GraphEdge,
   GraphResult,
+  PackageInfo,
   RefactorError,
   RefactorLocation,
   RefactorPreviewResult,
@@ -22,12 +23,17 @@ type Target = {
   readonly rootPath: string
 }
 
+type TargetIndex = {
+  readonly lookup: (requestedName: string) => Promise<Target | null>
+}
+
 type RenameSite = {
   readonly sourceFile: SourceFile
   readonly node: Node
 }
 
 type NamedNode = Node & { readonly name?: Node }
+type ExportSpecifierNode = Node & { readonly name: Node; readonly propertyName?: Node }
 
 const PRIMITIVE_NAMES: Record<string, true> = {
   string: true,
@@ -62,8 +68,8 @@ const MAX_GRAPH_DEPTH = 4
 
 export const createReferenceOperations = (context: AnalyzerContext) => ({
   findRelated: (symbolName: string, packageName?: string): Promise<RelatedInfo | null> =>
-    context.withProject(async (project, pkg) => {
-      const target = await findTarget(project, pkg.path, context.root, symbolName)
+    context.withProject(async (project, pkg, revision) => {
+      const target = await findTarget(context, project, pkg, revision, symbolName)
       if (target === null) return null
       return {
         symbol: symbolName,
@@ -76,10 +82,11 @@ export const createReferenceOperations = (context: AnalyzerContext) => ({
     symbolName: string,
     options: { readonly depth?: number; readonly format?: "mermaid" | "dot"; readonly packageName?: string } = {},
   ): Promise<GraphResult | null> =>
-    context.withProject(async (project, pkg) => {
+    context.withProject(async (project, pkg, revision) => {
       const depth = Math.max(0, Math.min(options.depth ?? 2, MAX_GRAPH_DEPTH))
       const format = options.format ?? "mermaid"
-      const rootTarget = await findTarget(project, pkg.path, context.root, symbolName)
+      const targets = targetIndexFor(context, project, pkg, revision)
+      const rootTarget = await targets.lookup(symbolName)
       if (rootTarget === null) return null
 
       const nodes: string[] = [symbolName]
@@ -96,7 +103,7 @@ export const createReferenceOperations = (context: AnalyzerContext) => ({
         const outgoing = await findOutgoingReferences(project, target)
         if (currentDepth >= depth) return
         for (const reference of outgoing) {
-          const child = await findTarget(project, pkg.path, context.root, reference.symbol)
+          const child = await targets.lookup(reference.symbol)
           if (child === null) continue
           const childId = String(child.symbol.id)
           const childName = child.symbol.name
@@ -124,11 +131,11 @@ export const createReferenceOperations = (context: AnalyzerContext) => ({
     }, options.packageName),
 
   previewRefactor: (options: RefactorPreviewOptions): Promise<RefactorPreviewResult> =>
-    context.withProject(async (project, pkg) => {
+    context.withProject(async (project, pkg, revision) => {
       if (options.action !== "rename") {
         throw new Error(`Unsupported refactor action: ${options.action}`)
       }
-      const target = await findTarget(project, pkg.path, context.root, options.symbol)
+      const target = await findTarget(context, project, pkg, revision, options.symbol)
       if (target === null) {
         throw new Error(`Symbol "${options.symbol}" not found`)
       }
@@ -249,10 +256,13 @@ const findDeclarationForSymbol = async (sourceFile: SourceFile, project: Project
 const findIncomingReferences = async (project: Project, target: Target): Promise<RelatedInfo["referencedBy"]> => {
   const results: Array<RelatedInfo["referencedBy"][number]> = []
   const seen = new Set<string>()
+  const perFileCounts = new Map<string, number>()
   const add = async (node: Node, symbol: Symbol = target.symbol): Promise<void> => {
     if (node.kind !== SyntaxKind.Identifier || isImportReference(node)) return
     const sourceFile = node.getSourceFile()
     if (!isProjectSourceFile(sourceFile.fileName, target.packagePath)) return
+    const fileCount = perFileCounts.get(sourceFile.fileName) ?? 0
+    if (fileCount >= MAX_REFERENCE_RESULTS_PER_FILE) return
     if (!(await sameSymbol(project, symbol, target.symbol))) return
     if (isTargetDeclarationName(node, target)) return
     const containing = await findContainingSymbol(project, node.parent, target.symbol)
@@ -261,6 +271,7 @@ const findIncomingReferences = async (project: Project, target: Target): Promise
     const key = `${sourceFile.fileName}:${node.getStart(sourceFile)}:${containing}:${context}`
     if (seen.has(key)) return
     seen.add(key)
+    perFileCounts.set(sourceFile.fileName, fileCount + 1)
     results.push({
       symbol: containing,
       context,
@@ -269,10 +280,29 @@ const findIncomingReferences = async (project: Project, target: Target): Promise
     })
   }
 
+  // Prefer compiler-native reference collection: scales with references, not
+  // every identifier / type-reference node in the project.
+  const declarationName = declarationNameNode(target.declaration) ?? target.declaration
+  const declarationPosition = declarationName.getStart(declarationName.getSourceFile())
+  try {
+    const referenced = await project.checker.getReferencedSymbolsForNode(declarationName, declarationPosition)
+    for (const entry of referenced) {
+      const handles = [entry.definition, ...entry.references]
+      for (const handle of handles) {
+        const node = await handle.resolve(project)
+        if (node !== undefined) await add(node, entry.symbol ?? target.symbol)
+      }
+    }
+    if (results.length > 0) return results
+  } catch {
+    // Fall through to the per-file scan if the native reference API rejects the node.
+  }
+
+  // Fallback: per-file native references + batched type-reference verification.
   const sourceFiles = await projectSourceFiles(project, target.packagePath)
   for (const sourceFile of sourceFiles) {
     const handles = await project.checker.getReferencesToSymbolInFile(sourceFile.fileName, target.symbol)
-    for (const handle of handles.slice(0, MAX_REFERENCE_RESULTS_PER_FILE)) {
+    for (const handle of handles) {
       const node = await handle.resolve(project)
       if (node !== undefined) await add(node)
     }

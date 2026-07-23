@@ -49,29 +49,40 @@ describe("engine reference operations", () => {
     }
   })
 
-  it("batches symbol lookups across reference candidates", async () => {
+  it("prefers compiler-native references over full-project identifier scans", async () => {
     const { context, operations } = await createFixture()
-    let batchCalls = 0
-    let scalarCalls = 0
+    let nativeCalls = 0
+    let perFileReferenceCalls = 0
     const workspace = context.workspace
     const originalWithProject = workspace.withProject.bind(workspace)
     workspace.withProject = (operation, configFile) =>
       originalWithProject(async (project, revision) => {
-        const originalLookup = project.checker.getSymbolAtLocation
-        Object.defineProperty(project.checker, "getSymbolAtLocation", {
+        const originalNative = project.checker.getReferencedSymbolsForNode
+        const originalPerFile = project.checker.getReferencesToSymbolInFile
+        Object.defineProperty(project.checker, "getReferencedSymbolsForNode", {
           configurable: true,
-          value: (nodes: unknown) => {
-            if (Array.isArray(nodes)) batchCalls += 1
-            else scalarCalls += 1
-            return Reflect.apply(originalLookup, project.checker, [nodes])
+          value: (...args: unknown[]) => {
+            nativeCalls += 1
+            return Reflect.apply(originalNative, project.checker, args)
+          },
+        })
+        Object.defineProperty(project.checker, "getReferencesToSymbolInFile", {
+          configurable: true,
+          value: (...args: unknown[]) => {
+            perFileReferenceCalls += 1
+            return Reflect.apply(originalPerFile, project.checker, args)
           },
         })
         try {
           return await operation(project, revision)
         } finally {
-          Object.defineProperty(project.checker, "getSymbolAtLocation", {
+          Object.defineProperty(project.checker, "getReferencedSymbolsForNode", {
             configurable: true,
-            value: originalLookup,
+            value: originalNative,
+          })
+          Object.defineProperty(project.checker, "getReferencesToSymbolInFile", {
+            configurable: true,
+            value: originalPerFile,
           })
         }
       }, configFile)
@@ -79,8 +90,10 @@ describe("engine reference operations", () => {
     try {
       const result = await operations.findRelated("User")
       expect(result).not.toBeNull()
-      expect(batchCalls).toBeGreaterThanOrEqual(3)
-      expect(scalarCalls).toBeLessThan(10)
+      expect(result?.referencedBy.length).toBeGreaterThan(0)
+      expect(nativeCalls).toBeGreaterThanOrEqual(1)
+      // Native path should short-circuit the per-file / type-scan fallback.
+      expect(perFileReferenceCalls).toBe(0)
     } finally {
       workspace.withProject = originalWithProject
       await context.close()
