@@ -11,6 +11,8 @@ export class AnalyzerContext {
   readonly packages: readonly PackageInfo[]
   readonly workspace: QuartzWorkspace
   #dirty = false
+  /** Bumps on every markDirty so a refresh cannot clear dirt that arrived mid-flight. */
+  #dirtyGeneration = 0
   #dirtyRefresh: Promise<WorkspaceMetadata> | null = null
   #revisionCache = new Map<string, { readonly revision: number; readonly value: unknown }>()
 
@@ -103,9 +105,12 @@ export class AnalyzerContext {
   }
 
   async refresh(changes?: WorkspaceFileChanges): Promise<WorkspaceMetadata> {
+    const generationAtStart = this.#dirtyGeneration
     const metadata = await this.workspace.refresh(changes)
     this.#revisionCache.clear()
-    this.#dirty = false
+    // Only clear dirty if no markDirty arrived while refresh was in flight.
+    if (this.#dirtyGeneration === generationAtStart) this.#dirty = false
+    else this.#dirty = true
     return metadata
   }
 
@@ -116,6 +121,7 @@ export class AnalyzerContext {
 
   markDirty(): void {
     this.#dirty = true
+    this.#dirtyGeneration += 1
   }
 
   async #ensureFresh(): Promise<void> {
@@ -126,6 +132,8 @@ export class AnalyzerContext {
     } finally {
       this.#dirtyRefresh = null
     }
+    // A concurrent markDirty during the refresh leaves #dirty true — run again.
+    if (this.#dirty) await this.#ensureFresh()
   }
 
   close(): Promise<void> {

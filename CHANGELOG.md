@@ -36,7 +36,7 @@ Prerelease of the native-engine product path. Publish only with explicit release
 
 - Native project loading now canonicalizes package-store symlinks, preserving referenced `@types` dependencies.
 - Native related-symbol and graph results now resolve imported aliases, avoid duplicate semantic edges, treat primitive literal unions as graph leaves, and report one-based rename columns.
-- Native project-cache expiry now invalidates disk state from the original load time instead of extending stale snapshots on cache hits or snippet analysis; disposed snippets are closed and removed from native snapshots.
+- Temporary snippet/transform analysis no longer mutates the global base snapshot; concurrent temporary updates stay isolated via `runWithTemporaryFileUpdate`.
 
 ## [0.1.0] - 2026-06-02
 

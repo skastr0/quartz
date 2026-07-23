@@ -470,21 +470,33 @@ export const createTransformSearchOperation = (context: AnalyzerContext) => asyn
         exactTo = exact
       }
       const partial = fromQuery === null || toQuery === null || !fromQuery.resolved || !toQuery?.resolved
-      const verified = !partial && fromAssignable && toAssignable && !fromErased && !toErased
-      const verification: VerificationMeta = verified
-        ? { status: "verified", method: exactFrom && exactTo ? "exact_match" : "assignability_only", reason: "exact_type_match" }
-        : { status: "unverified", method: "assignability_only", reason: partial ? "partial_query" : (fromErased || toErased ? "type_erasure" : "synthetic_check_failed") }
-      const score = (exactFrom ? 40 : fromMatch === null ? 0 : 24) + (exactTo ? 40 : toMatch === null ? 0 : 24) + (verified ? 20 : 0) + (candidate.exported ? 8 : 0) - (candidate.deprecated ? 15 : 0) + (candidate.kind === "Function" ? 2 : 0) - (toMatch?.unwrapped ? 10 : 0)
-      const confidence = confidenceFor({ exactFrom, exactTo, verified, partial })
+      // Assignability alone never ships as `verified` — synthetic is the only promotion path
+      // for full from+to matches. Pre-synthetic "verified" would silently backfill past the
+      // synthetic overscan bound under verifiedOnly / minVerificationStatus filters.
+      const assignabilityOk = !partial && fromAssignable && toAssignable && !fromErased && !toErased
+      const verification: VerificationMeta = assignabilityOk
+        ? {
+            status: "unverified",
+            method: exactFrom && exactTo ? "exact_match" : "assignability_only",
+            reason: "assignability_pending_synthetic",
+          }
+        : {
+            status: "unverified",
+            method: "assignability_only",
+            reason: partial ? "partial_query" : (fromErased || toErased ? "type_erasure" : "synthetic_check_failed"),
+          }
+      const score = (exactFrom ? 40 : fromMatch === null ? 0 : 24) + (exactTo ? 40 : toMatch === null ? 0 : 24) + (assignabilityOk ? 20 : 0) + (candidate.exported ? 8 : 0) - (candidate.deprecated ? 15 : 0) + (candidate.kind === "Function" ? 2 : 0) - (toMatch?.unwrapped ? 10 : 0)
+      const confidence = confidenceFor({ exactFrom, exactTo, verified: assignabilityOk, partial })
       matches.push({ candidate, from: fromMatch, to: toMatch, fromAssignable, toAssignable, returnText, verification, score, confidence })
     }
     matches.sort((left, right) => right.score - left.score || left.candidate.name.localeCompare(right.candidate.name) || left.candidate.sourceFile.fileName.localeCompare(right.candidate.sourceFile.fileName) || lineFor(left.candidate) - lineFor(right.candidate))
     const assignabilityMs = performance.now() - started
     const syntheticStarted = performance.now()
     // Bound synthetic work to requested results + documented overscan — not max(50, limit).
+    // Only promote to verified after synthetic runs; unprocessed ranks stay unverified.
     const syntheticLimit = limit + SYNTHETIC_OVERSCAN
     const rankedMatches = await Promise.all(matches.map(async (match, matchIndex) => {
-      if (matchIndex >= syntheticLimit || match.verification.status !== "verified") return match
+      if (matchIndex >= syntheticLimit || match.verification.reason !== "assignability_pending_synthetic") return match
       const verification = await verifySyntheticMatch(context, project, pkg, match, options)
       return { ...match, verification }
     }))

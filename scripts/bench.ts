@@ -103,6 +103,13 @@ const commandsFor = (root: string): readonly CommandSpec[] => [
     run: (a) => a.findRelated("User"),
   },
   {
+    name: "graph",
+    batchable: true,
+    cliArgs: (r) => ["graph", JSON.stringify({ root: r, symbol: "User", depth: 1, format: "mermaid" })],
+    batchPayloads: (r, n) => Array.from({ length: n }, () => ({ root: r, symbol: "User", depth: 1, format: "mermaid" })),
+    run: (a) => a.generateGraph("User", { depth: 1, format: "mermaid" }),
+  },
+  {
     name: "transform-search",
     batchable: true,
     cliArgs: (r) => ["transform-search", JSON.stringify({ root: r, from: "User", limit: 5 })],

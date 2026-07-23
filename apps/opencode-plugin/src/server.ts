@@ -361,30 +361,31 @@ export const QuartzPlugin: Plugin = async (ctx) => {
   // per plugin instance, reused across tools until process exit or disposal.
   const analyzer = await createTypeAnalyzer(ctx.directory, { collectTiming: true })
   const client = ctx.client as { app?: { log?: (input: unknown) => Promise<unknown> } }
-  let disposed = false
-  const disposeAnalyzer = async (reason: string): Promise<void> => {
-    if (disposed) return
-    disposed = true
-    try {
-      await analyzer.dispose()
-      await client.app?.log?.({
-        body: {
-          service: "quartz",
-          level: "debug",
-          message: "quartz analyzer disposed",
-          extra: { reason },
-        },
-      })
-    } catch (cause) {
-      await client.app?.log?.({
-        body: {
-          service: "quartz",
-          level: "warn",
-          message: "quartz analyzer dispose failed",
-          extra: { reason, cause: cause instanceof Error ? cause.message : String(cause) },
-        },
-      })
-    }
+  let disposePromise: Promise<void> | null = null
+  const disposeAnalyzer = (reason: string): Promise<void> => {
+    disposePromise ??= (async () => {
+      try {
+        await analyzer.dispose()
+        await client.app?.log?.({
+          body: {
+            service: "quartz",
+            level: "debug",
+            message: "quartz analyzer disposed",
+            extra: { reason },
+          },
+        })
+      } catch (cause) {
+        await client.app?.log?.({
+          body: {
+            service: "quartz",
+            level: "warn",
+            message: "quartz analyzer dispose failed",
+            extra: { reason, cause: cause instanceof Error ? cause.message : String(cause) },
+          },
+        })
+      }
+    })()
+    return disposePromise
   }
 
   // OpenCode Hooks have no plugin-level teardown yet; bind process lifetime and

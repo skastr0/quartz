@@ -285,6 +285,8 @@ export type VerificationReason =
   | "synthetic_check_passed"
   | "synthetic_check_failed"
   | "partial_query"
+  /** Full from+to assignability passed; synthetic verification not yet applied. */
+  | "assignability_pending_synthetic"
 
 export interface VerificationMeta {
   readonly status: VerificationStatus

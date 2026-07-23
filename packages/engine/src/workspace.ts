@@ -72,6 +72,8 @@ export class QuartzWorkspace {
   #retirements = new Set<Promise<void>>()
   #activeOperations = 0
   #operationsDrained: PromiseWithResolvers<void> | null = null
+  /** Nested withVirtualFile pins the outer withProject lease, not live #current. */
+  #operationStack: RevisionState[] = []
 
   private constructor(
     root: string,
@@ -174,14 +176,14 @@ export class QuartzWorkspace {
     this.#beginOperation()
     const resolvedConfig = resolve(tsconfigPath)
     const resolvedFile = resolve(filePath)
-    const base = this.#requireCurrent()
+    // Prefer the outer withProject lease so synthetic/snippet work cannot drift
+    // onto a newer #current advanced by a concurrent refresh.
+    const base = this.#operationStack[this.#operationStack.length - 1] ?? this.#requireCurrent()
     base.readers += 1
     try {
       let result!: T
       await this.#api.runWithTemporaryFileUpdate(base.snapshot, resolvedFile, content, async (temporarySnapshot) => {
         this.#assertAcceptingWork()
-        // Concurrent refresh may retire this base; the leased snapshot remains
-        // valid for the temporary callback, and later work uses the new current.
         const project =
           (await temporarySnapshot.getDefaultProjectForFile(resolvedFile)) ??
           temporarySnapshot.getProject(resolvedConfig)
@@ -263,9 +265,11 @@ export class QuartzWorkspace {
     this.#beginOperation()
     const state = this.#requireCurrent()
     state.readers += 1
+    this.#operationStack.push(state)
     try {
       return await operation(state)
     } finally {
+      this.#operationStack.pop()
       this.#releaseState(state)
       this.#endOperation()
     }
