@@ -324,7 +324,31 @@ const findOutgoingReferences = async (project: Project, target: Target): Promise
 const findRenameSites = async (project: Project, target: Target): Promise<RenameSite[]> => {
   const sites: RenameSite[] = []
   const seen = new Set<string>()
+
+  // Prefer compiler-native reference collection: scales with references, not
+  // every identifier in the project.
+  const declarationName = declarationNameNode(target.declaration) ?? target.declaration
+  const position = declarationName.getStart(declarationName.getSourceFile())
+  try {
+    const referenced = await project.checker.getReferencedSymbolsForNode(declarationName, position)
+    for (const entry of referenced) {
+      const handles = [entry.definition, ...entry.references]
+      for (const handle of handles) {
+        const node = await handle.resolve(project)
+        if (node === undefined || node.kind !== SyntaxKind.Identifier) continue
+        const sourceFile = node.getSourceFile()
+        if (!isProjectSourceFile(sourceFile.fileName, target.packagePath)) continue
+        addSite(sites, seen, sourceFile, node)
+      }
+    }
+    if (sites.length > 0) return sites
+  } catch {
+    // Fall through to the full scan if the native reference API rejects the node.
+  }
+
+  // Fallback: batch symbol lookup across identifiers (still one call per file).
   const sourceFiles = await projectSourceFiles(project, target.packagePath)
+  const resolvedTarget = await resolveSymbol(project, target.symbol)
   for (const sourceFile of sourceFiles) {
     const nodes: Node[] = []
     visit(sourceFile, (node) => {
@@ -335,7 +359,9 @@ const findRenameSites = async (project: Project, target: Target): Promise<Rename
     for (let index = 0; index < nodes.length; index += 1) {
       const node = nodes[index]!
       const symbol = symbols[index]
-      if (symbol === undefined || !(await sameSymbol(project, symbol, target.symbol))) continue
+      if (symbol === undefined) continue
+      const resolved = await resolveSymbol(project, symbol)
+      if (resolved.id !== resolvedTarget.id) continue
       addSite(sites, seen, sourceFile, node)
     }
   }
