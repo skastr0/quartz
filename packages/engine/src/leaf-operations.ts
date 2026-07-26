@@ -43,6 +43,7 @@ import {
   isIdentifier,
   isInterfaceDeclaration,
   isTypeAliasDeclaration,
+  isTypeReferenceNode,
   isVariableDeclaration,
   isVariableStatement,
 } from "typescript/unstable/ast/is"
@@ -306,21 +307,13 @@ const propertiesFor = async (
   }
   if (included.length === 0) return []
 
-  // Batch type resolution: getTypeAtLocation / getTypeOfSymbol accept symbol|node arrays.
-  const withDeclaration = included.filter((item) => item.declaration !== undefined)
-  const withoutDeclaration = included.filter((item) => item.declaration === undefined)
+  // Symbols returned from an instantiated type carry its type mapper. Resolving
+  // the declaration node instead would report the generic parameter (for
+  // example `T`) rather than the use-site property type (for example `string`).
+  const propertyTypes = await project.checker.getTypeOfSymbol(included.map((item) => item.property))
   const typeByProperty = new Map<Symbol, Type>()
-  if (withDeclaration.length > 0) {
-    const types = await project.checker.getTypeAtLocation(withDeclaration.map((item) => item.declaration!))
-    for (let index = 0; index < withDeclaration.length; index += 1) {
-      typeByProperty.set(withDeclaration[index]!.property, types[index]!)
-    }
-  }
-  if (withoutDeclaration.length > 0) {
-    const types = await project.checker.getTypeOfSymbol(withoutDeclaration.map((item) => item.property))
-    for (let index = 0; index < withoutDeclaration.length; index += 1) {
-      typeByProperty.set(withoutDeclaration[index]!.property, types[index]!)
-    }
+  for (let index = 0; index < included.length; index += 1) {
+    typeByProperty.set(included[index]!.property, propertyTypes[index]!)
   }
 
   return Promise.all(
@@ -412,6 +405,17 @@ const findNodeAt = (node: Node, position: number): Node => {
     if (child.pos <= position && position <= child.end) best = findNodeAt(child, position)
   })
   return best
+}
+
+const semanticTypeNode = (node: Node): Node => {
+  let current = node.parent
+  while (current !== undefined && current.kind !== SyntaxKind.SourceFile) {
+    if (isTypeReferenceNode(current)) {
+      return node.pos >= current.typeName.pos && node.end <= current.typeName.end ? current : node
+    }
+    current = current.parent
+  }
+  return node
 }
 
 const evaluateTypeExpression = async (
@@ -658,9 +662,8 @@ export const createLeafOperations = (context: AnalyzerContext): LeafOperations =
     let position: number
     try { position = source.getPositionOfLineAndCharacter(line - 1, column - 1) } catch { return null }
     if (position > source.text.length) return null
-    const node = findNodeAt(source, position)
-    const type = await project.checker.getTypeAtPosition(source.fileName, position)
-    if (type === undefined) return null
+    const node = semanticTypeNode(findNodeAt(source, position))
+    const type = await project.checker.getTypeAtLocation(node)
     const point = source.getLineAndCharacterOfPosition(node.getStart())
     // Default flags vs EXPAND_FLAGS are different renders — issue both in one round-trip window.
     // When the expanded form equals the default form, share the string reference.

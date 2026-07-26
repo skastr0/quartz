@@ -11,6 +11,7 @@ The project follows Semantic Versioning for the declared public package, CLI, an
 - GitHub Release assets now bundle the exact matching TypeScript native payload and are smoke-tested outside the repository before a draft release is created.
 - `why-error` now accepts schema-visible code, message, or `file` + `line` diagnostic selectors through the CLI, and package command inventories include the composed `verify-contract` surface.
 - `related` no longer re-resolves an already-canonical target symbol for every incoming reference, reducing redundant native checker work without changing results.
+- Generic inspection now reports instantiated property types through `info` and `expand`, while `at-position` resolves a generic head to its enclosing type reference instead of `any`.
 
 ## [0.2.0-next.0] - 2026-07-23
 

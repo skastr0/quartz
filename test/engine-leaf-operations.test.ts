@@ -39,6 +39,8 @@ const createFixture = (): { readonly root: string; readonly sourcePath: string }
       "export const user: User = { id: \"one\" }",
       "const privateValue = 1",
       "export const broken: string = 1",
+      "export interface Box<T> { value: T }",
+      "export type StringBox = Box<string>",
       "",
     ].join("\n"),
   )
@@ -55,8 +57,8 @@ describe("createLeafOperations", () => {
     const context = await AnalyzerContext.open(fixture.root)
     try {
       const result = await createLeafOperations(context).listSymbols({ kind: "interface" })
-      expect(result.total).toBe(2)
-      expect(result.symbols.map((symbol) => symbol.name)).toEqual(["RequiredUser", "User"])
+      expect(result.total).toBe(3)
+      expect(result.symbols.map((symbol) => symbol.name)).toEqual(["Box", "RequiredUser", "User"])
       expect(result.symbols.every((symbol) => symbol.file === "src/index.ts" && symbol.isIndexExport)).toBe(true)
     } finally {
       await context.close()
@@ -73,6 +75,47 @@ describe("createLeafOperations", () => {
         { name: "id", type: "string", from: "src/index.ts" },
         { name: "name", type: "string | undefined", optional: true, from: "src/index.ts" },
       ])
+    } finally {
+      await context.close()
+    }
+  })
+
+  it("preserves instantiated generic properties and semantic type references", async () => {
+    const fixture = createFixture()
+    const context = await AnalyzerContext.open(fixture.root)
+    try {
+      const operations = createLeafOperations(context)
+      const info = await operations.getTypeInfo("StringBox")
+      const expanded = await operations.expandType("StringBox")
+      const reference = await operations.getTypeAtPosition("src/index.ts", 13, 25)
+      const argument = await operations.getTypeAtPosition("src/index.ts", 13, 29)
+      const value = await operations.getTypeAtPosition("src/index.ts", 9, 14)
+
+      expect(info?.properties).toEqual([
+        { name: "value", type: "string", from: "src/index.ts" },
+      ])
+      expect(expanded?.properties).toEqual([
+        { name: "value", type: "string", from: "src/index.ts" },
+      ])
+      expect(reference).toMatchObject({
+        type: "StringBox",
+        expanded: "Box<string>",
+        nodeKind: "TypeReference",
+        nodeText: "Box<string>",
+        location: { file: "src/index.ts", line: 13, column: 25 },
+      })
+      expect(argument).toMatchObject({
+        type: "string",
+        nodeKind: "StringKeyword",
+        nodeText: "string",
+        location: { file: "src/index.ts", line: 13, column: 29 },
+      })
+      expect(value).toMatchObject({
+        type: "User",
+        nodeKind: "Identifier",
+        nodeText: "user",
+        location: { file: "src/index.ts", line: 9, column: 14 },
+      })
     } finally {
       await context.close()
     }
@@ -111,7 +154,14 @@ describe("createLeafOperations", () => {
     try {
       const operations = createLeafOperations(context)
       const exported = await operations.getFileDeclarations("src/index.ts")
-      expect(exported?.declarations.map((declaration) => declaration.name)).toEqual(["broken", "RequiredUser", "user", "User"])
+      expect(exported?.declarations.map((declaration) => declaration.name)).toEqual([
+        "Box",
+        "broken",
+        "RequiredUser",
+        "StringBox",
+        "user",
+        "User",
+      ])
       const withPrivate = await operations.getFileDeclarations("src/index.ts", { includePrivate: true })
       expect(withPrivate?.declarations.map((declaration) => declaration.name)).toContain("privateValue")
     } finally {
