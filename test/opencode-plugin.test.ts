@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import type { Hooks } from "@opencode-ai/plugin"
 import { describe, expect, it, vi } from "vitest"
 import pluginModule, { QuartzPlugin } from "../apps/opencode-plugin/src/server"
 
@@ -8,6 +9,32 @@ const toolExecute = async (plugin: any, name: string, args: Record<string, unkno
   plugin.tool[name].execute(args)
 
 const parse = (value: string) => JSON.parse(value) as any
+type OpenCodeEvent = Parameters<NonNullable<Hooks["event"]>>[0]["event"]
+type SessionDeletedEvent = Extract<OpenCodeEvent, { readonly type: "session.deleted" }>
+type Session = SessionDeletedEvent["properties"]["info"]
+type ToolExecuteAfter = NonNullable<Hooks["tool.execute.after"]>
+
+const session = (directory: string): Session => ({
+  id: "session-gone",
+  projectID: "project-quartz",
+  directory,
+  title: "Deleted session",
+  version: "1",
+  time: { created: 1, updated: 1 },
+})
+
+const toolAfterInput = (tool: string): Parameters<ToolExecuteAfter>[0] => ({
+  tool,
+  sessionID: "session-1",
+  callID: "call-1",
+  args: {},
+})
+
+const toolAfterOutput: Parameters<ToolExecuteAfter>[1] = {
+  title: "completed",
+  output: "",
+  metadata: {},
+}
 
 describe("OpenCode plugin wrapper", () => {
   it("exports a server plugin module", () => {
@@ -161,38 +188,45 @@ describe("OpenCode plugin wrapper", () => {
     })
   }, 20_000)
 
-  it("disposes the persistent analyzer on explicit dispose and session terminal events", async () => {
+  it("disposes a matching server instance exactly once and keeps session deletion usable", async () => {
     const log = vi.fn()
     const plugin: any = await QuartzPlugin({
       directory: new URL("./fixtures", import.meta.url).pathname,
       client: { app: { log } },
     } as never)
 
-    expect(typeof plugin.dispose).toBe("function")
-    await plugin.dispose()
-    expect(log).toHaveBeenCalledWith({
-      body: expect.objectContaining({
-        service: "quartz",
-        message: "quartz analyzer disposed",
-        extra: expect.objectContaining({ reason: "explicit" }),
-      }),
-    })
+    const deleted = {
+      type: "session.deleted",
+      properties: { info: session(new URL("./fixtures", import.meta.url).pathname) },
+    } satisfies OpenCodeEvent
+    await plugin.event({ event: deleted })
+    expect(parse(await toolExecute(plugin, "type_info", { symbol: "User" }))).toMatchObject({ name: "User" })
+    expect(log).not.toHaveBeenCalledWith(
+      expect.objectContaining({ body: expect.objectContaining({ message: "quartz analyzer disposed" }) }),
+    )
 
-    const again: any = await QuartzPlugin({
-      directory: new URL("./fixtures", import.meta.url).pathname,
-      client: { app: { log } },
-    } as never)
-    await again.event({ event: { type: "session.deleted", properties: { sessionID: "gone" } } })
+    await plugin.event({
+      event: { type: "server.instance.disposed", properties: { directory: "/another-workspace" } },
+    })
+    expect(log).not.toHaveBeenCalledWith(
+      expect.objectContaining({ body: expect.objectContaining({ message: "quartz analyzer disposed" }) }),
+    )
+
+    const directory = new URL("./fixtures", import.meta.url).pathname
+    await plugin.event({ event: { type: "server.instance.disposed", properties: { directory } } })
+    await plugin.event({ event: { type: "server.instance.disposed", properties: { directory } } })
+
+    expect(log).toHaveBeenCalledTimes(1)
     expect(log).toHaveBeenCalledWith({
       body: expect.objectContaining({
         service: "quartz",
         message: "quartz analyzer disposed",
-        extra: expect.objectContaining({ reason: "session.deleted" }),
+        extra: expect.objectContaining({ reason: "server.instance.disposed" }),
       }),
     })
   })
 
-  it("preserves idle logging and dirty-cache hook behavior", async () => {
+  it("invalidates dirty caches from OpenCode file events and modifying-tool fallbacks", async () => {
     const root = mkdtempSync(join(tmpdir(), "tlt-plugin-"))
     mkdirSync(join(root, "src"))
     writeFileSync(join(root, "tsconfig.json"), JSON.stringify({ include: ["src/**/*.ts"] }), "utf8")
@@ -207,22 +241,32 @@ describe("OpenCode plugin wrapper", () => {
 
     const before = parse(await toolExecute(plugin, "type_info", { symbol: "TempUser" }))
     writeFileSync(sourcePath, "export interface TempUser { name: string; age: number }\n", "utf8")
-    await plugin["tool.execute.after"]({ tool: "write" })
-    const after = parse(await toolExecute(plugin, "type_info", { symbol: "TempUser" }))
+    await plugin.event({ event: { type: "file.edited", properties: { file: sourcePath } } })
+    const afterEdit = parse(await toolExecute(plugin, "type_info", { symbol: "TempUser" }))
+    writeFileSync(sourcePath, "export interface TempUser { name: string; age: number; role: string }\n", "utf8")
+    await plugin.event({ event: { type: "file.watcher.updated", properties: { file: sourcePath, event: "change" } } })
+    const afterWatch = parse(await toolExecute(plugin, "type_info", { symbol: "TempUser" }))
+
+    for (const [toolName, property] of [
+      ["apply_patch", "enabled"],
+      ["edit", "status"],
+      ["write", "title"],
+      ["morph-mcp_edit_file", "nickname"],
+    ] as const) {
+      writeFileSync(sourcePath, `export interface TempUser { name: string; ${property}: string }\n`, "utf8")
+      await plugin["tool.execute.after"](toolAfterInput(toolName), toolAfterOutput)
+      expect(parse(await toolExecute(plugin, "type_info", { symbol: "TempUser" })).properties.map((item: any) => item.name)).toEqual([
+        "name",
+        property,
+      ])
+    }
+
     const refresh = await toolExecute(plugin, "type_refresh")
 
-    await plugin.event({ event: { type: "session.idle", properties: { sessionID: "session-1" } } })
-
     expect(before.properties.map((property: any) => property.name)).toEqual(["name"])
-    expect(after.properties.map((property: any) => property.name)).toEqual(["name", "age"])
+    expect(afterEdit.properties.map((property: any) => property.name)).toEqual(["name", "age"])
+    expect(afterWatch.properties.map((property: any) => property.name)).toEqual(["name", "age", "role"])
     expect(refresh).toContain("Refreshed all TypeScript projects")
-    expect(log).toHaveBeenCalledWith({
-      body: expect.objectContaining({
-        service: "quartz",
-        level: "debug",
-        extra: { sessionID: "session-1" },
-      }),
-    })
   })
 
   it("routes package-scoped plugin calls to the selected package", async () => {

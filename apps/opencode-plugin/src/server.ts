@@ -10,7 +10,7 @@ const optionalPackageArg = tool.schema
 
 const limitArg = tool.schema.number().optional().describe("Maximum number of results")
 const json = (value: unknown) => JSON.stringify(value, null, 2)
-const FILE_MODIFYING_TOOLS = new Set(["edit", "morph-mcp_edit_file", "write"])
+const FILE_MODIFYING_TOOLS = new Set(["apply_patch", "edit", "morph-mcp_edit_file", "write"])
 
 const packageOption = (packageName: string | undefined): { readonly packageName?: string } =>
   packageName === undefined ? {} : { packageName }
@@ -388,14 +388,6 @@ export const QuartzPlugin: Plugin = async (ctx) => {
     return disposePromise
   }
 
-  // OpenCode Hooks have no plugin-level teardown yet; bind process lifetime and
-  // known session terminal events so child TS-Go processes do not leak.
-  const onProcessExit = () => {
-    void disposeAnalyzer("process-exit")
-  }
-  process.once("beforeExit", onProcessExit)
-  process.once("exit", onProcessExit)
-
   return {
     event: async ({ event }) => {
       if (event.type === "session.idle") {
@@ -408,10 +400,10 @@ export const QuartzPlugin: Plugin = async (ctx) => {
           },
         })
       }
-      // Dispose when the host signals session deletion (OpenCode emits session.deleted).
-      if (event.type === "session.deleted") {
-        process.off("beforeExit", onProcessExit)
-        process.off("exit", onProcessExit)
+      if (event.type === "file.edited" || event.type === "file.watcher.updated") {
+        await analyzer.markDirty()
+      }
+      if (event.type === "server.instance.disposed" && event.properties.directory === ctx.directory) {
         await disposeAnalyzer(event.type)
       }
     },
@@ -422,11 +414,7 @@ export const QuartzPlugin: Plugin = async (ctx) => {
     },
     tool: createToolDefinitions(analyzer),
     // Test/host escape hatch — not part of Hooks, ignored by hosts that strip unknown keys.
-    dispose: () => {
-      process.off("beforeExit", onProcessExit)
-      process.off("exit", onProcessExit)
-      return disposeAnalyzer("explicit")
-    },
+    dispose: () => disposeAnalyzer("explicit"),
   } as Awaited<ReturnType<Plugin>> & { dispose: () => Promise<void> }
 }
 

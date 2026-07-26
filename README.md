@@ -242,7 +242,7 @@ Build the plugin bundle:
 bun run --filter @skastr0/quartz-opencode-plugin build
 ```
 
-Configure OpenCode to load `@skastr0/quartz-opencode-plugin/server` after the package is available to the project. The plugin creates one Effect runtime for the OpenCode workspace directory, reuses the analyzer across tool calls, and marks the project cache dirty after file-modifying tools such as `edit`, `write`, or `morph-mcp_edit_file`.
+Configure OpenCode to load `@skastr0/quartz-opencode-plugin/server` after the package is available to the project. The plugin creates one persistent native analyzer for the OpenCode workspace directory and reuses it across tool calls. It marks the analyzer cache dirty from OpenCode file events, with tool-hook fallbacks for `apply_patch`, `edit`, `write`, and `morph-mcp_edit_file`; it disposes only when OpenCode reports `server.instance.disposed` for that directory, not when a session is deleted.
 
 Plugin tools:
 

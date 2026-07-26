@@ -26,7 +26,7 @@ The bundle is written to `dist/server.js` and exported as `@skastr0/quartz-openc
 
 ## Runtime Behavior
 
-The plugin roots Quartz at the OpenCode workspace directory. It creates one Effect runtime, reuses the analyzer across tool calls, and marks the analyzer cache dirty after file-modifying tools such as `edit`, `write`, or `morph-mcp_edit_file`.
+The plugin roots one persistent native Quartz analyzer at the OpenCode workspace directory and reuses it across tool calls. It marks the analyzer cache dirty from OpenCode's `file.edited` and `file.watcher.updated` events, with tool-hook fallbacks for `apply_patch`, `edit`, `write`, and `morph-mcp_edit_file`. The analyzer is disposed when OpenCode emits `server.instance.disposed` for that workspace directory; deleting a session does not close it.
 
 Use the optional `package` argument when the workspace has multiple discovered TypeScript packages.
 
