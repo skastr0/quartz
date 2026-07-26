@@ -17,7 +17,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "rm -rf dist && bun build ./src/server.ts --outdir ./dist --target bun --format esm --external @opencode-ai/plugin --external @skastr0/quartz-engine && tsc -p tsconfig.build.json",
+    "build": "bun ../../scripts/clean-build-output.ts opencode-plugin && bun build ./src/server.ts --outdir ./dist --target bun --format esm --external @opencode-ai/plugin --external @skastr0/quartz-engine && tsc -p tsconfig.build.json",
     "prepack": "bun run build"
   },
   "dependencies": {

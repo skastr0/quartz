@@ -16,7 +16,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "rm -rf dist && bun build ./src/index.ts --outdir ./dist --target bun --format esm --external typescript && tsc -p tsconfig.build.json",
+    "build": "bun ../../scripts/clean-build-output.ts engine && bun build ./src/index.ts --outdir ./dist --target bun --format esm --external typescript && tsc -p tsconfig.build.json",
     "prepack": "bun run build"
   },
   "dependencies": {
