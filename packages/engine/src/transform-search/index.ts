@@ -332,6 +332,13 @@ export type TransformSearchOperation = (
   options: TransformSearchOptions & { readonly packageName?: string },
 ) => Promise<TransformSearchResponse>
 
+/** Preserve a bounded non-trust-filter path while surfacing nearby failures. */
+const SYNTHETIC_OVERSCAN = 10
+/** Keep virtual-project verification parallel without saturating the compiler service. */
+const SYNTHETIC_VERIFICATION_BATCH_SIZE = 8
+/** Bound source-file transport fan-out on large projects while retaining parallel reads. */
+const SOURCE_FILE_BATCH_SIZE = 32
+
 interface TransformIndex {
   readonly sourceFiles: readonly SourceFile[]
   readonly allCandidates: readonly Candidate[]
@@ -343,8 +350,16 @@ interface TransformIndex {
 
 const loadTransformIndex = async (project: Project): Promise<TransformIndex> => {
   const sourceNames = await project.program.getSourceFileNames()
-  const sourceFiles = (await Promise.all(sourceNames.map((name) => project.program.getSourceFile(name))))
-    .filter((sourceFile): sourceFile is SourceFile => sourceFile !== undefined && !sourceFile.isDeclarationFile && !sourceFile.fileName.includes("node_modules"))
+  const sourceFiles: SourceFile[] = []
+  for (let start = 0; start < sourceNames.length; start += SOURCE_FILE_BATCH_SIZE) {
+    const batch = await Promise.all(
+      sourceNames.slice(start, start + SOURCE_FILE_BATCH_SIZE).map((name) => project.program.getSourceFile(name)),
+    )
+    sourceFiles.push(...batch.filter(
+      (sourceFile): sourceFile is SourceFile =>
+        sourceFile !== undefined && !sourceFile.isDeclarationFile && !sourceFile.fileName.includes("node_modules"),
+    ))
+  }
   const allCandidates = enumerate(sourceFiles)
   const availableNodes: TypeNode[] = []
   for (const candidate of allCandidates) {
@@ -388,9 +403,6 @@ const loadTransformIndex = async (project: Project): Promise<TransformIndex> => 
   }
   return { sourceFiles, allCandidates, availableTypes, byNode, inferredReturnTypes, inferredReturnTexts }
 }
-
-/** Synthetic verification overscan: check this many extra candidates past the requested limit. */
-const SYNTHETIC_OVERSCAN = 10
 
 export const createTransformSearchOperation = (context: AnalyzerContext) => async (
   options: TransformSearchOptions & { readonly packageName?: string },
@@ -486,20 +498,51 @@ export const createTransformSearchOperation = (context: AnalyzerContext) => asyn
             reason: partial ? "partial_query" : (fromErased || toErased ? "type_erasure" : "synthetic_check_failed"),
           }
       const score = (exactFrom ? 40 : fromMatch === null ? 0 : 24) + (exactTo ? 40 : toMatch === null ? 0 : 24) + (assignabilityOk ? 20 : 0) + (candidate.exported ? 8 : 0) - (candidate.deprecated ? 15 : 0) + (candidate.kind === "Function" ? 2 : 0) - (toMatch?.unwrapped ? 10 : 0)
-      const confidence = confidenceFor({ exactFrom, exactTo, verified: assignabilityOk, partial })
+      const confidence = confidenceFor({ exactFrom, exactTo, verified: false, partial })
       matches.push({ candidate, from: fromMatch, to: toMatch, fromAssignable, toAssignable, returnText, verification, score, confidence })
     }
     matches.sort((left, right) => right.score - left.score || left.candidate.name.localeCompare(right.candidate.name) || left.candidate.sourceFile.fileName.localeCompare(right.candidate.sourceFile.fileName) || lineFor(left.candidate) - lineFor(right.candidate))
     const assignabilityMs = performance.now() - started
     const syntheticStarted = performance.now()
-    // Bound synthetic work to requested results + documented overscan — not max(50, limit).
-    // Only promote to verified after synthetic runs; unprocessed ranks stay unverified.
-    const syntheticLimit = limit + SYNTHETIC_OVERSCAN
-    const rankedMatches = await Promise.all(matches.map(async (match, matchIndex) => {
-      if (matchIndex >= syntheticLimit || match.verification.reason !== "assignability_pending_synthetic") return match
-      const verification = await verifySyntheticMatch(context, project, pkg, match, options)
-      return { ...match, verification }
-    }))
+    const trustFiltered = options.verifiedOnly === true || options.minVerificationStatus === "verified"
+    const finalizeVerification = (match: Match, verification: VerificationMeta): Match => {
+      const verified = verification.status === "verified"
+      return {
+        ...match,
+        verification,
+        confidence: verification.reason === "synthetic_check_failed"
+          ? "low"
+          : confidenceFor({
+              exactFrom: match.from?.exact === true,
+              exactTo: match.to?.exact === true,
+              verified,
+              partial: match.from === null || match.to === null || !fromQuery?.resolved || !toQuery?.resolved,
+            }),
+      }
+    }
+    const verifyPending = async (match: Match): Promise<Match> => (
+      match.verification.reason === "assignability_pending_synthetic"
+        ? finalizeVerification(match, await verifySyntheticMatch(context, project, pkg, match, options))
+        : finalizeVerification(match, match.verification)
+    )
+    let rankedMatches: Match[]
+    if (!trustFiltered) {
+      const prefixLength = Math.min(matches.length, limit + SYNTHETIC_OVERSCAN)
+      const verifiedPrefix = await Promise.all(matches.slice(0, prefixLength).map(verifyPending))
+      rankedMatches = [...verifiedPrefix, ...matches.slice(prefixLength)]
+    } else if (limit === 0) {
+      rankedMatches = []
+    } else {
+      rankedMatches = []
+      let verifiedCount = 0
+      for (let start = 0; start < matches.length && verifiedCount < limit; start += SYNTHETIC_VERIFICATION_BATCH_SIZE) {
+        const batch = await Promise.all(
+          matches.slice(start, start + SYNTHETIC_VERIFICATION_BATCH_SIZE).map(verifyPending),
+        )
+        rankedMatches.push(...batch)
+        verifiedCount += batch.filter((match) => match.verification.status === "verified").length
+      }
+    }
     const syntheticMs = performance.now() - syntheticStarted
     const statusCounts: Record<VerificationStatus, number> = { verified: 0, unverified: 0, unverifiable: 0 }
     for (const match of rankedMatches) statusCounts[match.verification.status] += 1

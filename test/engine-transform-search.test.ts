@@ -112,6 +112,48 @@ describe("native engine transform search", () => {
     expect(createUser?.verification).toMatchObject({ status: "verified", method: "synthetic" })
   })
 
+  it("continues synthetic verification until verifiedOnly reaches the requested limit", async () => {
+    const root = await mkdtemp(join(tmpdir(), "quartz-transform-trust-"))
+    try {
+      await writeFile(join(root, "tsconfig.json"), JSON.stringify({
+        compilerOptions: { target: "ESNext", module: "ESNext", moduleResolution: "bundler", strict: true, noEmit: true },
+        include: ["source.ts"],
+      }))
+      await writeFile(join(root, "source.ts"), [
+        "export interface Source { id: string }",
+        "export interface Target { id: string }",
+        ...Array.from({ length: 12 }, (_, index) => `export class Broken${index} { private map(value: Source): Target { return value } }`),
+        "export const valid = (value: Source): Target => value",
+      ].join("\n"))
+      const temporaryContext = await AnalyzerContext.open(root)
+      try {
+        const response = await createTransformSearchOperation(temporaryContext)({
+          from: "Source",
+          to: "Target",
+          paramPosition: "any",
+          verifiedOnly: true,
+          limit: 1,
+        })
+        expect(response.results).toHaveLength(1)
+        expect(response.results[0]).toMatchObject({ name: "valid", verification: { status: "verified" } })
+      } finally {
+        await temporaryContext.close()
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it("does not verify candidates when a trust-filtered query requests zero results", async () => {
+    const response = await search({ from: "User", to: "UserDTO", paramPosition: "any", verifiedOnly: true, limit: 0 })
+
+    expect(response.results).toEqual([])
+    expect(response.stats).toMatchObject({
+      returned: 0,
+      verification: { verified: 0, unverified: 0, unverifiable: 0 },
+    })
+  })
+
   it("returns requested synthetic verification evidence", async () => {
     const response = await search({
       from: "User",

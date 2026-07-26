@@ -152,6 +152,20 @@ describe("verification operations", () => {
     expect(failed.next_steps.length).toBeGreaterThan(0)
   })
 
+  it("does not return ok when transform evidence is a failed blocking check", async () => {
+    const { context } = makeContext(makeWorkspace())
+    const operations = createVerificationOperations(context, {
+      compatibility: async () => ({ compatible: true, from: "Source", to: "Target" }),
+      diagnostics: async () => [],
+      transformSearch: async () => transformEvidence,
+    })
+
+    const result = await operations.verifyContract({ from: "Source", to: "Target", snippet: "const valid = true;" })
+
+    expect(result.checks.transform).toMatchObject({ ran: true, blocking: true, passed: false })
+    expect(result.ok).toBe(false)
+  })
+
   it("cleans the registry after virtual project failure", async () => {
     const registry = createVirtualFileRegistry("/tmp/quartz-test")
     const { context } = makeContext(makeWorkspace(new Error("snapshot failed")), registry)

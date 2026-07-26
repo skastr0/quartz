@@ -355,7 +355,8 @@ export const createVerificationOperations = (
     const hasFromTo = from !== undefined && to !== undefined
     const contractEvidenceOk = hasFromTo ? directAssignable || transformPassed : true
     const hasPositiveEvidence = directAssignable || transformPassed || checks.snippet.passed === true
-    const ok = snippetOk && diagnosticsOk && contractEvidenceOk && hasPositiveEvidence
+    const blockingChecksPassed = Object.values(checks).every((check) => !check.blocking || check.passed === true)
+    const ok = snippetOk && diagnosticsOk && contractEvidenceOk && hasPositiveEvidence && blockingChecksPassed
     if (!ok) nextSteps.add("Treat this contract as untrusted until a blocking check passes.")
 
     return {

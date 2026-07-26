@@ -250,6 +250,7 @@ describe("property-style regression invariants", () => {
         if (failed === undefined) continue
 
         expect(failed.verification.status).not.toBe("verified")
+        expect(failed.confidence).not.toBe("high")
         expect(failed.verification.diagnostics === undefined).toBe(!options.includeDiagnostics)
         expect(failed.verification.syntheticCode === undefined).toBe(!options.includeSyntheticCode)
       }
