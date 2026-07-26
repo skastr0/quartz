@@ -55,7 +55,17 @@ const main = async (): Promise<void> => {
   process.stderr.write(`[canary] worktree: ${work}\n`)
   try {
     // Copy sources needed to compile/test without mutating the real tree.
-    for (const entry of ["apps", "packages", "scripts", "test", "tsconfig.json", "vitest.config.ts", "package.json", "bun.lock"]) {
+    for (const entry of [
+      "apps",
+      "packages",
+      "payloads",
+      "scripts",
+      "test",
+      "tsconfig.json",
+      "vitest.config.ts",
+      "package.json",
+      "bun.lock",
+    ]) {
       const from = join(REPO_ROOT, entry)
       if (!existsSync(from)) continue
       cpSync(from, join(work, entry), { recursive: true })
