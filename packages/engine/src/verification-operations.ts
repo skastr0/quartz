@@ -179,9 +179,19 @@ export const createVerificationOperations = (
   const explainError: TypeAnalyzer["explainError"] = async (options: ErrorExplanationOptions): Promise<ErrorExplanationResult | null> => {
     let code = options.code ?? 0
     let message = options.message ?? ""
-    if (message.length === 0 && options.file !== undefined && options.line !== undefined) {
+    if (message.length === 0 && (
+      options.code !== undefined
+      || (options.file !== undefined && options.line !== undefined)
+    )) {
       const diagnostics = asDiagnostics(await dependencies.diagnostics(options.packageName))
-      const match = diagnostics.find((diagnostic) => diagnostic.file?.endsWith(options.file!) && diagnostic.line === options.line)
+      const match =
+        options.file !== undefined && options.line !== undefined
+          ? diagnostics.find((diagnostic) =>
+              diagnostic.file?.endsWith(options.file!)
+              && diagnostic.line === options.line
+              && (options.code === undefined || diagnostic.code === options.code)
+            )
+          : diagnostics.find((diagnostic) => diagnostic.code === options.code)
       if (match !== undefined) {
         code = match.code
         message = match.message

@@ -58,6 +58,7 @@ Relationships and refactors:
 - `type_why_error`
 - `type_explain`
 - `type_transform_search`
+- `type_verify_contract`
 
 ## Examples
 

@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import { join, relative } from "node:path"
 import { spawnSync } from "node:child_process"
@@ -244,6 +244,7 @@ describe("agentic CLI protocol", () => {
     const capabilities = runCli(["capabilities"], undefined, { QUARTZ_HOME: quartzHome })
     const schemaList = runCli(["schema", "list"])
     const schemas = runCli(["schema", "show", "graph"])
+    const whyErrorSchema = runCli(["schema", "show", "why-error"])
     const examplesList = runCli(["examples", "list"])
     const examples = runCli(["examples", "show", "info"])
     const doctor = runCli(["doctor", JSON.stringify({ root: fixturesPath })])
@@ -262,6 +263,7 @@ describe("agentic CLI protocol", () => {
     })
 
     expect(schemas.status).toBe(0)
+    expect(whyErrorSchema.status).toBe(0)
     expect(schemaList.status).toBe(0)
     expect(parse(schemaList.stdout)).toMatchObject({
       ok: true,
@@ -280,6 +282,11 @@ describe("agentic CLI protocol", () => {
         },
       },
     })
+    expect(parse(whyErrorSchema.stdout).data.json_schema.anyOf.map((option: any) => option.required)).toEqual([
+      ["code"],
+      ["message"],
+      ["file", "line"],
+    ])
 
     expect(examples.status).toBe(0)
     expect(examplesList.status).toBe(0)
@@ -367,6 +374,42 @@ describe("agentic CLI protocol", () => {
         issues: [expect.objectContaining({ kind: "missing_property", property: "id" })],
       },
     })
+  }, cliTestTimeout)
+
+  it("resolves project diagnostics by location or code", () => {
+    const root = mkdtempSync(join(tmpdir(), "quartz-why-error-"))
+    writeFileSync(
+      join(root, "tsconfig.json"),
+      JSON.stringify({ compilerOptions: { noEmit: true, strict: true }, include: ["*.ts"] }),
+      "utf8",
+    )
+    writeFileSync(join(root, "index.ts"), "export const broken: string = 1\n", "utf8")
+
+    try {
+      const byLocation = runCli([
+        "why-error",
+        JSON.stringify({ root, file: "index.ts", line: 1 }),
+      ])
+      const byCode = runCli([
+        "why-error",
+        JSON.stringify({ root, code: 2322 }),
+      ])
+
+      for (const result of [byLocation, byCode]) {
+        expect(result.status).toBe(0)
+        expect(result.stderr).toBe("")
+        expect(parse(result.stdout)).toMatchObject({
+          ok: true,
+          command: "why-error",
+          data: {
+            error: { code: 2322, message: expect.stringContaining("number") },
+            explanation: expect.stringContaining("number"),
+          },
+        })
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   }, cliTestTimeout)
 
   it("verifies composed contract evidence through the CLI", () => {

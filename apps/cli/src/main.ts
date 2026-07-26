@@ -146,13 +146,29 @@ const RefactorPreviewPayload = Schema.Struct({
   to: SymbolName,
 })
 
-const WhyErrorPayload = Schema.Struct({
+const whyErrorFields = {
   ...baseFields,
   code: Schema.optional(PositiveInteger),
   message: Schema.optional(Schema.NonEmptyString),
   file: Schema.optional(FilePath),
   line: Schema.optional(PositiveInteger),
-})
+}
+
+const WhyErrorPayload = Schema.Union(
+  Schema.Struct({
+    ...whyErrorFields,
+    code: PositiveInteger,
+  }),
+  Schema.Struct({
+    ...whyErrorFields,
+    message: Schema.NonEmptyString,
+  }),
+  Schema.Struct({
+    ...whyErrorFields,
+    file: FilePath,
+    line: PositiveInteger,
+  }),
+)
 
 const TransformSearchPayload = Schema.Struct({
   ...baseFields,
@@ -641,7 +657,7 @@ const commandSpecs = {
   } satisfies CommandSpec<RefactorPreviewPayload>,
   "why-error": {
     name: "why-error",
-    description: "Explain a TypeScript diagnostic.",
+    description: "Explain a TypeScript diagnostic by code, message, or file/line.",
     schema: WhyErrorPayload,
     batch: true,
     artifactEligible: true,
@@ -651,23 +667,29 @@ const commandSpecs = {
       message: "Type 'UserInput' is not assignable to type 'User'.",
     },
     execute: (payload: WhyErrorPayload) =>
-      requireAnyField(payload, ["code", "message"], "Provide a TypeScript diagnostic code or message.").pipe(
-        Effect.flatMap(() =>
-          callAnalyzer(payload, (analyzer) => analyzer.explainError({
-            ...packageField(payload),
-            ...(payload.code === undefined ? {} : { code: payload.code }),
-            ...(payload.message === undefined ? {} : { message: payload.message }),
-            ...(payload.file === undefined ? {} : { file: payload.file }),
-            ...(payload.line === undefined ? {} : { line: payload.line }),
-          }))
-            .pipe(Effect.flatMap((value) => requireFound(value, "Diagnostic could not be explained", { code: payload.code }))),
-        ),
-      ),
-    target: (payload: WhyErrorPayload) => ({ code: payload.code, message: payload.message }),
+      callAnalyzer(payload, (analyzer) => analyzer.explainError({
+        ...packageField(payload),
+        ...(payload.code === undefined ? {} : { code: payload.code }),
+        ...(payload.message === undefined ? {} : { message: payload.message }),
+        ...(payload.file === undefined ? {} : { file: payload.file }),
+        ...(payload.line === undefined ? {} : { line: payload.line }),
+      }))
+        .pipe(Effect.flatMap((value) => requireFound(value, "Diagnostic could not be explained", {
+          code: payload.code,
+          message: payload.message,
+          file: payload.file,
+          line: payload.line,
+        }))),
+    target: (payload: WhyErrorPayload) => ({
+      code: payload.code,
+      message: payload.message,
+      file: payload.file,
+      line: payload.line,
+    }),
   } satisfies CommandSpec<WhyErrorPayload>,
   explain: {
     name: "explain",
-    description: "Explain resolution of a TypeScript type expression.",
+    description: "Expand a TypeScript type expression and return its resolved form.",
     schema: EvalPayload,
     batch: true,
     artifactEligible: true,

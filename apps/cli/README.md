@@ -66,6 +66,7 @@ quartz doctor '{"root":"test/fixtures"}'
 - `why-error`
 - `explain`
 - `transform-search`
+- `verify-contract`
 - `doctor`
 
 Run `quartz schema show <command>` for exact payload fields. Run `bun run verify:docs-examples` from the workspace root to smoke-test the documented examples.

@@ -130,6 +130,11 @@ describe("verification operations", () => {
       issues: [{ kind: "type_mismatch" }],
       explanation: expect.stringContaining("number"),
     })
+    await expect(operations.explainError({ code: 2322 })).resolves.toMatchObject({
+      error: { code: 2322 },
+      issues: [{ kind: "type_mismatch" }],
+      explanation: expect.stringContaining("number"),
+    })
   })
 
   it("returns verify-contract pass and failure gaps", async () => {

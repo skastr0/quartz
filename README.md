@@ -123,8 +123,8 @@ All command examples below use `test/fixtures`, the same fixture repo exercised 
 | `compatible` | Check whether one type is assignable to another. | `{"root":"test/fixtures","from":"ExtendedUser","to":"User"}` |
 | `graph` | Generate a type dependency graph as Mermaid or DOT. | `{"root":"test/fixtures","symbol":"ExtendedUser","depth":2,"format":"mermaid"}` |
 | `refactor-preview` | Preview a rename refactor without applying it. | `{"root":"test/fixtures","symbol":"RefactorUser","to":"RenamedUser"}` |
-| `why-error` | Explain a TypeScript diagnostic code or message. | `{"root":"test/fixtures","code":2322,"message":"Type 'UserInput' is not assignable to type 'User'."}` |
-| `explain` | Show resolution steps for a type expression. | `{"root":"test/fixtures","expression":"Pick<User, \"id\" | \"name\">"}` |
+| `why-error` | Explain a TypeScript diagnostic by code, message, or a file/line pair. | `{"root":"test/fixtures","code":2322,"message":"Type 'UserInput' is not assignable to type 'User'."}` |
+| `explain` | Expand a type expression and return its resolved form. | `{"root":"test/fixtures","expression":"Pick<User, \"id\" | \"name\">"}` |
 | `transform-search` | Search functions by structural input/output type compatibility. | `{"root":"test/fixtures","from":"User","to":"UserDTO","limit":5}` |
 | `verify-contract` | Compose compatibility, snippet, diagnostics, and transform evidence for a proposed contract. | `{"root":"test/fixtures","from":"User","to":"UserDTO","symbol":"toDTO"}` |
 | `doctor` | Inspect local CLI health and project discovery. | `{"root":"test/fixtures"}` |

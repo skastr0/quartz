@@ -9,6 +9,7 @@ The project follows Semantic Versioning for the declared public package, CLI, an
 ### Fixed
 
 - GitHub Release assets now bundle the exact matching TypeScript native payload and are smoke-tested outside the repository before a draft release is created.
+- `why-error` now accepts schema-visible code, message, or `file` + `line` diagnostic selectors through the CLI, and package command inventories include the composed `verify-contract` surface.
 
 ## [0.2.0-next.0] - 2026-07-23
 
