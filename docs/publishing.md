@@ -17,7 +17,7 @@ Quartz is experimental. The CLI protocol, package exports, plugin tool surface, 
 | `@skastr0/quartz-darwin-x64` | publishable | npm optional platform package |
 | `@skastr0/quartz-linux-arm64` | publishable | npm optional platform package |
 | `@skastr0/quartz-linux-x64` | publishable | npm optional platform package |
-| `quartz` standalone CLI binaries | publishable | GitHub Releases |
+| `quartz` self-contained CLI archives | publishable | GitHub Releases |
 | `@skastr0/quartz-cli` source app | private | workspace source package, not published |
 | `@skastr0/quartz-workspace` root package | private | not published |
 
@@ -91,7 +91,7 @@ Before dispatching `.github/workflows/release-binaries.yml`:
 - confirm `CHANGELOG.md` has the intended release notes
 - confirm the GitHub `release` environment requires approval
 
-The workflow builds `darwin-x64`, `darwin-arm64`, `linux-x64`, and `linux-arm64` CLI binaries and creates a draft GitHub Release with `SHA256SUMS`. The npm platform packages are the self-contained install lane because each declares the matching TypeScript native executable dependency.
+The workflow builds `darwin-x64`, `darwin-arm64`, `linux-x64`, and `linux-arm64` archives and creates a draft GitHub Release with `SHA256SUMS`. Each archive contains `bin/quartz`, the Quartz license, and the complete exact-version `@typescript/typescript-<platform>-<arch>` payload under `node_modules`, so the extracted CLI does not depend on repository or global modules. Keep the extracted directory intact and invoke its `bin/quartz`; copying only the binary discards the native payload. The workflow smokes the host archive from a clean temporary directory before creating the draft.
 
 Create the `release` environment with maintainer approval, require reviewer approval, and restrict it to release tags before any publish workflow is dispatched.
 

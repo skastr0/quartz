@@ -6,6 +6,10 @@ The project follows Semantic Versioning for the declared public package, CLI, an
 
 ## [Unreleased]
 
+### Fixed
+
+- GitHub Release assets now bundle the exact matching TypeScript native payload and are smoke-tested outside the repository before a draft release is created.
+
 ## [0.2.0-next.0] - 2026-07-23
 
 Prerelease of the native-engine product path. Publish only with explicit release authority; keep `0.1.0` and the previous exact nightly available as rollback targets.

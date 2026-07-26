@@ -36,15 +36,18 @@ jobs:
       - name: Verify
         run: bun run verify
 
-      - name: Build standalone CLI binaries
-        run: bun run build:cli
+      - name: Build self-contained CLI release bundles
+        run: bun run build:release-bundles
+
+      - name: Verify extracted release bundle
+        run: bun run verify:release-bundle
 
       - name: Generate checksums
         working-directory: dist
-        run: shasum -a 256 quartz-* > SHA256SUMS
+        run: shasum -a 256 quartz-*.tar.gz > SHA256SUMS
 
       - name: Create draft GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-        run: gh release create "$RELEASE_TAG" dist/quartz-* dist/SHA256SUMS --draft --generate-notes --verify-tag
+        run: gh release create "$RELEASE_TAG" dist/quartz-*.tar.gz dist/SHA256SUMS --draft --generate-notes --verify-tag

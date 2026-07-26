@@ -15,6 +15,7 @@
   "scripts": {
     "dev": "bun run apps/cli/src/main.ts",
     "build:cli": "bun scripts/build-cli.ts",
+    "build:release-bundles": "bun run build:cli && bun scripts/build-release-bundles.ts",
     "build:npm-cli": "bun scripts/build-npm-cli-packages.ts",
     "install:local": "bun scripts/install.ts",
     "engine:build": "bun run --filter @skastr0/quartz-engine build",
@@ -28,6 +29,7 @@
     "verify:package-boundaries": "bun scripts/verify-package-boundaries.ts",
     "verify:docs-examples": "bun scripts/verify-doc-examples.ts",
     "verify:regression-guard": "bun scripts/verify-regression-guard.ts",
+    "verify:release-bundle": "bun scripts/verify-release-bundle.ts",
     "bench": "bun scripts/bench.ts",
     "bench:pr": "bun scripts/bench.ts --profile pr --out .quartz/bench/pr-latest.json",
     "bench:release": "bun scripts/bench.ts --profile release --out .quartz/bench/release-latest.json",
@@ -35,7 +37,7 @@
     "bench:record": "bun scripts/record-bench-history.ts --from .quartz/bench/pr-latest.json",
     "pack:dry-run": "bun run build && bun run build:npm-cli && npm pack --dry-run \"./packages/engine\" && npm pack --dry-run \"./apps/opencode-plugin\" && npm pack --dry-run \"./packages/npm/quartz-darwin-arm64\" && npm pack --dry-run \"./packages/npm/quartz-darwin-x64\" && npm pack --dry-run \"./packages/npm/quartz-linux-arm64\" && npm pack --dry-run \"./packages/npm/quartz-linux-x64\" && npm pack --dry-run \"./packages/npm/quartz\"",
     "smoke:npm-cli": "bun run build:npm-cli && node packages/npm/quartz/bin/quartz.js capabilities",
-    "release:check": "bun run verify && bun run pack:dry-run && bun run smoke:npm-cli && bun run verify:regression-guard && bun audit && publish-scan ."
+    "release:check": "bun run verify && bun run pack:dry-run && bun run smoke:npm-cli && bun run verify:regression-guard && bun run build:release-bundles && bun run verify:release-bundle && bun audit && publish-scan ."
   },
   "devDependencies": {
     "@opencode-ai/plugin": "^1.14.46",

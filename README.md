@@ -21,7 +21,7 @@ The repository is prepared for these release lanes:
 - `@skastr0/quartz-engine`: npm package with built ESM output and TypeScript declarations.
 - `@skastr0/quartz-opencode-plugin`: npm package with built ESM output and TypeScript declarations.
 - `@skastr0/quartz`: npm CLI wrapper with per-platform prebuilt binary packages for `npx`, `bunx`, and `pnpm dlx`.
-- `quartz`: standalone CLI binaries for GitHub Releases.
+- `quartz`: self-contained CLI archives for GitHub Releases, including the matching TypeScript native executable.
 
 The workspace root and `@skastr0/quartz-cli` source app stay private and are not published. The public npm CLI package is `@skastr0/quartz`, which exposes the `quartz` command through a Node launcher and optional platform binary packages. Every platform package carries the matching TypeScript native executable required by the engine.
 
