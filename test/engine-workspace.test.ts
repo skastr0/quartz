@@ -161,6 +161,74 @@ describe("QuartzWorkspace", () => {
     }
   })
 
+  it("keeps each interleaved operation on its leased revision", async () => {
+    const fixture = createFixture("export const revision = 'one' as const\n")
+    const workspace = await openQuartzWorkspace(fixture.root)
+    const enteredA = Promise.withResolvers<void>()
+    const resumeA = Promise.withResolvers<void>()
+    const enteredB = Promise.withResolvers<void>()
+    const resumeB = Promise.withResolvers<void>()
+    try {
+      const operationA = workspace.withProject(async (_project, revision) => {
+        expect(revision).toBe(1)
+        enteredA.resolve()
+        await resumeA.promise
+        return workspace.withVirtualFile(
+          workspace.configFile,
+          join(fixture.root, "src", "__quartz_nested.ts"),
+          "export const nested = true\n",
+          async (project) => (await project.program.getSourceFile(fixture.sourcePath))?.text,
+        )
+      })
+
+      await enteredA.promise
+      writeFileSync(fixture.sourcePath, "export const revision = 'two' as const\n")
+      expect((await workspace.refresh({ changed: [fixture.sourcePath] })).revision).toBe(2)
+
+      const operationB = workspace.withProject(async (_project, revision) => {
+        expect(revision).toBe(2)
+        enteredB.resolve()
+        await resumeB.promise
+      })
+      await enteredB.promise
+      resumeA.resolve()
+      await expect(operationA).resolves.toContain("'one'")
+      resumeB.resolve()
+      await operationB
+    } finally {
+      resumeA.resolve()
+      resumeB.resolve()
+      await workspace.close()
+    }
+  })
+
+  it("falls back to the current revision for detached descendants", async () => {
+    const fixture = createFixture("export const revision = 'one' as const\n")
+    const workspace = await openQuartzWorkspace(fixture.root)
+    const triggerDescendant = Promise.withResolvers<void>()
+    let descendant: Promise<string | undefined> | undefined
+    try {
+      await workspace.withProject(async (_project, revision) => {
+        expect(revision).toBe(1)
+        descendant = triggerDescendant.promise.then(() =>
+          workspace.withVirtualFile(
+            workspace.configFile,
+            join(fixture.root, "src", "__quartz_detached.ts"),
+            "export const detached = true\n",
+            async (project) => (await project.program.getSourceFile(fixture.sourcePath))?.text,
+          )
+        )
+      })
+
+      writeFileSync(fixture.sourcePath, "export const revision = 'two' as const\n")
+      expect((await workspace.refresh({ changed: [fixture.sourcePath] })).revision).toBe(2)
+      triggerDescendant.resolve()
+      await expect(descendant).resolves.toContain("'two'")
+    } finally {
+      await workspace.close()
+    }
+  })
+
   it("surfaces temporary callback failures without leaking into later commands", async () => {
     const fixture = createFixture("export const ok = 1\n")
     const workspace = await openQuartzWorkspace(fixture.root)

@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs"
+import { AsyncLocalStorage } from "node:async_hooks"
 import { createRequire } from "node:module"
 import { dirname, join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
@@ -49,6 +50,11 @@ interface RevisionState {
   disposePromise: Promise<void> | null
 }
 
+interface RevisionLease {
+  readonly state: RevisionState
+  active: boolean
+}
+
 const createRevisionState = (snapshot: Snapshot, revision: number): RevisionState => ({
   snapshot,
   revision,
@@ -72,8 +78,8 @@ export class QuartzWorkspace {
   #retirements = new Set<Promise<void>>()
   #activeOperations = 0
   #operationsDrained: PromiseWithResolvers<void> | null = null
-  /** Nested withVirtualFile pins the outer withProject lease, not live #current. */
-  #operationStack: RevisionState[] = []
+  /** Request-local lease keeps nested virtual work on its caller's revision. */
+  #revisionLease = new AsyncLocalStorage<RevisionLease>()
 
   private constructor(
     root: string,
@@ -176,24 +182,28 @@ export class QuartzWorkspace {
     this.#beginOperation()
     const resolvedConfig = resolve(tsconfigPath)
     const resolvedFile = resolve(filePath)
-    // Prefer the outer withProject lease so synthetic/snippet work cannot drift
-    // onto a newer #current advanced by a concurrent refresh.
-    const base = this.#operationStack[this.#operationStack.length - 1] ?? this.#requireCurrent()
+    // Prefer the caller's request-local lease so synthetic/snippet work cannot
+    // drift onto a newer #current advanced by a concurrent refresh.
+    const inheritedLease = this.#revisionLease.getStore()
+    const base = inheritedLease?.active === true ? inheritedLease.state : this.#requireCurrent()
+    const lease: RevisionLease = { state: base, active: true }
     base.readers += 1
     try {
       let result!: T
-      await this.#api.runWithTemporaryFileUpdate(base.snapshot, resolvedFile, content, async (temporarySnapshot) => {
-        this.#assertAcceptingWork()
-        const project =
-          (await temporarySnapshot.getDefaultProjectForFile(resolvedFile)) ??
-          temporarySnapshot.getProject(resolvedConfig)
-        if (project === undefined) {
-          throw new QuartzEngineError(
-            "WORKSPACE_REFRESH_FAILED",
-            `TypeScript did not load a project for temporary file ${resolvedFile}`,
-          )
-        }
-        result = await operation(project, resolvedFile)
+      await this.#revisionLease.run(lease, async () => {
+        await this.#api.runWithTemporaryFileUpdate(base.snapshot, resolvedFile, content, async (temporarySnapshot) => {
+          this.#assertAcceptingWork()
+          const project =
+            (await temporarySnapshot.getDefaultProjectForFile(resolvedFile)) ??
+            temporarySnapshot.getProject(resolvedConfig)
+          if (project === undefined) {
+            throw new QuartzEngineError(
+              "WORKSPACE_REFRESH_FAILED",
+              `TypeScript did not load a project for temporary file ${resolvedFile}`,
+            )
+          }
+          result = await operation(project, resolvedFile)
+        })
       })
       return result
     } catch (cause) {
@@ -204,6 +214,7 @@ export class QuartzWorkspace {
         cause,
       )
     } finally {
+      lease.active = false
       this.#releaseState(base)
       this.#endOperation()
     }
@@ -264,12 +275,12 @@ export class QuartzWorkspace {
     this.#assertAcceptingWork()
     this.#beginOperation()
     const state = this.#requireCurrent()
+    const lease: RevisionLease = { state, active: true }
     state.readers += 1
-    this.#operationStack.push(state)
     try {
-      return await operation(state)
+      return await this.#revisionLease.run(lease, () => operation(state))
     } finally {
-      this.#operationStack.pop()
+      lease.active = false
       this.#releaseState(state)
       this.#endOperation()
     }

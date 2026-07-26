@@ -126,11 +126,13 @@ export class AnalyzerContext {
 
   async #ensureFresh(): Promise<void> {
     if (!this.#dirty) return
-    this.#dirtyRefresh ??= this.refresh()
+    const refresh = this.#dirtyRefresh ??= this.refresh()
     try {
-      await this.#dirtyRefresh
+      await refresh
     } finally {
-      this.#dirtyRefresh = null
+      // A waiter completing an older refresh must not erase the newer shared
+      // refresh started after a concurrent markDirty.
+      if (this.#dirtyRefresh === refresh) this.#dirtyRefresh = null
     }
     // A concurrent markDirty during the refresh leaves #dirty true — run again.
     if (this.#dirty) await this.#ensureFresh()

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 import { createTypeAnalyzer } from "../packages/engine/src"
+import { AnalyzerContext } from "../packages/engine/src/context"
 
 const roots: string[] = []
 
@@ -102,6 +103,61 @@ describe("QuartzAnalyzer", () => {
       expect(await analyzer.checkSnippet("const after: number = 1\n")).toEqual({ valid: true })
     } finally {
       await analyzer.dispose()
+    }
+  })
+
+  it("coalesces concurrent dirty waiters into one refresh", async () => {
+    const context = await AnalyzerContext.open(fixture())
+    const originalRefresh = context.workspace.refresh.bind(context.workspace)
+    const refreshStarted = Promise.withResolvers<void>()
+    const releaseRefresh = Promise.withResolvers<void>()
+    let refreshes = 0
+    context.workspace.refresh = async (changes) => {
+      refreshes += 1
+      refreshStarted.resolve()
+      await releaseRefresh.promise
+      return originalRefresh(changes)
+    }
+    try {
+      context.markDirty()
+      const waiters = Array.from({ length: 12 }, () => context.withProject(async () => undefined))
+      await refreshStarted.promise
+      expect(refreshes).toBe(1)
+      releaseRefresh.resolve()
+      await Promise.all(waiters)
+      expect(refreshes).toBe(1)
+    } finally {
+      releaseRefresh.resolve()
+      await context.close()
+    }
+  })
+
+  it("retains dirt marked during refresh for a second shared refresh", async () => {
+    const context = await AnalyzerContext.open(fixture())
+    const originalRefresh = context.workspace.refresh.bind(context.workspace)
+    const refreshStarted = Promise.withResolvers<void>()
+    const releaseFirstRefresh = Promise.withResolvers<void>()
+    let refreshes = 0
+    context.workspace.refresh = async (changes) => {
+      refreshes += 1
+      if (refreshes === 1) {
+        refreshStarted.resolve()
+        await releaseFirstRefresh.promise
+      }
+      return originalRefresh(changes)
+    }
+    try {
+      context.markDirty()
+      const first = context.withProject(async () => undefined)
+      await refreshStarted.promise
+      context.markDirty()
+      const second = context.withProject(async () => undefined)
+      releaseFirstRefresh.resolve()
+      await Promise.all([first, second])
+      expect(refreshes).toBe(2)
+    } finally {
+      releaseFirstRefresh.resolve()
+      await context.close()
     }
   })
 
