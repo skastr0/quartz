@@ -100,6 +100,41 @@ describe("engine reference operations", () => {
     }
   })
 
+  it("preserves related results when native reference collection falls back", async () => {
+    const { context, operations } = await createFixture()
+    const workspace = context.workspace
+    const originalWithProject = workspace.withProject.bind(workspace)
+    workspace.withProject = (operation, configFile) =>
+      originalWithProject(async (project, revision) => {
+        const originalNative = project.checker.getReferencedSymbolsForNode
+        Object.defineProperty(project.checker, "getReferencedSymbolsForNode", {
+          configurable: true,
+          value: async () => {
+            throw new Error("native references unavailable")
+          },
+        })
+        try {
+          return await operation(project, revision)
+        } finally {
+          Object.defineProperty(project.checker, "getReferencedSymbolsForNode", {
+            configurable: true,
+            value: originalNative,
+          })
+        }
+      }, configFile)
+
+    try {
+      const result = await operations.findRelated("User")
+      expect(result?.referencedBy).toEqual(expect.arrayContaining([
+        expect.objectContaining({ symbol: "user", context: "type reference", file: "src/consumer.ts", line: 2 }),
+        expect.objectContaining({ symbol: "readUser", context: "type reference", file: "src/consumer.ts", line: 3 }),
+      ]))
+    } finally {
+      workspace.withProject = originalWithProject
+      await context.close()
+    }
+  })
+
   it("keeps alias and default export graph nodes on canonical identities", async () => {
     const { context, operations } = await createFixture()
     try {

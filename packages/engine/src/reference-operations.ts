@@ -379,7 +379,7 @@ const findIncomingReferences = async (project: Project, target: Target): Promise
     if (!isProjectSourceFile(sourceFile.fileName, target.packagePath)) return
     const fileCount = perFileCounts.get(sourceFile.fileName) ?? 0
     if (fileCount >= MAX_REFERENCE_RESULTS_PER_FILE) return
-    if (!(await sameSymbol(project, symbol, target.symbol))) return
+    if (!(await matchesCanonicalSymbol(project, symbol, target.symbol))) return
     if (isTargetDeclarationName(node, target)) return
     const containing = await findContainingSymbol(project, node.parent, target.symbol)
     const position = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile))
@@ -527,7 +527,7 @@ const findContainingSymbol = async (project: Project, start: Node, target: Symbo
     const nameNode = declarationNameNode(current)
     if (nameNode !== undefined) {
       const symbol = await project.checker.getSymbolAtLocation(nameNode)
-      if (symbol !== undefined && !(await sameSymbol(project, symbol, target))) return symbol.name
+      if (symbol !== undefined && !(await matchesCanonicalSymbol(project, symbol, target))) return symbol.name
     }
     current = current.parent
   }
@@ -544,8 +544,8 @@ const resolveSymbol = async (project: Project, symbol: Symbol): Promise<Symbol> 
   }
 }
 
-const sameSymbol = async (project: Project, left: Symbol, right: Symbol): Promise<boolean> =>
-  (await resolveSymbol(project, left)).id === (await resolveSymbol(project, right)).id
+const matchesCanonicalSymbol = async (project: Project, candidate: Symbol, target: Symbol): Promise<boolean> =>
+  (await resolveSymbol(project, candidate)).id === target.id
 
 const projectSourceFiles = async (project: Project, packagePath: string): Promise<SourceFile[]> => {
   const names = await project.program.getSourceFileNames()
