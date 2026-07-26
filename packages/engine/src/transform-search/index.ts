@@ -6,6 +6,8 @@ import {
   type Diagnostic,
   type Checker,
   type Project,
+  type Signature,
+  type Symbol as CompilerSymbol,
   type Type,
   type TypeReference,
 } from "typescript/unstable/async"
@@ -18,6 +20,7 @@ import {
 } from "typescript/unstable/ast"
 import {
   isArrowFunction,
+  isCallExpression,
   isCallSignatureDeclaration,
   isClassDeclaration,
   isConstructorDeclaration,
@@ -26,6 +29,7 @@ import {
   isInterfaceDeclaration,
   isMethodDeclaration,
   isMethodSignatureDeclaration,
+  isNewExpression,
   isObjectLiteralExpression,
   isPropertyAssignment,
   isPropertySignatureDeclaration,
@@ -51,7 +55,10 @@ import { resolveVirtualFileDirectory, synthesizePackageImports } from "../virtua
 type AsyncCallable = FunctionLikeBase & Node
 
 interface Candidate {
-  readonly id: number
+  readonly callableId: string
+  readonly signatureKey: string | null
+  readonly compilerSignature: Signature | null
+  readonly symbolNode: Node | null
   readonly sourceFile: SourceFile
   readonly callable: AsyncCallable
   readonly name: string
@@ -79,6 +86,11 @@ interface Match {
   readonly verification: VerificationMeta
   readonly score: number
   readonly confidence: MatchConfidence
+}
+
+interface SyntheticVerification {
+  readonly verification: VerificationMeta
+  readonly selectedSignatureKey: string | null
 }
 
 const modifierFlagsOf = (node: Node): ModifierFlags =>
@@ -131,12 +143,31 @@ const nodeName = (node: Node, sourceFile: SourceFile): string => {
   return named.name === undefined ? "anonymous" : named.name.getText(sourceFile).replace(/^["']|["']$/g, "")
 }
 
+const enclosingNameNode = (node: Node): Node | null => {
+  let current: Node | undefined = node.parent
+  while (current !== undefined && current.kind !== SyntaxKind.SourceFile) {
+    const name = (current as Node & { readonly name?: Node }).name
+    if (name !== undefined) return name
+    current = current.parent
+  }
+  return null
+}
+
 const enumerate = (sourceFiles: readonly SourceFile[]): Candidate[] => {
   const candidates: Candidate[] = []
-  const append = (sourceFile: SourceFile, callable: AsyncCallable, kind: CallableKind, name: string): void => {
+  const append = (
+    sourceFile: SourceFile,
+    callable: AsyncCallable,
+    kind: CallableKind,
+    name: string,
+    symbolNode: Node | null,
+  ): void => {
     const containerName = containerNameOf(callable, sourceFile)
     candidates.push({
-      id: candidates.length,
+      callableId: `declaration:${candidates.length}`,
+      signatureKey: null,
+      compilerSignature: null,
+      symbolNode,
       sourceFile,
       callable,
       name,
@@ -153,26 +184,155 @@ const enumerate = (sourceFiles: readonly SourceFile[]): Candidate[] => {
       const implementationExists = sourceFile.statements.some(
         (statement) => isFunctionDeclaration(statement) && statement.name?.getText(sourceFile) === node.name?.getText(sourceFile) && statement.body !== undefined,
       )
-      if (node.body !== undefined || !implementationExists) append(sourceFile, node, "Function", nodeName(node, sourceFile))
+      if (node.body !== undefined || !implementationExists) append(sourceFile, node, "Function", nodeName(node, sourceFile), node.name)
     } else if (isVariableDeclaration(node) && node.initializer !== undefined && (isArrowFunction(node.initializer) || isFunctionExpression(node.initializer))) {
-      append(sourceFile, node.initializer, "VariableCallable", nodeName(node, sourceFile))
+      append(sourceFile, node.initializer, "VariableCallable", nodeName(node, sourceFile), node.name)
     } else if (isMethodDeclaration(node)) {
       const kind: CallableKind = isClassDeclaration(node.parent)
         ? (hasModifier(node, ModifierFlags.Static) ? "StaticMethod" : "ClassMethod")
         : "ObjectMethod"
-      append(sourceFile, node, kind, nodeName(node, sourceFile))
+      append(sourceFile, node, kind, nodeName(node, sourceFile), node.name)
     } else if (isConstructorDeclaration(node)) {
-      append(sourceFile, node, "Constructor", "constructor")
+      const className = isClassDeclaration(node.parent) ? node.parent.name ?? null : null
+      append(sourceFile, node, "Constructor", "constructor", className)
     } else if (isMethodSignatureDeclaration(node) || isCallSignatureDeclaration(node)) {
-      append(sourceFile, node as AsyncCallable, isMethodSignatureDeclaration(node) ? "InterfaceMethod" : "TypeLiteralMethod", nodeName(node, sourceFile))
+      const symbolNode = isMethodSignatureDeclaration(node) ? node.name : enclosingNameNode(node)
+      append(
+        sourceFile,
+        node as AsyncCallable,
+        isMethodSignatureDeclaration(node) ? "InterfaceMethod" : "TypeLiteralMethod",
+        nodeName(node, sourceFile),
+        symbolNode,
+      )
     } else if (isPropertySignatureDeclaration(node) && node.type !== undefined && (node.type.kind === SyntaxKind.FunctionType || node.type.kind === SyntaxKind.ConstructorType)) {
-      append(sourceFile, node.type as unknown as AsyncCallable, "CallableProperty", nodeName(node, sourceFile))
+      append(sourceFile, node.type as unknown as AsyncCallable, "CallableProperty", nodeName(node, sourceFile), node.name)
     } else if (isPropertyAssignment(node) && (isArrowFunction(node.initializer) || isFunctionExpression(node.initializer))) {
-      append(sourceFile, node.initializer, "ObjectMethod", nodeName(node, sourceFile))
+      append(sourceFile, node.initializer, "ObjectMethod", nodeName(node, sourceFile), node.name)
     }
     node.forEachChild((child) => visit(child, sourceFile))
   }
   for (const sourceFile of sourceFiles) visit(sourceFile, sourceFile)
+  return candidates
+}
+
+const signatureKeyForNode = (node: Node): string => {
+  const sourceFile = node.getSourceFile()
+  return `${sourceFile.fileName}:${node.getStart(sourceFile)}:${node.getEnd()}:${node.kind}`
+}
+
+interface CandidateGroup {
+  readonly seed: Candidate
+  readonly symbol: CompilerSymbol | null
+  readonly seedCount: number
+}
+
+const needsSignatureExpansion = (group: CandidateGroup): boolean =>
+  group.seedCount > 1 || (group.symbol?.declarations.length ?? 0) > 1
+
+const symbolsForSeeds = async (
+  project: Project,
+  seeds: readonly Candidate[],
+): Promise<ReadonlyMap<number, CompilerSymbol>> => {
+  const indexes: number[] = []
+  const nodes: Node[] = []
+  for (let index = 0; index < seeds.length; index += 1) {
+    const node = seeds[index]!.symbolNode
+    if (node === null) continue
+    indexes.push(index)
+    nodes.push(node)
+  }
+  const symbols = nodes.length === 0 ? [] : await project.checker.getSymbolAtLocation(nodes)
+  const bySeed = new Map<number, CompilerSymbol>()
+  for (let index = 0; index < symbols.length; index += 1) {
+    const symbol = symbols[index]
+    if (symbol !== undefined) bySeed.set(indexes[index]!, symbol)
+  }
+  return bySeed
+}
+
+const groupCandidateSeeds = (
+  seeds: readonly Candidate[],
+  symbols: ReadonlyMap<number, CompilerSymbol>,
+): ReadonlyMap<string, CandidateGroup> => {
+  const groups = new Map<string, CandidateGroup>()
+  for (let index = 0; index < seeds.length; index += 1) {
+    const seed = seeds[index]!
+    const symbol = symbols.get(index) ?? null
+    const callableId = symbol === null ? seed.callableId : `${symbol.id}:${seed.kind}`
+    const existing = groups.get(callableId)
+    groups.set(callableId, existing === undefined
+      ? { seed, symbol, seedCount: 1 }
+      : { ...existing, seedCount: existing.seedCount + 1 })
+  }
+  return groups
+}
+
+const valueTypesForGroups = async (
+  project: Project,
+  groups: ReadonlyMap<string, CandidateGroup>,
+): Promise<ReadonlyMap<string, Type>> => {
+  const entries = [...groups.entries()].filter(
+    (entry): entry is [string, CandidateGroup & { readonly symbol: CompilerSymbol }] =>
+      entry[1].symbol !== null &&
+      entry[1].seed.kind !== "TypeLiteralMethod" &&
+      needsSignatureExpansion(entry[1]),
+  )
+  const types = entries.length === 0
+    ? []
+    : await project.checker.getTypeOfSymbol(entries.map(([, group]) => group.symbol))
+  return new Map(entries.map(([callableId], index) => [callableId, types[index]!]))
+}
+
+const expandCandidateGroup = async (
+  project: Project,
+  callableId: string,
+  group: CandidateGroup,
+  valueTypes: ReadonlyMap<string, Type>,
+): Promise<readonly Candidate[]> => {
+  if (group.symbol === null || !needsSignatureExpansion(group)) {
+    return [{ ...group.seed, callableId, signatureKey: signatureKeyForNode(group.seed.callable) }]
+  }
+  const type = group.seed.kind === "TypeLiteralMethod"
+    ? await project.checker.getDeclaredTypeOfSymbol(group.symbol)
+    : valueTypes.get(callableId)!
+  const signatureKind =
+    group.seed.kind === "Constructor" || group.seed.callable.kind === SyntaxKind.ConstructorType
+      ? SignatureKind.Construct
+      : SignatureKind.Call
+  const signatures = type.isErrorType() ? [] : await project.checker.getSignaturesOfType(type, signatureKind)
+  const candidates: Candidate[] = []
+  for (const signature of signatures) {
+    const declaration = await signature.declaration?.resolve(project)
+    const callable = declaration as AsyncCallable | undefined
+    if (callable === undefined || callable.parameters === undefined) continue
+    const sourceFile = callable.getSourceFile()
+    candidates.push({
+      ...group.seed,
+      callableId,
+      signatureKey: signatureKeyForNode(callable),
+      compilerSignature: signature,
+      sourceFile,
+      callable,
+      deprecated: /@deprecated\b/.test(callable.getFullText(sourceFile)),
+      params: callable.parameters,
+      returnNode: returnTypeNodeOf(callable),
+    })
+  }
+  return candidates.length === 0
+    ? [{ ...group.seed, callableId, signatureKey: null, compilerSignature: null }]
+    : candidates
+}
+
+const compilerCandidates = async (
+  project: Project,
+  seeds: readonly Candidate[],
+): Promise<Candidate[]> => {
+  const groups = groupCandidateSeeds(seeds, await symbolsForSeeds(project, seeds))
+  const valueTypes = await valueTypesForGroups(project, groups)
+  const candidates: Candidate[] = []
+  for (const [callableId, group] of groups) {
+    candidates.push(...await expandCandidateGroup(project, callableId, group, valueTypes))
+  }
   return candidates
 }
 
@@ -196,6 +356,28 @@ const signatureFor = (candidate: Candidate, resolvedReturnText?: string): string
   const params = candidate.params.map((param) => param.getText(candidate.sourceFile).trim()).join(", ")
   const returnText = resolvedReturnText ?? (candidate.returnNode === null ? "unknown" : typeText(candidate.returnNode, candidate.sourceFile))
   return `${candidate.name}(${params}): ${returnText}`
+}
+
+const compareMatches = (left: Match, right: Match): number =>
+  right.score - left.score ||
+  left.candidate.name.localeCompare(right.candidate.name) ||
+  left.candidate.sourceFile.fileName.localeCompare(right.candidate.sourceFile.fileName) ||
+  lineFor(left.candidate) - lineFor(right.candidate)
+
+const groupMatchesByCallable = (matches: readonly Match[]): readonly (readonly Match[])[] => {
+  const byCallable = new Map<string, Match[]>()
+  const groups: Match[][] = []
+  for (const match of matches) {
+    const existing = byCallable.get(match.candidate.callableId)
+    if (existing === undefined) {
+      const group = [match]
+      byCallable.set(match.candidate.callableId, group)
+      groups.push(group)
+    } else {
+      existing.push(match)
+    }
+  }
+  return groups
 }
 
 const confidenceFor = (match: { readonly exactFrom: boolean; readonly exactTo: boolean; readonly verified: boolean; readonly partial: boolean }): MatchConfidence => {
@@ -270,6 +452,20 @@ let syntheticSequence = 0
 const diagnosticText = (diagnostic: Diagnostic): string =>
   typeof diagnostic.text === "string" ? diagnostic.text : String(diagnostic.text)
 
+const findSyntheticCall = (sourceFile: SourceFile): Node | null => {
+  let found: Node | null = null
+  const visit = (node: Node): void => {
+    if (found !== null) return
+    if (isCallExpression(node) || isNewExpression(node)) {
+      found = node
+      return
+    }
+    node.forEachChild(visit)
+  }
+  sourceFile.forEachChild(visit)
+  return found
+}
+
 const syntheticCall = (match: Match): string | null => {
   const candidate = match.candidate
   if (!candidate.exported || match.from === null || match.to === null) return null
@@ -293,10 +489,13 @@ const verifySyntheticMatch = async (
   packageInfo: { readonly path: string; readonly tsconfigPath: string },
   match: Match,
   options: TransformSearchOptions,
-): Promise<VerificationMeta> => {
+): Promise<SyntheticVerification> => {
   const call = syntheticCall(match)
   if (call === null || options.from === undefined || options.to === undefined) {
-    return { status: "unverifiable", method: null, reason: "not_importable" }
+    return {
+      verification: { status: "unverifiable", method: null, reason: "not_importable" },
+      selectedSignatureKey: null,
+    }
   }
   const virtualFilePath = join(
     resolveVirtualFileDirectory(packageInfo.path),
@@ -307,27 +506,45 @@ const verifySyntheticMatch = async (
     ? `async function __quartzVerify() {\n  const __output: __QueryTo = await ${call}\n}`
     : `const __output: __QueryTo = ${call}`
   const syntheticCode = `${imports.content}type __QueryFrom = ${options.from}\ntype __QueryTo = ${options.to}\ndeclare const __input: __QueryFrom\n${assignment}\n`
-  const diagnostics = await context.workspace.withVirtualFile(
+  const syntheticResult = await context.workspace.withVirtualFile(
     packageInfo.tsconfigPath,
     virtualFilePath,
     syntheticCode,
-    async (syntheticProject, filePath) => (
-      await Promise.all([
+    async (syntheticProject, filePath) => {
+      const diagnostics = (
+        await Promise.all([
         syntheticProject.program.getSyntacticDiagnostics(filePath),
         syntheticProject.program.getBindDiagnostics(filePath),
         syntheticProject.program.getSemanticDiagnostics(filePath),
       ])
-    ).flat(),
+      ).flat()
+      if (diagnostics.length > 0) return { diagnostics, selectedSignatureKey: null }
+      const sourceFile = await syntheticProject.program.getSourceFile(filePath)
+      const callNode = sourceFile === undefined ? null : findSyntheticCall(sourceFile)
+      if (callNode === null) return { diagnostics, selectedSignatureKey: null }
+      const signature = await syntheticProject.checker.getResolvedSignature(callNode)
+      if (await syntheticProject.checker.isUnknownSignature(signature)) {
+        return { diagnostics, selectedSignatureKey: null }
+      }
+      const declaration = await signature.declaration?.resolve(syntheticProject)
+      return {
+        diagnostics,
+        selectedSignatureKey: declaration === undefined ? null : signatureKeyForNode(declaration),
+      }
+    },
   )
-  const failed = diagnostics.length > 0
+  const failed = syntheticResult.diagnostics.length > 0 || syntheticResult.selectedSignatureKey === null
   return {
-    status: failed ? "unverified" : "verified",
-    method: "synthetic",
-    reason: failed ? "synthetic_check_failed" : "synthetic_check_passed",
-    ...(failed && options.includeDiagnostics === true
-      ? { diagnostics: diagnostics.map((diagnostic) => ({ code: diagnostic.code, message: diagnosticText(diagnostic) })) }
-      : {}),
-    ...(options.includeSyntheticCode === true ? { syntheticCode } : {}),
+    verification: {
+      status: failed ? "unverified" : "verified",
+      method: "synthetic",
+      reason: failed ? "synthetic_check_failed" : "synthetic_check_passed",
+      ...(syntheticResult.diagnostics.length > 0 && options.includeDiagnostics === true
+        ? { diagnostics: syntheticResult.diagnostics.map((diagnostic) => ({ code: diagnostic.code, message: diagnosticText(diagnostic) })) }
+        : {}),
+      ...(options.includeSyntheticCode === true ? { syntheticCode } : {}),
+    },
+    selectedSignatureKey: syntheticResult.selectedSignatureKey,
   }
 }
 
@@ -341,6 +558,52 @@ const SYNTHETIC_OVERSCAN = 10
 const SYNTHETIC_VERIFICATION_BATCH_SIZE = 8
 /** Bound source-file transport fan-out on large projects while retaining parallel reads. */
 const SOURCE_FILE_BATCH_SIZE = 32
+
+type VerifyMatchGroup = (group: readonly Match[]) => Promise<Match>
+
+const verifyUnfilteredGroups = async (
+  groups: readonly (readonly Match[])[],
+  limit: number,
+  verify: VerifyMatchGroup,
+): Promise<Match[]> => {
+  const prefixLength = Math.min(groups.length, limit + SYNTHETIC_OVERSCAN)
+  const verifiedPrefix = await Promise.all(groups.slice(0, prefixLength).map(verify))
+  return [...verifiedPrefix, ...groups.slice(prefixLength).map((group) => group[0]!)].sort(compareMatches)
+}
+
+const verifyTrustedGroups = async (
+  groups: readonly (readonly Match[])[],
+  limit: number,
+  verify: VerifyMatchGroup,
+): Promise<Match[]> => {
+  if (limit === 0) return []
+  const matches: Match[] = []
+  let verifiedCount = 0
+  let start = 0
+  while (start < groups.length) {
+    if (verifiedCount >= limit) {
+      const threshold = matches
+        .filter((match) => match.verification.status === "verified")
+        .sort(compareMatches)[limit - 1]
+      const nextUpperBound = groups[start]?.[0]
+      if (
+        threshold === undefined ||
+        nextUpperBound === undefined ||
+        compareMatches(nextUpperBound, threshold) >= 0
+      ) {
+        break
+      }
+    }
+    const batchSize = verifiedCount < limit
+      ? Math.min(SYNTHETIC_VERIFICATION_BATCH_SIZE, limit - verifiedCount)
+      : 1
+    const batch = await Promise.all(groups.slice(start, start + batchSize).map(verify))
+    matches.push(...batch)
+    verifiedCount += batch.filter((match) => match.verification.status === "verified").length
+    start += batchSize
+  }
+  return matches.sort(compareMatches)
+}
 
 interface TransformIndex {
   readonly sourceFiles: readonly SourceFile[]
@@ -363,7 +626,7 @@ const loadTransformIndex = async (project: Project): Promise<TransformIndex> => 
         sourceFile !== undefined && !sourceFile.isDeclarationFile && !sourceFile.fileName.includes("node_modules"),
     ))
   }
-  const allCandidates = enumerate(sourceFiles)
+  const allCandidates = await compilerCandidates(project, enumerate(sourceFiles))
   const availableNodes: TypeNode[] = []
   for (const candidate of allCandidates) {
     for (const param of candidate.params) {
@@ -394,13 +657,19 @@ const loadTransformIndex = async (project: Project): Promise<TransformIndex> => 
   for (const candidate of allCandidates) {
     let returnType = candidate.returnNode === null ? null : byNode.get(candidate.returnNode) ?? null
     if (candidate.returnNode === null) {
-      const callableType = byNode.get(candidate.callable)
-      if (callableType !== undefined) {
-        const signatures = await project.checker.getSignaturesOfType(callableType, SignatureKind.Call)
-        const signature = signatures[0]
-        if (signature !== undefined) returnType = await project.checker.getReturnTypeOfSignature(signature)
+      if (candidate.compilerSignature !== null) {
+        returnType = await project.checker.getReturnTypeOfSignature(candidate.compilerSignature)
+      } else {
+        const callableType = byNode.get(candidate.callable)
+        if (callableType !== undefined) {
+          const signatures = await project.checker.getSignaturesOfType(callableType, SignatureKind.Call)
+          const signature = signatures[0]
+          if (signature !== undefined) returnType = await project.checker.getReturnTypeOfSignature(signature)
+        }
       }
-      if (returnType !== null) inferredReturnTexts.set(candidate, await project.checker.typeToString(returnType, candidate.callable))
+      if (returnType !== null) {
+        inferredReturnTexts.set(candidate, await project.checker.typeToString(returnType, candidate.callable))
+      }
     }
     inferredReturnTypes.set(candidate, returnType)
   }
@@ -515,7 +784,8 @@ export const createTransformSearchOperation = (context: AnalyzerContext) => asyn
       const confidence = confidenceFor({ exactFrom, exactTo, verified: false, partial })
       matches.push({ candidate, from: fromMatch, to: toMatch, fromAssignable, toAssignable, returnText, verification, score, confidence })
     }
-    matches.sort((left, right) => right.score - left.score || left.candidate.name.localeCompare(right.candidate.name) || left.candidate.sourceFile.fileName.localeCompare(right.candidate.sourceFile.fileName) || lineFor(left.candidate) - lineFor(right.candidate))
+    matches.sort(compareMatches)
+    const matchGroups = groupMatchesByCallable(matches)
     const assignabilityMs = performance.now() - started
     const syntheticStarted = performance.now()
     const trustFiltered = options.verifiedOnly === true || options.minVerificationStatus === "verified"
@@ -534,32 +804,27 @@ export const createTransformSearchOperation = (context: AnalyzerContext) => asyn
             }),
       }
     }
-    const verifyPending = async (match: Match): Promise<Match> => (
-      match.verification.reason === "assignability_pending_synthetic"
-        ? finalizeVerification(match, await verifySyntheticMatch(context, project, pkg, match, options))
-        : finalizeVerification(match, match.verification)
-    )
-    let rankedMatches: Match[]
-    if (!trustFiltered) {
-      const prefixLength = Math.min(matches.length, limit + SYNTHETIC_OVERSCAN)
-      const verifiedPrefix = await Promise.all(matches.slice(0, prefixLength).map(verifyPending))
-      rankedMatches = [...verifiedPrefix, ...matches.slice(prefixLength)]
-    } else if (limit === 0) {
-      rankedMatches = []
-    } else {
-      rankedMatches = []
-      let verifiedCount = 0
-      let start = 0
-      while (start < matches.length && verifiedCount < limit) {
-        const batchSize = Math.min(SYNTHETIC_VERIFICATION_BATCH_SIZE, limit - verifiedCount)
-        const batch = await Promise.all(
-          matches.slice(start, start + batchSize).map(verifyPending),
-        )
-        rankedMatches.push(...batch)
-        verifiedCount += batch.filter((match) => match.verification.status === "verified").length
-        start += batchSize
+    const verifyPending = async (group: readonly Match[]): Promise<Match> => {
+      const provisional = group[0]!
+      if (provisional.verification.reason !== "assignability_pending_synthetic") {
+        return finalizeVerification(provisional, provisional.verification)
       }
+      const synthetic = await verifySyntheticMatch(context, project, pkg, provisional, options)
+      const selected = synthetic.selectedSignatureKey === null
+        ? undefined
+        : group.find((match) => match.candidate.signatureKey === synthetic.selectedSignatureKey)
+      if (synthetic.verification.status === "verified" && selected === undefined) {
+        return finalizeVerification(provisional, {
+          ...synthetic.verification,
+          status: "unverified",
+          reason: "synthetic_check_failed",
+        })
+      }
+      return finalizeVerification(selected ?? provisional, synthetic.verification)
     }
+    const rankedMatches = trustFiltered
+      ? await verifyTrustedGroups(matchGroups, limit, verifyPending)
+      : await verifyUnfilteredGroups(matchGroups, limit, verifyPending)
     const syntheticMs = performance.now() - syntheticStarted
     const statusCounts: Record<VerificationStatus, number> = { verified: 0, unverified: 0, unverifiable: 0 }
     for (const match of rankedMatches) statusCounts[match.verification.status] += 1
@@ -604,8 +869,8 @@ export const createTransformSearchOperation = (context: AnalyzerContext) => asyn
         },
       },
       stats: {
-        totalCandidates: candidates.length,
-        assignableMatches: matches.length,
+        totalCandidates: new Set(candidates.map((candidate) => candidate.callableId)).size,
+        assignableMatches: matchGroups.length,
         verifiedMatches: statusCounts.verified,
         verification: statusCounts,
         returned: results.length,

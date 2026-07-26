@@ -37,6 +37,140 @@ describe("native engine transform search", () => {
     expect(response.results.find((result) => result.name === "toDTO")?.verification.status).toBe("verified")
   })
 
+  it("uses the compiler-selected public overload as one callable result", async () => {
+    const forward = await search({
+      from: "User",
+      to: "UserDTO",
+      paramPosition: "any",
+      verifiedOnly: true,
+      limit: 100,
+    })
+    const reverse = await search({
+      from: "UserDTO",
+      to: "User",
+      paramPosition: "any",
+      verifiedOnly: true,
+      limit: 100,
+    })
+
+    expect(forward.results.filter((result) => result.name === "transform")).toEqual([
+      expect.objectContaining({
+        signature: "transform(input: User): UserDTO",
+        verification: { status: "verified", method: "synthetic", reason: "synthetic_check_passed" },
+      }),
+    ])
+    expect(reverse.results.filter((result) => result.name === "transform")).toEqual([
+      expect.objectContaining({
+        signature: "transform(input: UserDTO): User",
+        verification: { status: "verified", method: "synthetic", reason: "synthetic_check_passed" },
+      }),
+    ])
+  })
+
+  it("keeps overloaded static and instance methods as distinct callables", async () => {
+    const root = await mkdtemp(join(tmpdir(), "quartz-transform-overloaded-methods-"))
+    try {
+      await writeFile(join(root, "tsconfig.json"), JSON.stringify({
+        compilerOptions: { target: "ESNext", module: "ESNext", moduleResolution: "bundler", strict: true, noEmit: true },
+        include: ["source.ts"],
+      }))
+      await writeFile(join(root, "source.ts"), [
+        "export interface Source { id: string }",
+        "export interface DetailedSource extends Source { detail: string }",
+        "export interface Target { id: string }",
+        "export interface OtherSource { value: number }",
+        "export interface OtherTarget { value: string }",
+        "export function aConvert(value: Source): Target",
+        "export function aConvert(value: DetailedSource): Target",
+        "export function aConvert(value: Source): Target { return value }",
+        "export function zExact(value: DetailedSource): Target { return value }",
+        "export class Mapper {",
+        "  constructor(value: DetailedSource)",
+        "  constructor(value: Source)",
+        "  constructor(_value: Source) {}",
+        "  static map(value: DetailedSource): Target",
+        "  static map(value: Source): Target",
+        "  static map(value: Source): Target { return value }",
+        "  map(value: OtherSource): OtherTarget { return { value: String(value.value) } }",
+        "}",
+        "export interface CallableMapper {",
+        "  (value: DetailedSource): Target",
+        "  (value: Source): Target",
+        "}",
+      ].join("\n"))
+      const temporaryContext = await AnalyzerContext.open(root)
+      try {
+        const temporarySearch = createTransformSearchOperation(temporaryContext)
+        const staticResponse = await temporarySearch({
+          from: "DetailedSource",
+          to: "Target",
+          verifiedOnly: true,
+          limit: 10,
+        })
+        const instanceResponse = await temporarySearch({
+          from: "OtherSource",
+          to: "OtherTarget",
+          verifiedOnly: true,
+          limit: 10,
+        })
+        const constructorResponse = await temporarySearch({
+          from: "DetailedSource",
+          to: "Mapper",
+          verifiedOnly: true,
+          limit: 10,
+        })
+        const typeOnlyResponse = await temporarySearch({
+          from: "DetailedSource",
+          to: "Target",
+          includeFailedVerification: true,
+          limit: 10,
+        })
+        const rankedResponse = await temporarySearch({
+          from: "DetailedSource",
+          to: "Target",
+          verifiedOnly: true,
+          limit: 1,
+        })
+
+        expect(staticResponse.results.filter((result) => result.name === "Mapper.map")).toEqual([
+          expect.objectContaining({
+            kind: "StaticMethod",
+            signature: "map(value: DetailedSource): Target",
+          }),
+        ])
+        expect(instanceResponse.results.filter((result) => result.name === "Mapper.map")).toEqual([
+          expect.objectContaining({
+            kind: "ClassMethod",
+            signature: "map(value: OtherSource): OtherTarget",
+          }),
+        ])
+        expect(constructorResponse.results.filter((result) => result.name === "Mapper.constructor")).toEqual([
+          expect.objectContaining({
+            kind: "Constructor",
+            signature: "constructor(value: DetailedSource): Mapper",
+          }),
+        ])
+        expect(typeOnlyResponse.results.filter((result) => result.name === "CallableMapper.anonymous")).toEqual([
+          expect.objectContaining({
+            kind: "TypeLiteralMethod",
+            signature: "anonymous(value: DetailedSource): Target",
+            verification: { status: "unverifiable", method: null, reason: "not_importable" },
+          }),
+        ])
+        expect(rankedResponse.results).toEqual([
+          expect.objectContaining({
+            name: "zExact",
+            signature: "zExact(value: DetailedSource): Target",
+          }),
+        ])
+      } finally {
+        await temporaryContext.close()
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it("fails closed when a query type cannot be resolved", async () => {
     await expect(search({ from: "  DefinitelyNotAType  ", to: "AlsoMissing" })).rejects.toMatchObject({
       code: "TRANSFORM_QUERY_UNRESOLVED",
