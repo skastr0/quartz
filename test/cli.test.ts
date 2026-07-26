@@ -89,6 +89,63 @@ describe("agentic CLI protocol", () => {
     })
   }, cliTestTimeout)
 
+  it("surfaces unresolved transform queries as stable engine errors", () => {
+    const result = runCli([
+      "transform-search",
+      JSON.stringify({ root: fixturesPath, from: 'Pick<User, "id">', to: "UserDTO" }),
+    ])
+
+    expect(result.status).toBe(1)
+    expect(result.stdout).toBe("")
+    expect(parse(result.stderr)).toMatchObject({
+      ok: false,
+      command: "transform-search",
+      error: {
+        type: "QuartzEngineError",
+        message: expect.stringContaining("Declare an exported named type or alias"),
+        details: {
+          code: "TRANSFORM_QUERY_UNRESOLVED",
+          retryable: false,
+          next_step: "Declare an exported named type or alias and retry.",
+        },
+      },
+    })
+  }, cliTestTimeout)
+
+  it("preserves unresolved query failures inside ordered batches", () => {
+    const result = runCli([
+      "transform-search",
+      JSON.stringify([
+        { root: fixturesPath, from: "User", to: "UserDTO" },
+        { root: fixturesPath, from: "DefinitelyNotAType", to: "UserDTO" },
+      ]),
+    ])
+
+    expect(result.status).toBe(1)
+    expect(result.stderr).toBe("")
+    expect(parse(result.stdout)).toMatchObject({
+      ok: true,
+      command: "transform-search",
+      data: {
+        outcome: "partial_failure",
+        success_count: 1,
+        error_count: 1,
+        results: [
+          { index: 0, ok: true, target: { from: "User", to: "UserDTO" } },
+          {
+            index: 1,
+            ok: false,
+            target: { from: "DefinitelyNotAType", to: "UserDTO" },
+            error: {
+              type: "QuartzEngineError",
+              details: { code: "TRANSFORM_QUERY_UNRESOLVED", retryable: false },
+            },
+          },
+        ],
+      },
+    })
+  }, cliTestTimeout)
+
   it("returns ordered batch results with partial failure semantics", () => {
     const result = runCli([
       "info",

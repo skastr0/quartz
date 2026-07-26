@@ -186,6 +186,20 @@ describe("OpenCode plugin wrapper", () => {
       explanation: expect.stringContaining("UserInput"),
       issues: [expect.objectContaining({ kind: "missing_property", property: "id" })],
     })
+    await expect(toolExecute(plugin, "type_transform_search", {
+      from: 'Pick<User, "id">',
+      to: "UserDTO",
+    })).rejects.toMatchObject({
+      code: "TRANSFORM_QUERY_UNRESOLVED",
+      message: expect.stringContaining("Declare an exported named type or alias"),
+    })
+    await expect(toolExecute(plugin, "type_transform_search", {
+      from: "DefinitelyNotAType",
+      to: "UserDTO",
+    })).rejects.toMatchObject({
+      name: "QuartzEngineError",
+      code: "TRANSFORM_QUERY_UNRESOLVED",
+    })
   }, 20_000)
 
   it("disposes a matching server instance exactly once and keeps session deletion usable", async () => {

@@ -826,7 +826,15 @@ const toProtocolError = (error: unknown): ProtocolError => {
       : error instanceof Error
         ? error.message
         : String(error)
-  const details = record["details"] ?? (record["cause"] === undefined ? undefined : { cause: String(record["cause"]) })
+  const code = typeof record["code"] === "string" ? record["code"] : undefined
+  const intrinsicDetails = {
+    ...(code === undefined ? {} : { code }),
+    ...(code === "TRANSFORM_QUERY_UNRESOLVED"
+      ? { retryable: false, next_step: "Declare an exported named type or alias and retry." }
+      : {}),
+    ...(record["cause"] === undefined ? {} : { cause: String(record["cause"]) }),
+  }
+  const details = record["details"] ?? (Object.keys(intrinsicDetails).length === 0 ? undefined : intrinsicDetails)
   return protocolError(type, message, details)
 }
 

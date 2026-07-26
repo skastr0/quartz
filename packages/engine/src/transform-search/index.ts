@@ -45,6 +45,7 @@ import type {
   VerificationMeta,
   VerificationStatus,
 } from "../contracts"
+import { QuartzEngineError } from "../errors"
 import { resolveVirtualFileDirectory, synthesizePackageImports } from "../virtual-files"
 
 type AsyncCallable = FunctionLikeBase & Node
@@ -211,7 +212,9 @@ const queryTypeFor = async (
 ): Promise<QueryType> => {
   const normalized = raw.trim()
   const exact = availableTypes.get(normalized)
-  if (exact !== undefined) return { raw: normalized, type: exact.type, exactText: normalized, resolved: true }
+  if (exact !== undefined) {
+    return { raw: normalized, type: exact.type, exactText: normalized, resolved: !exact.type.isErrorType() }
+  }
 
   let declarationType: TypeNode | null = null
   let declarationName: Node | null = null
@@ -423,6 +426,17 @@ export const createTransformSearchOperation = (context: AnalyzerContext) => asyn
     const candidates = index.allCandidates.filter((candidate) => !exportedOnly || candidate.exported)
     const fromQuery = options.from === undefined ? null : await queryTypeFor(options.from, sourceFiles, project.checker, availableTypes)
     const toQuery = options.to === undefined ? null : await queryTypeFor(options.to, sourceFiles, project.checker, availableTypes)
+    const unresolved = fromQuery?.resolved === false
+      ? { field: "from", query: fromQuery }
+      : toQuery?.resolved === false
+        ? { field: "to", query: toQuery }
+        : null
+    if (unresolved !== null) {
+      throw new QuartzEngineError(
+        "TRANSFORM_QUERY_UNRESOLVED",
+        `Could not resolve transform-search ${unresolved.field} type ${JSON.stringify(unresolved.query.raw)}. Declare an exported named type or alias and retry.`,
+      )
+    }
     const matches: Match[] = []
     for (const candidate of candidates) {
       const positions = paramPosition === "any" ? candidate.params.map((_, index) => index) : [paramPosition]

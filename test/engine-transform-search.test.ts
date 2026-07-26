@@ -37,6 +37,21 @@ describe("native engine transform search", () => {
     expect(response.results.find((result) => result.name === "toDTO")?.verification.status).toBe("verified")
   })
 
+  it("fails closed when a query type cannot be resolved", async () => {
+    await expect(search({ from: "  DefinitelyNotAType  ", to: "AlsoMissing" })).rejects.toMatchObject({
+      code: "TRANSFORM_QUERY_UNRESOLVED",
+      message: 'Could not resolve transform-search from type "DefinitelyNotAType". Declare an exported named type or alias and retry.',
+    })
+    await expect(search({ from: 'Pick<User, "id">', to: "UserDTO" })).rejects.toMatchObject({
+      code: "TRANSFORM_QUERY_UNRESOLVED",
+      message: expect.stringContaining("Declare an exported named type or alias"),
+    })
+    await expect(search({ from: "User", to: 'Pick<UserDTO, "id">' })).rejects.toMatchObject({
+      code: "TRANSFORM_QUERY_UNRESOLVED",
+      message: expect.stringContaining('to type "Pick<UserDTO, \\"id\\">"'),
+    })
+  })
+
   it("unwraps Promise return types", async () => {
     const response = await search({ from: "User", to: "UserDTO", paramPosition: "any", unwrapReturn: true })
     const save = response.results.find((result) => result.name === "saveUser")
