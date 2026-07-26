@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { afterAll, beforeAll, describe, expect, it } from "vitest"
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
 import { AnalyzerContext } from "../packages/engine/src/context"
 import { createTransformSearchOperation, type TransformSearchOperation } from "../packages/engine/src/transform-search"
 
@@ -56,6 +56,44 @@ describe("native engine transform search", () => {
     const response = await search({ from: "User", to: "UserDTO", paramPosition: "any", unwrapReturn: true })
     const save = response.results.find((result) => result.name === "saveUser")
     expect(save?.matchDetails.toMatch).toMatchObject({ unwrapped: true, wrapper: "Promise", returnType: "Promise<UserDTO>" })
+  })
+
+  it("verifies public instance methods without requiring a public constructor", async () => {
+    const root = await mkdtemp(join(tmpdir(), "quartz-transform-private-constructor-"))
+    try {
+      await writeFile(join(root, "tsconfig.json"), JSON.stringify({
+        compilerOptions: { target: "ESNext", module: "ESNext", moduleResolution: "bundler", strict: true, noEmit: true },
+        include: ["source.ts"],
+      }))
+      await writeFile(join(root, "source.ts"), [
+        "export interface Source { id: string }",
+        "export interface Target { id: string }",
+        "export class Mapper {",
+        "  private constructor() {}",
+        "  map(value: Source): Target { return value }",
+        "}",
+      ].join("\n"))
+      const temporaryContext = await AnalyzerContext.open(root)
+      try {
+        const response = await createTransformSearchOperation(temporaryContext)({
+          from: "Source",
+          to: "Target",
+          verifiedOnly: true,
+        })
+        expect(response.results).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              name: "Mapper.map",
+              verification: { status: "verified", method: "synthetic", reason: "synthetic_check_passed" },
+            }),
+          ]),
+        )
+      } finally {
+        await temporaryContext.close()
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it("rejects erased-input false positives", async () => {
@@ -159,7 +197,45 @@ describe("native engine transform search", () => {
     }
   })
 
+  it("does not verify beyond the remaining trusted result limit", async () => {
+    const root = await mkdtemp(join(tmpdir(), "quartz-transform-trust-limit-"))
+    try {
+      await writeFile(join(root, "tsconfig.json"), JSON.stringify({
+        compilerOptions: { target: "ESNext", module: "ESNext", moduleResolution: "bundler", strict: true, noEmit: true },
+        include: ["source.ts"],
+      }))
+      await writeFile(join(root, "source.ts"), [
+        "export interface Source { id: string }",
+        "export interface Target { id: string }",
+        ...Array.from({ length: 5 }, (_, index) => `export const valid${index} = (value: Source): Target => value`),
+      ].join("\n"))
+      const temporaryContext = await AnalyzerContext.open(root)
+      const virtualFiles = vi.spyOn(temporaryContext.workspace, "withVirtualFile")
+      try {
+        const response = await createTransformSearchOperation(temporaryContext)({
+          from: "Source",
+          to: "Target",
+          paramPosition: "any",
+          verifiedOnly: true,
+          limit: 1,
+        })
+        expect(response.results).toHaveLength(1)
+        expect(response.stats).toMatchObject({
+          verifiedMatches: 1,
+          verification: { verified: 1 },
+        })
+        expect(virtualFiles).toHaveBeenCalledTimes(1)
+      } finally {
+        virtualFiles.mockRestore()
+        await temporaryContext.close()
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it("does not verify candidates when a trust-filtered query requests zero results", async () => {
+    const virtualFiles = vi.spyOn(context.workspace, "withVirtualFile")
     const response = await search({ from: "User", to: "UserDTO", paramPosition: "any", verifiedOnly: true, limit: 0 })
 
     expect(response.results).toEqual([])
@@ -167,6 +243,8 @@ describe("native engine transform search", () => {
       returned: 0,
       verification: { verified: 0, unverified: 0, unverifiable: 0 },
     })
+    expect(virtualFiles).not.toHaveBeenCalled()
+    virtualFiles.mockRestore()
   })
 
   it("returns requested synthetic verification evidence", async () => {

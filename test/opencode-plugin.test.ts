@@ -331,7 +331,7 @@ describe("OpenCode plugin wrapper", () => {
         "export type TargetShapePlus = TargetShape & { extra: string }",
         "export class SecretMapper {",
         "  private constructor() {}",
-        "  map(value: SourceShape): TargetShapePlus {",
+        "  private map(value: SourceShape): TargetShapePlus {",
         "    return { ...value, displayName: value.id, extra: value.id }",
         "  }",
         "}",

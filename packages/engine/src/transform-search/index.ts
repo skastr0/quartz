@@ -284,7 +284,7 @@ const syntheticCall = (match: Match): string | null => {
   if (candidate.kind === "StaticMethod" || candidate.kind === "ObjectMethod") {
     return `${candidate.containerName}.${candidate.name}(${args})`
   }
-  return `(null as unknown as InstanceType<typeof ${candidate.containerName}>).${candidate.name}(${args})`
+  return `(null as unknown as (typeof ${candidate.containerName})["prototype"]).${candidate.name}(${args})`
 }
 
 const verifySyntheticMatch = async (
@@ -549,12 +549,15 @@ export const createTransformSearchOperation = (context: AnalyzerContext) => asyn
     } else {
       rankedMatches = []
       let verifiedCount = 0
-      for (let start = 0; start < matches.length && verifiedCount < limit; start += SYNTHETIC_VERIFICATION_BATCH_SIZE) {
+      let start = 0
+      while (start < matches.length && verifiedCount < limit) {
+        const batchSize = Math.min(SYNTHETIC_VERIFICATION_BATCH_SIZE, limit - verifiedCount)
         const batch = await Promise.all(
-          matches.slice(start, start + SYNTHETIC_VERIFICATION_BATCH_SIZE).map(verifyPending),
+          matches.slice(start, start + batchSize).map(verifyPending),
         )
         rankedMatches.push(...batch)
         verifiedCount += batch.filter((match) => match.verification.status === "verified").length
+        start += batchSize
       }
     }
     const syntheticMs = performance.now() - syntheticStarted
