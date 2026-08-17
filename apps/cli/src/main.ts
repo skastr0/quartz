@@ -1099,7 +1099,7 @@ const readPayload = (source: string | undefined): Effect.Effect<unknown, Command
             message: "Payload must be valid JSON",
             details: {
               source: source === "-" ? "stdin" : source.startsWith("@") ? "file" : "inline",
-              received: text.slice(0, 500),
+              ...(source.startsWith("@") ? {} : { received: text.slice(0, 500) }),
               cause: cause instanceof Error ? cause.message : String(cause),
               retryable: false,
             },
@@ -1286,14 +1286,14 @@ const writeArtifact = (
   Effect.tryPromise({
     try: async () => {
       const artifactDirectory = resolve(options.artifactDir ?? defaultArtifactDirectory())
-      await mkdir(artifactDirectory, { recursive: true })
+      await mkdir(artifactDirectory, { recursive: true, mode: 0o700 })
 
       const createdAt = new Date().toISOString()
       const safeTimestamp = createdAt.replace(/[:.]/g, "-")
       const safeCommand = command.replace(/\s+/g, "-")
       const absolutePath = join(artifactDirectory, `${safeTimestamp}-${safeCommand}.json`)
       const body = JSON.stringify(data, null, 2)
-      await writeFile(absolutePath, `${body}\n`, "utf8")
+      await writeFile(absolutePath, `${body}\n`, { encoding: "utf8", mode: 0o600 })
 
       return {
         kind: "summary+artifact",
