@@ -1,6 +1,6 @@
 {
   "name": "@skastr0/quartz-linux-x64",
-  "version": "0.2.0-next.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "Quartz standalone CLI binary for Linux x64.",
   "license": "MIT",

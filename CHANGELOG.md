@@ -4,18 +4,9 @@ All notable changes to quartz will be documented in this file.
 
 The project follows Semantic Versioning for the declared public package, CLI, and plugin surfaces. While quartz is in `0.y.z`, APIs and command behavior may still change, but user-visible breaking changes should be called out here.
 
-## [Unreleased]
+## [0.2.0] - 2026-08-17
 
-### Fixed
-
-- GitHub Release assets now bundle the exact matching TypeScript native payload and are smoke-tested outside the repository before a draft release is created.
-- `why-error` now accepts schema-visible code, message, or `file` + `line` diagnostic selectors through the CLI, and package command inventories include the composed `verify-contract` surface.
-- `related` no longer re-resolves an already-canonical target symbol for every incoming reference, reducing redundant native checker work without changing results.
-- Generic inspection now reports instantiated property types through `info` and `expand`, while `at-position` resolves a generic head to its enclosing type reference instead of `any`.
-
-## [0.2.0-next.0] - 2026-07-23
-
-Prerelease of the native-engine product path. Publish only with explicit release authority; keep `0.1.0` and the previous exact nightly available as rollback targets.
+Initial release of the native-engine product path.
 
 ### Changed
 
@@ -32,18 +23,22 @@ Prerelease of the native-engine product path. Publish only with explicit release
 - Refactor preview uses compiler-native `getReferencedSymbolsForNode` (monorepo warm p50 ~3.4s → ~12ms on the measured M1 host).
 - Transform-search caches its candidate/type index by workspace revision and bounds synthetic verification to `limit + 10` overscan.
 - Measured pin and architecture deltas are recorded in `docs/bench/`; treat any 10× claim as workload-specific evidence only.
+- `related` no longer re-resolves an already-canonical target symbol for every incoming reference, reducing redundant native checker work without changing results.
 
 ### Added
 
 - Unstable API contract tests for surfaces Quartz consumes (including `runWithTemporaryFileUpdate`).
 - Isolated `typescript@next` canary (`bun run canary:typescript`, scheduled GitHub workflow) that never auto-bumps the repository pin.
 - `docs/performance.md` describing cold CLI vs warm batch vs plugin paths.
+- `why-error` now accepts schema-visible code, message, or `file` + `line` diagnostic selectors through the CLI, and package command inventories include the composed `verify-contract` surface.
 
 ### Fixed
 
+- GitHub Release assets now bundle the exact matching TypeScript native payload and are smoke-tested outside the repository before a draft release is created.
 - Native project loading now canonicalizes package-store symlinks, preserving referenced `@types` dependencies.
 - Native related-symbol and graph results now resolve imported aliases, avoid duplicate semantic edges, treat primitive literal unions as graph leaves, and report one-based rename columns.
 - Temporary snippet/transform analysis no longer mutates the global base snapshot; concurrent temporary updates stay isolated via `runWithTemporaryFileUpdate`.
+- Generic inspection now reports instantiated property types through `info` and `expand`, while `at-position` resolves a generic head to its enclosing type reference instead of `any`.
 
 ## [0.1.0] - 2026-06-02
 
