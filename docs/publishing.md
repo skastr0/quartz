@@ -47,25 +47,16 @@ Complete these gates before making the repository public, pushing a release tag,
 - keep `@skastr0/quartz-cli` private; publish `@skastr0/quartz` as the npm runner package
 - get explicit maintainer approval for each external action: visibility flip, tag push, workflow dispatch, protected-environment approval, package upload, draft release publication, or Homebrew tap update
 
-## First npm Package Creation
+## First npm Package Creation & Bootstrap
 
-The target publishing model is CI-first trusted publishing through `.github/workflows/npm-publish.yml`.
+The standard publishing model is CI-first trusted publishing through `.github/workflows/npm-publish.yml`.
 
-npm trusted publishing setup through `npm trust` requires the package to already exist on the npm registry. Because all Quartz npm packages are new, the first upload needs an explicit bootstrap decision before trusted publishing can take over.
+npm trusted publishing requires packages to exist on the registry before OIDC trust relationships can be registered. The initial package bootstrap has been completed:
 
-Preferred bootstrap path:
-
-1. Make the repository public so future trusted-publishing releases can generate provenance.
-2. Create and protect the GitHub `release` environment.
-3. Create a short-lived npm token with package publish rights for the `@skastr0` scope.
-4. Store it as `NPM_TOKEN` only in the protected `release` environment.
-5. Dispatch `.github/workflows/npm-bootstrap-publish.yml` from the reviewed release commit.
-6. Verify all seven packages exist on npm.
-7. Revoke the npm token and delete the `NPM_TOKEN` environment secret.
-8. Configure npm trusted publishers for all seven packages.
-9. Use `.github/workflows/npm-publish.yml` for future package releases.
-
-Local `npm publish` is a bootstrap exception only when the maintainer explicitly approves that exact local-publish path. Do not use local publish as the default.
+1. Packages were bootstrapped with public access.
+2. The GitHub `release` environment is created, protected with maintainer approval, and configured for `v*` release tags.
+3. npm Trusted Publishing (`npm trust`) is configured across all seven packages.
+4. All subsequent releases publish directly from GitHub Actions via `.github/workflows/npm-publish.yml` with signed Sigstore provenance.
 
 ## npm Trusted Publishing Setup
 

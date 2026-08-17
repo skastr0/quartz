@@ -2,14 +2,14 @@
   "schemaVersion": "quartz-bench/v1",
   "generatedAt": "2026-07-23T21:40:53.029Z",
   "profile": "pr",
-  "root": "/Users/guilhermecastro/Projects/quartz/test/fixtures",
+  "root": "test/fixtures",
   "quartzCommit": "6fe845571e2e809b2872985f123fe65b3462487a",
   "analysisTypescriptVersion": "7.1.0-dev.20260723.1",
   "process": {
     "runtime": "bun 1.3.14",
     "platform": "darwin",
     "arch": "arm64",
-    "hostname": "macmini.local",
+    "hostname": "host",
     "cpuModel": "Apple M1",
     "cpuCount": 8,
     "totalMemGb": 16
@@ -22,7 +22,7 @@
       "warm-analyzer"
     ]
   },
-  "cliBinary": "/Users/guilhermecastro/.local/bin/quartz",
+  "cliBinary": "quartz",
   "results": [
     {
       "mode": "cold-cli",

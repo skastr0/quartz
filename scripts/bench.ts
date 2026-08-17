@@ -21,7 +21,7 @@
 import { execFileSync, spawnSync } from "node:child_process"
 import { mkdirSync, writeFileSync } from "node:fs"
 import { cpus, hostname, platform, arch, totalmem } from "node:os"
-import { dirname, resolve } from "node:path"
+import { dirname, isAbsolute, relative, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import { performance } from "node:perf_hooks"
 import { createTypeAnalyzer, analysisTypeScriptVersion, type QuartzAnalyzer } from "@skastr0/quartz-engine"
@@ -388,20 +388,20 @@ export const runBench = async (options: {
     schemaVersion: "quartz-bench/v1",
     generatedAt: new Date().toISOString(),
     profile,
-    root,
+    root: isAbsolute(root) ? relative(process.cwd(), root) || "." : root,
     quartzCommit: gitCommit(),
     analysisTypescriptVersion: analysisTypeScriptVersion,
     process: {
       runtime: `bun ${Bun.version}`,
       platform: platform(),
       arch: arch(),
-      hostname: hostname(),
+      hostname: "host",
       cpuModel: cpu?.model ?? null,
       cpuCount: cpus().length,
       totalMemGb: round(totalmem() / 1024 ** 3),
     },
     config,
-    cliBinary: cli,
+    cliBinary: isAbsolute(cli) ? relative(process.cwd(), cli) || cli : cli,
     results,
   }
 }

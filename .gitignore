@@ -1,8 +1,35 @@
+# Dependencies & build outputs
 node_modules
 dist
 coverage
+packages/npm/quartz-*/bin/
+
+# OS & editor artifacts
 .DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment & credentials
+.env
+.env.*
+!.env.example
+.npmrc
+.auth/
+*.pem
+*.key
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+bun.log
+
+# Local agent & analysis caches
 .quartz/
 .taste-codec/cache
-packages/npm/quartz-*/bin/
 .atlas/
+tmp/
+.temp/
