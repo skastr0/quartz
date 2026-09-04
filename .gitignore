@@ -28,6 +28,7 @@ yarn-error.log*
 bun.log
 
 # Local agent & analysis caches
+.amp/portals/
 .quartz/
 .taste-codec/cache
 .atlas/

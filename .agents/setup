@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+bun_version="$(sed -n 's/.*"packageManager": *"bun@\([^"]*\)".*/\1/p' package.json)"
+if [[ -z "$bun_version" ]]; then
+  echo "Unable to determine the pinned Bun version from package.json" >&2
+  exit 1
+fi
+
+bun_bin="$HOME/.bun/bin/bun"
+toolchain_started=$SECONDS
+if [[ ! -x "$bun_bin" ]] || [[ "$($bun_bin --version)" != "$bun_version" ]]; then
+  echo "Installing Bun $bun_version"
+  curl -fsSL https://bun.sh/install | bash -s -- "bun-v$bun_version"
+else
+  echo "Bun $bun_version is already installed"
+fi
+
+mkdir -p "$HOME/.local/bin"
+ln -sfn "$bun_bin" "$HOME/.local/bin/bun"
+export PATH="$HOME/.local/bin:$PATH"
+echo "Bun toolchain ready in $((SECONDS - toolchain_started))s"
+
+dependencies_started=$SECONDS
+echo "Installing workspace dependencies"
+bun install --frozen-lockfile
+echo "Workspace dependencies ready in $((SECONDS - dependencies_started))s"
