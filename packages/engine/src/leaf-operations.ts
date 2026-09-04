@@ -163,8 +163,10 @@ const isDefault = (node: Node): boolean => {
   return modifiers !== undefined && (modifiers & ModifierFlags.Default) !== 0
 }
 
-const exportMatchesFor = async (project: Project, source: SourceFile): Promise<readonly SymbolMatch[]> => {
-  const moduleSymbol = await project.checker.getSymbolAtLocation(source)
+const exportMatchesFor = async (
+  project: Project,
+  moduleSymbol: Symbol | undefined,
+): Promise<readonly SymbolMatch[]> => {
   if (moduleSymbol === undefined) return []
   const exported = await project.checker.getExportsOfModule(moduleSymbol)
   const matches: SymbolMatch[] = []
@@ -199,7 +201,12 @@ const exportMatchesFor = async (project: Project, source: SourceFile): Promise<r
 }
 
 const exportedMatches = async (project: Project, sourceFiles: readonly SourceFile[]): Promise<readonly SymbolMatch[]> => {
-  const all = await Promise.all(sourceFiles.map((source) => exportMatchesFor(project, source)))
+  const moduleSymbols = await project.checker.getSymbolOfSourceFile(
+    sourceFiles.map((sourceFile) => sourceFile.fileName),
+  )
+  const all = await Promise.all(
+    moduleSymbols.map((moduleSymbol) => exportMatchesFor(project, moduleSymbol)),
+  )
   return all.flat()
 }
 
@@ -363,7 +370,8 @@ const makeTypeInfo = async (match: SymbolMatch, project: Project, packageInfo: P
 }
 
 const metadataFor = async (project: Project, source: SourceFile): Promise<readonly DeclarationMetadata[]> => {
-  const matches = await exportMatchesFor(project, source)
+  const moduleSymbol = await project.checker.getSymbolOfSourceFile(source.fileName)
+  const matches = await exportMatchesFor(project, moduleSymbol)
   const direct = declarationsIn(source).flatMap((node): DeclarationMetadata[] => {
     const name = declarationName(node)
     if (name === undefined) return []

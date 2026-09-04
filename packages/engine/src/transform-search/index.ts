@@ -232,7 +232,7 @@ const needsSignatureExpansion = (group: CandidateGroup): boolean =>
 const symbolsForSeeds = async (
   project: Project,
   seeds: readonly Candidate[],
-): Promise<ReadonlyMap<number, CompilerSymbol>> => {
+): Promise<ReadonlyMap<number, { readonly symbol: CompilerSymbol; readonly identity: string }>> => {
   const indexes: number[] = []
   const nodes: Node[] = []
   for (let index = 0; index < seeds.length; index += 1) {
@@ -242,9 +242,17 @@ const symbolsForSeeds = async (
     nodes.push(node)
   }
   const symbols = nodes.length === 0 ? [] : await project.checker.getSymbolAtLocation(nodes)
-  const bySeed = new Map<number, CompilerSymbol>()
+  const canonical = await Promise.all(symbols.map(async (symbol) => {
+    if (symbol === undefined) return undefined
+    const target = await project.checker.getTargetSymbol(symbol)
+    return {
+      symbol: target,
+      identity: await project.checker.getFullyQualifiedName(target),
+    }
+  }))
+  const bySeed = new Map<number, { readonly symbol: CompilerSymbol; readonly identity: string }>()
   for (let index = 0; index < symbols.length; index += 1) {
-    const symbol = symbols[index]
+    const symbol = canonical[index]
     if (symbol !== undefined) bySeed.set(indexes[index]!, symbol)
   }
   return bySeed
@@ -252,13 +260,15 @@ const symbolsForSeeds = async (
 
 const groupCandidateSeeds = (
   seeds: readonly Candidate[],
-  symbols: ReadonlyMap<number, CompilerSymbol>,
+  symbols: ReadonlyMap<number, { readonly symbol: CompilerSymbol; readonly identity: string }>,
 ): ReadonlyMap<string, CandidateGroup> => {
   const groups = new Map<string, CandidateGroup>()
   for (let index = 0; index < seeds.length; index += 1) {
     const seed = seeds[index]!
-    const symbol = symbols.get(index) ?? null
-    const callableId = symbol === null ? seed.callableId : `${symbol.id}:${seed.kind}`
+    const symbolInfo = symbols.get(index)
+    const symbol = symbolInfo?.symbol ?? null
+    const symbolIdentity = symbolInfo?.identity ?? null
+    const callableId = symbolIdentity === null ? seed.callableId : `${symbolIdentity}:${seed.kind}`
     const existing = groups.get(callableId)
     groups.set(callableId, existing === undefined
       ? { seed, symbol, seedCount: 1 }
@@ -621,10 +631,15 @@ const loadTransformIndex = async (project: Project): Promise<TransformIndex> => 
     const batch = await Promise.all(
       sourceNames.slice(start, start + SOURCE_FILE_BATCH_SIZE).map((name) => project.program.getSourceFile(name)),
     )
-    sourceFiles.push(...batch.filter(
-      (sourceFile): sourceFile is SourceFile =>
-        sourceFile !== undefined && !sourceFile.isDeclarationFile && !sourceFile.fileName.includes("node_modules"),
-    ))
+    const eligible = await Promise.all(batch.map(async (sourceFile) => {
+      if (sourceFile === undefined || sourceFile.isDeclarationFile) return undefined
+      const [external, defaultLibrary] = await Promise.all([
+        project.program.isSourceFileFromExternalLibrary(sourceFile),
+        project.program.isSourceFileDefaultLibrary(sourceFile),
+      ])
+      return external || defaultLibrary ? undefined : sourceFile
+    }))
+    sourceFiles.push(...eligible.filter((sourceFile): sourceFile is SourceFile => sourceFile !== undefined))
   }
   const allCandidates = await compilerCandidates(project, enumerate(sourceFiles))
   const availableNodes: TypeNode[] = []

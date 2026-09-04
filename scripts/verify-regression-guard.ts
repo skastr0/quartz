@@ -24,11 +24,12 @@ const steps: readonly GuardStep[] = [
       "test/engine-transform-search.test.ts",
       "test/engine-verification-operations.test.ts",
       "test/engine-workspace.test.ts",
+      "test/typescript-unstable-contract.test.ts",
     ],
     covers: [
       "persistent workspace lifecycle and refresh semantics",
       "compiler-native analysis, references, transforms, and verification",
-      "package selection, virtual files, and disposal",
+      "package selection, virtual files, disposal, and consumed TypeScript unstable APIs",
     ],
   },
   {

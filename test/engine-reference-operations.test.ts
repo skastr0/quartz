@@ -16,6 +16,7 @@ const createFixture = async () => {
     join(root, "src", "model.ts"),
     [
       "export interface User { id: string }",
+      "export interface Admin extends User { role: string }",
       "export default class DefaultModel { value: User; constructor(value: User) { this.value = value } }",
       "export { DefaultModel as ModelAlias }",
     ].join("\n"),
@@ -43,6 +44,7 @@ describe("engine reference operations", () => {
       expect(result?.referencedBy).toEqual(expect.arrayContaining([
         expect.objectContaining({ symbol: "user", context: "type reference", file: "src/consumer.ts", line: 2 }),
         expect.objectContaining({ symbol: "readUser", context: "type reference", file: "src/consumer.ts", line: 3 }),
+        expect.objectContaining({ symbol: "Admin", context: "extends", file: "src/model.ts", line: 2 }),
       ]))
     } finally {
       await context.close()
@@ -57,13 +59,13 @@ describe("engine reference operations", () => {
     const originalWithProject = workspace.withProject.bind(workspace)
     workspace.withProject = (operation, configFile) =>
       originalWithProject(async (project, revision) => {
-        const originalNative = project.checker.getReferencedSymbolsForNode
+        const originalNative = project.languageService.getReferencedSymbolsForNode
         const originalPerFile = project.checker.getReferencesToSymbolInFile
-        Object.defineProperty(project.checker, "getReferencedSymbolsForNode", {
+        Object.defineProperty(project.languageService, "getReferencedSymbolsForNode", {
           configurable: true,
           value: (...args: unknown[]) => {
             nativeCalls += 1
-            return Reflect.apply(originalNative, project.checker, args)
+            return Reflect.apply(originalNative, project.languageService, args)
           },
         })
         Object.defineProperty(project.checker, "getReferencesToSymbolInFile", {
@@ -76,7 +78,7 @@ describe("engine reference operations", () => {
         try {
           return await operation(project, revision)
         } finally {
-          Object.defineProperty(project.checker, "getReferencedSymbolsForNode", {
+          Object.defineProperty(project.languageService, "getReferencedSymbolsForNode", {
             configurable: true,
             value: originalNative,
           })
@@ -106,8 +108,8 @@ describe("engine reference operations", () => {
     const originalWithProject = workspace.withProject.bind(workspace)
     workspace.withProject = (operation, configFile) =>
       originalWithProject(async (project, revision) => {
-        const originalNative = project.checker.getReferencedSymbolsForNode
-        Object.defineProperty(project.checker, "getReferencedSymbolsForNode", {
+        const originalNative = project.languageService.getReferencedSymbolsForNode
+        Object.defineProperty(project.languageService, "getReferencedSymbolsForNode", {
           configurable: true,
           value: async () => {
             throw new Error("native references unavailable")
@@ -116,7 +118,7 @@ describe("engine reference operations", () => {
         try {
           return await operation(project, revision)
         } finally {
-          Object.defineProperty(project.checker, "getReferencedSymbolsForNode", {
+          Object.defineProperty(project.languageService, "getReferencedSymbolsForNode", {
             configurable: true,
             value: originalNative,
           })

@@ -1,8 +1,8 @@
 import { relative, resolve } from "node:path"
-import type { Node, SourceFile } from "typescript/unstable/ast"
+import type { Identifier, Node, SourceFile } from "typescript/unstable/ast"
 import { SyntaxKind } from "typescript/unstable/ast"
-import { isTypeReferenceNode } from "typescript/unstable/ast/is"
-import type { Project, Symbol, Type } from "typescript/unstable/async"
+import { isIdentifier, isTypeReferenceNode } from "typescript/unstable/ast/is"
+import type { NodeHandle, Project, Symbol, Type } from "typescript/unstable/async"
 import type { AnalyzerContext } from "./context"
 import type {
   GraphEdge,
@@ -90,13 +90,13 @@ export const createReferenceOperations = (context: AnalyzerContext) => ({
       if (rootTarget === null) return null
 
       const nodes: string[] = [symbolName]
-      const nodeIds = new Set<string>([String(rootTarget.symbol.id)])
+      const nodeIds = new Set<string>([await symbolIdentity(project, rootTarget.symbol)])
       const edges: GraphEdge[] = []
       const edgeKeys = new Set<string>()
       const visited = new Set<string>()
 
       const visit = async (target: Target, displayName: string, currentDepth: number): Promise<void> => {
-        const targetId = String(target.symbol.id)
+        const targetId = await symbolIdentity(project, target.symbol)
         if (visited.has(targetId) || currentDepth > depth) return
         visited.add(targetId)
 
@@ -105,9 +105,10 @@ export const createReferenceOperations = (context: AnalyzerContext) => ({
         for (const reference of outgoing) {
           const child = await targets.lookup(reference.symbol)
           if (child === null) continue
-          const childId = String(child.symbol.id)
+          const childId = await symbolIdentity(project, child.symbol)
           const childName = child.symbol.name
           if (!nodeIds.has(childId)) {
+            nodeIds.add(childId)
             nodes.push(childName)
           }
           const edgeKey = `${targetId}:${childId}:${reference.context}`
@@ -277,8 +278,12 @@ const buildDeclarationTargetIndex = async (
   }
 
   if (!byName.has("default")) {
-    for (const sourceFile of sourceFiles) {
-      const moduleSymbol = await project.checker.getSymbolAtLocation(sourceFile)
+    const moduleSymbols = await project.checker.getSymbolOfSourceFile(
+      sourceFiles.map((sourceFile) => sourceFile.fileName),
+    )
+    for (let index = 0; index < sourceFiles.length; index += 1) {
+      const sourceFile = sourceFiles[index]!
+      const moduleSymbol = moduleSymbols[index]
       if (moduleSymbol === undefined) continue
       const exports = await project.checker.getExportsOfModule(moduleSymbol)
       const defaultExport = exports.find((candidate) => candidate.name === "default")
@@ -342,8 +347,12 @@ const findTargetByScan = async (
   }
 
   if (requestedName === "default") {
-    for (const sourceFile of sourceFiles) {
-      const moduleSymbol = await project.checker.getSymbolAtLocation(sourceFile)
+    const moduleSymbols = await project.checker.getSymbolOfSourceFile(
+      sourceFiles.map((sourceFile) => sourceFile.fileName),
+    )
+    for (let index = 0; index < sourceFiles.length; index += 1) {
+      const sourceFile = sourceFiles[index]!
+      const moduleSymbol = moduleSymbols[index]
       if (moduleSymbol === undefined) continue
       const exports = await project.checker.getExportsOfModule(moduleSymbol)
       const defaultExport = exports.find((candidate) => candidate.name === "default")
@@ -401,11 +410,11 @@ const findIncomingReferences = async (project: Project, target: Target): Promise
   const declarationName = declarationNameNode(target.declaration) ?? target.declaration
   const declarationPosition = declarationName.getStart(declarationName.getSourceFile())
   try {
-    const referenced = await project.checker.getReferencedSymbolsForNode(declarationName, declarationPosition)
+    const referenced = await project.languageService.getReferencedSymbolsForNode(declarationName, declarationPosition)
     for (const entry of referenced) {
       const handles = [entry.definition, ...entry.references]
       for (const handle of handles) {
-        const node = await handle.resolve(project)
+        const node = await resolveIdentifierHandle(project, handle)
         if (node !== undefined) await add(node, entry.symbol ?? target.symbol)
       }
     }
@@ -443,7 +452,7 @@ const findOutgoingReferences = async (project: Project, target: Target): Promise
     if (symbol === undefined) return
     const resolved = await resolveSymbol(project, symbol)
     if (resolved.id === target.symbol.id || PRIMITIVE_NAMES[resolved.name] === true) return
-    const key = `${resolved.id}:${context}`
+    const key = `${await symbolIdentity(project, resolved)}:${context}`
     if (seen.has(key)) return
     seen.add(key)
     references.push({ symbol: resolved.name, context })
@@ -476,12 +485,12 @@ const findRenameSites = async (project: Project, target: Target): Promise<Rename
   const declarationName = declarationNameNode(target.declaration) ?? target.declaration
   const position = declarationName.getStart(declarationName.getSourceFile())
   try {
-    const referenced = await project.checker.getReferencedSymbolsForNode(declarationName, position)
+    const referenced = await project.languageService.getReferencedSymbolsForNode(declarationName, position)
     for (const entry of referenced) {
       const handles = [entry.definition, ...entry.references]
       for (const handle of handles) {
-        const node = await handle.resolve(project)
-        if (node === undefined || node.kind !== SyntaxKind.Identifier) continue
+        const node = await resolveIdentifierHandle(project, handle)
+        if (node === undefined) continue
         const sourceFile = node.getSourceFile()
         if (!isProjectSourceFile(sourceFile.fileName, target.packagePath)) continue
         addSite(sites, seen, sourceFile, node)
@@ -532,20 +541,34 @@ const findContainingSymbol = async (project: Project, start: Node, target: Symbo
     current = current.parent
   }
   const sourceFile = start.getSourceFile()
-  const moduleSymbol = await project.checker.getSymbolAtLocation(sourceFile)
+  const moduleSymbol = await project.checker.getSymbolOfSourceFile(sourceFile.fileName)
   return moduleSymbol?.name ?? "anonymous"
 }
 
 const resolveSymbol = async (project: Project, symbol: Symbol): Promise<Symbol> => {
+  let resolved = symbol
   try {
-    return await project.checker.getAliasedSymbol(symbol)
+    resolved = await project.checker.getAliasedSymbol(resolved)
   } catch {
-    return symbol
+    // Non-alias symbols are already resolved.
   }
+  return project.checker.getTargetSymbol(resolved)
 }
 
 const matchesCanonicalSymbol = async (project: Project, candidate: Symbol, target: Symbol): Promise<boolean> =>
   (await resolveSymbol(project, candidate)).id === target.id
+
+const symbolIdentity = async (project: Project, symbol: Symbol): Promise<string> =>
+  project.checker.getFullyQualifiedName(await resolveSymbol(project, symbol))
+
+const resolveIdentifierHandle = async (
+  project: Project,
+  handle: NodeHandle,
+): Promise<Identifier | undefined> => {
+  if (handle.kind !== SyntaxKind.Identifier) return undefined
+  const node = await (handle as NodeHandle<Identifier>).resolve(project)
+  return node !== undefined && isIdentifier(node) ? node : undefined
+}
 
 const projectSourceFiles = async (project: Project, packagePath: string): Promise<SourceFile[]> => {
   const names = await project.program.getSourceFileNames()
@@ -629,6 +652,11 @@ const isTypeReferencePosition = (node: Node): boolean => {
 }
 
 const classifyReferenceContext = (parent: Node): string => {
+  let ancestor: Node | undefined = parent
+  while (ancestor !== undefined && ancestor.kind !== SyntaxKind.SourceFile) {
+    if (ancestor.kind === SyntaxKind.HeritageClause) return "extends"
+    ancestor = ancestor.parent
+  }
   switch (parent.kind) {
     case SyntaxKind.HeritageClause:
       return "extends"

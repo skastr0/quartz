@@ -25,6 +25,32 @@ describe("native engine transform search", () => {
     expect(response.results.every((result) => result.matchDetails.fromMatch?.matched === true)).toBe(true)
   })
 
+  it("uses program metadata rather than path names to select project sources", async () => {
+    const root = await mkdtemp(join(tmpdir(), "quartz-node_modules-project-"))
+    try {
+      await writeFile(join(root, "tsconfig.json"), JSON.stringify({
+        compilerOptions: { target: "ESNext", module: "ESNext", moduleResolution: "bundler", strict: true, noEmit: true },
+        include: ["source.ts"],
+      }))
+      await writeFile(join(root, "source.ts"), [
+        "export interface Source { id: string }",
+        "export interface Target { id: string }",
+        "export const convert = (value: Source): Target => value",
+      ].join("\n"))
+      const temporaryContext = await AnalyzerContext.open(root)
+      try {
+        const response = await createTransformSearchOperation(temporaryContext)({ from: "Source" })
+        expect(response.results).toEqual(expect.arrayContaining([
+          expect.objectContaining({ name: "convert", file: "source.ts" }),
+        ]))
+      } finally {
+        await temporaryContext.close()
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it("finds to-only transforms", async () => {
     const response = await search({ to: "UserDTO" })
     expect(response.results.map((result) => result.name)).toContain("toDTO")
