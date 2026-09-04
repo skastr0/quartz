@@ -265,6 +265,8 @@ bun run verify:regression-guard
 
 `verify:regression-guard` is the compact pre-release guard for public behavior and engine invariants. It runs the native-engine suite, documented CLI examples, focused CLI/plugin checks, and property-style regressions. Use it before release-readiness work or after changing engine lifecycle, CLI envelopes, plugin tools, diagnostics/explanations, transform search, snippet checking, source-file inspection, or refactor preview behavior. A failure means a public feature or native-engine contract regressed.
 
+The [Effect v4 migration report](docs/effect-v4-migration.md) records the CLI migration decisions and what Quartz's own analysis did and did not contribute while dogfooding the refactor.
+
 Release checks:
 
 ```bash

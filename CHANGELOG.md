@@ -4,6 +4,13 @@ All notable changes to quartz will be documented in this file.
 
 The project follows Semantic Versioning for the declared public package, CLI, and plugin surfaces. While quartz is in `0.y.z`, APIs and command behavior may still change, but user-visible breaking changes should be called out here.
 
+## [Unreleased]
+
+### Changed
+
+- Migrated the CLI from Effect v3 to the exact `4.0.0-rc.112` release candidate. Analyzer acquisition and disposal now run through a scoped Effect service while the engine and OpenCode plugin retain their Promise-based public APIs.
+- `schema show` now emits Effect v4's draft-2020-12 representation. Optional payload fields remain omit-or-value and reject JSON `null`; validation issue messages now use Effect v4's Standard Schema format.
+
 ## [0.2.0] - 2026-08-17
 
 Initial release of the native-engine product path.

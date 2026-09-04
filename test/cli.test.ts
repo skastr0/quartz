@@ -31,7 +31,7 @@ describe("agentic CLI protocol", () => {
     const first = __testing.analyzerFor({ root: "test/fixtures" })
     const second = __testing.analyzerFor({ root: "./test/fixtures" })
 
-    expect(first).toBe(second)
+    expect(await first).toBe(await second)
     expect(__testing.cacheRootOf({ root: "test/fixtures" })).toBe(__testing.cacheRootOf({ root: "./test/fixtures" }))
     expect(__testing.analyzerCacheSize()).toBe(1)
   })
@@ -74,6 +74,7 @@ describe("agentic CLI protocol", () => {
 
   it("writes expected failures as stderr envelopes", () => {
     const result = runCli(["info", JSON.stringify({ root: fixturesPath })])
+    const nullSymbol = runCli(["info", JSON.stringify({ root: fixturesPath, symbol: null })])
 
     expect(result.status).toBe(1)
     expect(result.stdout).toBe("")
@@ -84,6 +85,19 @@ describe("agentic CLI protocol", () => {
         type: "CommandInputError",
         details: {
           retryable: false,
+          issues: [expect.objectContaining({ path: "symbol", message: expect.any(String) })],
+        },
+      },
+    })
+
+    expect(nullSymbol.status).toBe(1)
+    expect(nullSymbol.stdout).toBe("")
+    expect(parse(nullSymbol.stderr)).toMatchObject({
+      error: {
+        type: "CommandInputError",
+        details: {
+          retryable: false,
+          issues: [expect.objectContaining({ path: "symbol", message: expect.any(String) })],
         },
       },
     })
@@ -176,6 +190,37 @@ describe("agentic CLI protocol", () => {
       ok: false,
       target: { symbol: "MissingSymbol" },
       error: { type: "NotFoundError" },
+    })
+  }, cliTestTimeout)
+
+  it("prefixes v4 schema issues for invalid batch items", () => {
+    const result = runCli([
+      "info",
+      JSON.stringify([
+        { root: fixturesPath, symbol: "User" },
+        { root: fixturesPath },
+      ]),
+    ])
+
+    expect(result.status).toBe(1)
+    expect(result.stderr).toBe("")
+    expect(parse(result.stdout)).toMatchObject({
+      data: {
+        outcome: "partial_failure",
+        results: [
+          { index: 0, ok: true },
+          {
+            index: 1,
+            ok: false,
+            error: {
+              type: "CommandInputError",
+              details: {
+                issues: [expect.objectContaining({ path: "items[1].symbol", message: expect.any(String) })],
+              },
+            },
+          },
+        ],
+      },
     })
   }, cliTestTimeout)
 
@@ -282,6 +327,10 @@ describe("agentic CLI protocol", () => {
         },
       },
     })
+    const graphSchema = parse(schemas.stdout).data.json_schema
+    for (const field of ["root", "package", "depth", "format"]) {
+      expect(JSON.stringify(graphSchema.properties[field])).not.toContain('"type":"null"')
+    }
     expect(parse(whyErrorSchema.stdout).data.json_schema.anyOf.map((option: any) => option.required)).toEqual([
       ["code"],
       ["message"],

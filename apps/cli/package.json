@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@skastr0/quartz-engine": "workspace:*",
-    "effect": "^3.21.2"
+    "effect": "4.0.0-rc.112"
   },
   "license": "MIT",
   "description": "Agent-native CLI for quartz TypeScript code intelligence.",

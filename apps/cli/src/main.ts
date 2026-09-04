@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { mkdir, writeFile } from "node:fs/promises"
 import { isAbsolute, join, relative, resolve } from "node:path"
-import { Either, Effect, JSONSchema, ParseResult, Schema } from "effect"
+import { Context, Effect, Layer, Result, Schema, SchemaIssue } from "effect"
 import {
   analysisTypeScriptVersion,
   createTypeAnalyzer,
@@ -62,26 +62,26 @@ const PackageRef = Schema.NonEmptyString.pipe(Schema.brand("PackageRef"))
 const SymbolName = Schema.NonEmptyString.pipe(Schema.brand("SymbolName"))
 const FilePath = Schema.NonEmptyString.pipe(Schema.brand("FilePath"))
 const TypeExpression = Schema.NonEmptyString.pipe(Schema.brand("TypeExpression"))
-const PositiveInteger = Schema.Number.pipe(Schema.int(), Schema.positive())
-const GraphFormat = Schema.Literal("mermaid", "dot")
-const OutputPolicy = Schema.Literal("inline", "artifact", "auto")
-const VerificationStatus = Schema.Literal("verified", "unverified", "unverifiable")
+const PositiveInteger = Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0)))
+const GraphFormat = Schema.Literals(["mermaid", "dot"])
+const OutputPolicy = Schema.Literals(["inline", "artifact", "auto"])
+const VerificationStatus = Schema.Literals(["verified", "unverified", "unverifiable"])
 
 const baseFields = {
-  root: Schema.optional(ProjectRoot),
-  package: Schema.optional(PackageRef),
+  root: Schema.optionalKey(ProjectRoot),
+  package: Schema.optionalKey(PackageRef),
 }
 
 const PackagesPayload = Schema.Struct({
-  root: Schema.optional(ProjectRoot),
+  root: Schema.optionalKey(ProjectRoot),
 })
 
 const SymbolsPayload = Schema.Struct({
   ...baseFields,
-  pattern: Schema.optional(Schema.NonEmptyString),
-  kind: Schema.optional(Schema.NonEmptyString),
-  file: Schema.optional(FilePath),
-  limit: Schema.optional(PositiveInteger),
+  pattern: Schema.optionalKey(Schema.NonEmptyString),
+  kind: Schema.optionalKey(Schema.NonEmptyString),
+  file: Schema.optionalKey(FilePath),
+  limit: Schema.optionalKey(PositiveInteger),
 })
 
 const SymbolPayload = Schema.Struct({
@@ -92,15 +92,15 @@ const SymbolPayload = Schema.Struct({
 const SearchPayload = Schema.Struct({
   ...baseFields,
   query: Schema.NonEmptyString,
-  pattern: Schema.optional(Schema.NonEmptyString),
-  hasProperty: Schema.optional(Schema.NonEmptyString),
-  extends: Schema.optional(Schema.NonEmptyString),
-  limit: Schema.optional(PositiveInteger),
+  pattern: Schema.optionalKey(Schema.NonEmptyString),
+  hasProperty: Schema.optionalKey(Schema.NonEmptyString),
+  extends: Schema.optionalKey(Schema.NonEmptyString),
+  limit: Schema.optionalKey(PositiveInteger),
 })
 
 const DiagnosticsPayload = Schema.Struct({
   ...baseFields,
-  explain: Schema.optional(Schema.Boolean),
+  explain: Schema.optionalKey(Schema.Boolean),
 })
 
 const AtPositionPayload = Schema.Struct({
@@ -123,8 +123,8 @@ const CheckSnippetPayload = Schema.Struct({
 const FilePayload = Schema.Struct({
   ...baseFields,
   file: FilePath,
-  symbol: Schema.optional(SymbolName),
-  includePrivate: Schema.optional(Schema.Boolean),
+  symbol: Schema.optionalKey(SymbolName),
+  includePrivate: Schema.optionalKey(Schema.Boolean),
 })
 
 const CompatiblePayload = Schema.Struct({
@@ -136,8 +136,8 @@ const CompatiblePayload = Schema.Struct({
 const GraphPayload = Schema.Struct({
   ...baseFields,
   symbol: SymbolName,
-  depth: Schema.optional(PositiveInteger),
-  format: Schema.optional(GraphFormat),
+  depth: Schema.optionalKey(PositiveInteger),
+  format: Schema.optionalKey(GraphFormat),
 })
 
 const RefactorPreviewPayload = Schema.Struct({
@@ -148,13 +148,13 @@ const RefactorPreviewPayload = Schema.Struct({
 
 const whyErrorFields = {
   ...baseFields,
-  code: Schema.optional(PositiveInteger),
-  message: Schema.optional(Schema.NonEmptyString),
-  file: Schema.optional(FilePath),
-  line: Schema.optional(PositiveInteger),
+  code: Schema.optionalKey(PositiveInteger),
+  message: Schema.optionalKey(Schema.NonEmptyString),
+  file: Schema.optionalKey(FilePath),
+  line: Schema.optionalKey(PositiveInteger),
 }
 
-const WhyErrorPayload = Schema.Union(
+const WhyErrorPayload = Schema.Union([
   Schema.Struct({
     ...whyErrorFields,
     code: PositiveInteger,
@@ -168,40 +168,40 @@ const WhyErrorPayload = Schema.Union(
     file: FilePath,
     line: PositiveInteger,
   }),
-)
+])
 
 const TransformSearchPayload = Schema.Struct({
   ...baseFields,
-  from: Schema.optional(TypeExpression),
-  to: Schema.optional(TypeExpression),
-  paramPosition: Schema.optional(Schema.Union(PositiveInteger, Schema.Literal("any"))),
-  unwrapReturn: Schema.optional(Schema.Boolean),
-  exportedOnly: Schema.optional(Schema.Boolean),
-  allowTypeErasure: Schema.optional(Schema.Boolean),
-  verifiedOnly: Schema.optional(Schema.Boolean),
-  minVerificationStatus: Schema.optional(VerificationStatus),
-  includeDiagnostics: Schema.optional(Schema.Boolean),
-  includeSyntheticCode: Schema.optional(Schema.Boolean),
-  includeFailedVerification: Schema.optional(Schema.Boolean),
-  limit: Schema.optional(PositiveInteger),
+  from: Schema.optionalKey(TypeExpression),
+  to: Schema.optionalKey(TypeExpression),
+  paramPosition: Schema.optionalKey(Schema.Union([PositiveInteger, Schema.Literal("any")])),
+  unwrapReturn: Schema.optionalKey(Schema.Boolean),
+  exportedOnly: Schema.optionalKey(Schema.Boolean),
+  allowTypeErasure: Schema.optionalKey(Schema.Boolean),
+  verifiedOnly: Schema.optionalKey(Schema.Boolean),
+  minVerificationStatus: Schema.optionalKey(VerificationStatus),
+  includeDiagnostics: Schema.optionalKey(Schema.Boolean),
+  includeSyntheticCode: Schema.optionalKey(Schema.Boolean),
+  includeFailedVerification: Schema.optionalKey(Schema.Boolean),
+  limit: Schema.optionalKey(PositiveInteger),
 })
 
 const VerifyContractPayload = Schema.Struct({
   ...baseFields,
-  from: Schema.optional(TypeExpression),
-  to: Schema.optional(TypeExpression),
-  symbol: Schema.optional(SymbolName),
-  snippet: Schema.optional(Schema.NonEmptyString),
-  includeDiagnostics: Schema.optional(Schema.Boolean),
-  includeTransformEvidence: Schema.optional(Schema.Boolean),
-  transformLimit: Schema.optional(PositiveInteger),
+  from: Schema.optionalKey(TypeExpression),
+  to: Schema.optionalKey(TypeExpression),
+  symbol: Schema.optionalKey(SymbolName),
+  snippet: Schema.optionalKey(Schema.NonEmptyString),
+  includeDiagnostics: Schema.optionalKey(Schema.Boolean),
+  includeTransformEvidence: Schema.optionalKey(Schema.Boolean),
+  transformLimit: Schema.optionalKey(PositiveInteger),
 })
 
 const DoctorPayload = Schema.Struct({
-  root: Schema.optional(ProjectRoot),
+  root: Schema.optionalKey(ProjectRoot),
 })
 
-type CommandSchema<A> = Schema.Schema<A, any, never>
+type CommandSchema<A> = Schema.ConstraintDecoder<A>
 type AnyCommandSpec = CommandSpec<any>
 type PackagesPayload = Schema.Schema.Type<typeof PackagesPayload>
 type SymbolsPayload = Schema.Schema.Type<typeof SymbolsPayload>
@@ -341,7 +341,7 @@ interface CommandSpec<A> {
   readonly batch: boolean
   readonly artifactEligible: boolean
   readonly example: unknown
-  readonly execute: (payload: A) => Effect.Effect<unknown, CliError>
+  readonly execute: (payload: A) => Effect.Effect<unknown, CliError, CliAnalyzers>
   readonly target: (payload: A) => unknown
 }
 
@@ -356,43 +356,80 @@ interface PayloadWithPackage {
 const packageNameOf = (payload: PayloadWithPackage): string | undefined => payload.package
 const rootOf = (payload: PayloadWithRoot): string => payload.root ?? process.cwd()
 const cacheRootOf = (payload: PayloadWithRoot): string => resolve(rootOf(payload))
-interface CachedAnalyzer {
-  readonly analyzer: Promise<QuartzAnalyzer>
-  readonly dispose: () => Promise<void>
+
+interface CliAnalyzerCache {
+  readonly get: (payload: PayloadWithRoot) => Effect.Effect<QuartzAnalyzer, QuartzEngineError | CommandExecutionError>
+  readonly close: Effect.Effect<void, CommandExecutionError>
+  readonly size: () => number
 }
 
-const createCliAnalyzerRuntime = (root: string): CachedAnalyzer => {
-  // Batch mode reuses this analyzer across items in one process (warm path).
-  // One-shot CLI still pays cold open+exit cost when the process ends.
-  const analyzer = createTypeAnalyzer(root, { collectTiming: process.env.QUARTZ_TIMING === "1" })
+const makeCliAnalyzerCache = (): CliAnalyzerCache => {
+  const analyzersByRoot = new Map<string, Promise<QuartzAnalyzer>>()
+
+  const get = Effect.fn("CliAnalyzers.get")(function*(payload: PayloadWithRoot) {
+    const root = cacheRootOf(payload)
+    let analyzer = analyzersByRoot.get(root)
+    if (analyzer === undefined) {
+      analyzer = createTypeAnalyzer(root, { collectTiming: process.env.QUARTZ_TIMING === "1" })
+      analyzersByRoot.set(root, analyzer)
+    }
+
+    return yield* Effect.tryPromise({
+      try: () => analyzer,
+      catch: (cause) =>
+        cause instanceof QuartzEngineError
+          ? cause
+          : new CommandExecutionError({
+              message: "Failed to open the Quartz analyzer",
+              details: { cause: cause instanceof Error ? cause.message : String(cause), retryable: true },
+            }),
+    })
+  })
+
+  const close = Effect.suspend(() =>
+    Effect.tryPromise({
+      try: async () => {
+        try {
+          await Promise.all([...analyzersByRoot.values()].map(async (analyzer) => (await analyzer).dispose()))
+        } finally {
+          analyzersByRoot.clear()
+        }
+      },
+      catch: (cause) =>
+        new CommandExecutionError({
+          message: "Failed to close the Quartz analyzer",
+          details: { cause: cause instanceof Error ? cause.message : String(cause), retryable: true },
+        }),
+    }),
+  )
+
   return {
-    analyzer,
-    dispose: async () => {
-      await (await analyzer).dispose()
-    },
+    get,
+    close,
+    size: () => analyzersByRoot.size,
   }
 }
 
-const analyzersByRoot = new Map<string, CachedAnalyzer>()
-
-const runtimeFor = (payload: PayloadWithRoot): CachedAnalyzer => {
-  const root = cacheRootOf(payload)
-  const cached = analyzersByRoot.get(root)
-  if (cached !== undefined) return cached
-
-  const runtime = createCliAnalyzerRuntime(root)
-  analyzersByRoot.set(root, runtime)
-  return runtime
+class CliAnalyzers extends Context.Service<CliAnalyzers, CliAnalyzerCache>()(
+  "@skastr0/quartz-cli/CliAnalyzers",
+) {
+  static readonly layer = Layer.effect(
+    CliAnalyzers,
+    Effect.acquireRelease(
+      Effect.sync(makeCliAnalyzerCache),
+      (cache) => cache.close.pipe(Effect.catch(() => Effect.void)),
+    ),
+  )
 }
 
-const analyzerFor = (payload: PayloadWithRoot): Promise<QuartzAnalyzer> => runtimeFor(payload).analyzer
-
-const callAnalyzer = <A>(
+const callAnalyzer = Effect.fn("callAnalyzer")(function*<A>(
   payload: PayloadWithRoot,
   operation: (analyzer: QuartzAnalyzer) => Promise<A>,
-): Effect.Effect<A, QuartzEngineError | CommandExecutionError> =>
-  Effect.tryPromise({
-    try: async () => operation(await analyzerFor(payload)),
+) {
+  const analyzers = yield* CliAnalyzers
+  const analyzer = yield* analyzers.get(payload)
+  return yield* Effect.tryPromise({
+    try: () => operation(analyzer),
     catch: (cause) =>
       cause instanceof QuartzEngineError
         ? cause
@@ -401,15 +438,15 @@ const callAnalyzer = <A>(
             details: { cause: cause instanceof Error ? cause.message : String(cause), retryable: true },
           }),
   })
+})
+
+const testingAnalyzers = makeCliAnalyzerCache()
 
 export const __testing = {
-  analyzerFor,
+  analyzerFor: (payload: PayloadWithRoot) => Effect.runPromise(testingAnalyzers.get(payload)),
   cacheRootOf,
-  clearAnalyzerCache: async () => {
-    await Promise.all([...analyzersByRoot.values()].map((runtime) => runtime.dispose()))
-    analyzersByRoot.clear()
-  },
-  analyzerCacheSize: () => analyzersByRoot.size,
+  clearAnalyzerCache: () => Effect.runPromise(testingAnalyzers.close),
+  analyzerCacheSize: testingAnalyzers.size,
 }
 
 const packageField = (payload: PayloadWithPackage): { readonly packageName?: string } => {
@@ -1114,7 +1151,7 @@ const decodePayload = <A>(
   raw: unknown,
   pathPrefix?: string,
 ): Effect.Effect<A, CommandInputError> =>
-  Schema.decodeUnknown(schema, { errors: "all" })(raw).pipe(
+  Schema.decodeUnknownEffect(schema, { errors: "all" })(raw).pipe(
     Effect.mapError(
       (error) =>
         new CommandInputError({
@@ -1128,18 +1165,21 @@ const decodePayload = <A>(
     ),
   )
 
-const formatParseIssues = (error: ParseResult.ParseError, pathPrefix?: string): readonly Record<string, unknown>[] =>
-  ParseResult.ArrayFormatter.formatErrorSync(error).map((issue) => {
-    const path = issue.path.length === 0 ? undefined : issue.path.map(String).join(".")
+const formatSchemaIssues = SchemaIssue.makeFormatterStandardSchemaV1()
+
+const formatParseIssues = (error: Schema.SchemaError, pathPrefix?: string): readonly Record<string, unknown>[] =>
+  formatSchemaIssues(error.issue).issues.map((issue) => {
+    const path = issue.path
+      ?.map((segment) => typeof segment === "object" ? String(segment.key) : String(segment))
+      .join(".")
     return {
-      tag: issue._tag,
-      ...(path === undefined ? {} : { path: pathPrefix === undefined ? path : `${pathPrefix}.${path}` }),
-      ...(path === undefined && pathPrefix !== undefined ? { path: pathPrefix } : {}),
+      ...(path === undefined || path === "" ? {} : { path: pathPrefix === undefined ? path : `${pathPrefix}.${path}` }),
+      ...((path === undefined || path === "") && pathPrefix !== undefined ? { path: pathPrefix } : {}),
       message: issue.message,
     }
   })
 
-const executeParsed = (parsed: ParsedCommand): Effect.Effect<CommandResult, CliError> => {
+const executeParsed = (parsed: ParsedCommand): Effect.Effect<CommandResult, CliError, CliAnalyzers> => {
   switch (parsed.command) {
     case "capabilities":
       return Effect.succeed({ data: capabilities(), exitCode: 0 })
@@ -1159,7 +1199,7 @@ const executeParsed = (parsed: ParsedCommand): Effect.Effect<CommandResult, CliE
 const executeDomainCommand = (
   parsed: ParsedCommand,
   spec: AnyCommandSpec,
-): Effect.Effect<CommandResult, CliError> =>
+): Effect.Effect<CommandResult, CliError, CliAnalyzers> =>
   readPayload(parsed.payloadSource).pipe(
     Effect.flatMap((raw) => {
       if (Array.isArray(raw)) {
@@ -1190,7 +1230,7 @@ const executeBatch = <A>(
   spec: CommandSpec<A>,
   rawItems: readonly unknown[],
   options: ExecutionOptions,
-): Effect.Effect<BatchResult, never> =>
+): Effect.Effect<BatchResult, never, CliAnalyzers> =>
   Effect.forEach(
     rawItems.map((raw, index) => ({ raw, index })),
     ({ raw, index }) =>
@@ -1207,7 +1247,7 @@ const executeBatch = <A>(
             ),
           ),
         ),
-        Effect.catchAll((error) =>
+        Effect.catch((error) =>
           Effect.succeed({
             index,
             ok: false,
@@ -1238,19 +1278,21 @@ const runSpec = <A>(
   spec: CommandSpec<A>,
   payload: A,
   options: ExecutionOptions,
-): Effect.Effect<unknown, CliError> => {
+): Effect.Effect<unknown, CliError, CliAnalyzers> => {
   const effect = spec.execute(payload).pipe(
     Effect.flatMap((data) => materializeOutput(spec.name, data, options, spec.artifactEligible)),
   )
   if (options.timeoutMs === undefined) return effect
   return effect.pipe(
-    Effect.timeoutFail({
+    Effect.timeoutOrElse({
       duration: `${options.timeoutMs} millis`,
-      onTimeout: () =>
-        new CommandTimeoutError({
-          message: `${spec.name} timed out after ${options.timeoutMs}ms`,
-          details: { timeout_ms: options.timeoutMs, retryable: true },
-        }),
+      orElse: () =>
+        Effect.fail(
+          new CommandTimeoutError({
+            message: `${spec.name} timed out after ${options.timeoutMs}ms`,
+            details: { timeout_ms: options.timeoutMs, retryable: true },
+          }),
+        ),
     }),
   )
 }
@@ -1426,9 +1468,12 @@ const showExample = (name: string | undefined): Effect.Effect<unknown, CommandIn
   })
 }
 
-const toJsonSchema = (schema: Schema.Schema.Any): unknown => {
+const toJsonSchema = (schema: Schema.Constraint): unknown => {
   try {
-    return JSONSchema.make(schema)
+    const document = Schema.toJsonSchemaDocument(schema)
+    return Object.keys(document.definitions).length === 0
+      ? document.schema
+      : { ...document.schema, $defs: document.definitions }
   } catch (error) {
     return {
       unavailable: true,
@@ -1468,28 +1513,29 @@ const writeEnvelope = (
 ): Effect.Effect<void, never> =>
   Effect.promise(() => Bun.write(destination, `${JSON.stringify(envelope, null, format === "pretty" ? 2 : 0)}\n`)).pipe(
     Effect.asVoid,
-    Effect.catchAll(() => Effect.void),
+    Effect.catch(() => Effect.void),
   )
 
-export const runCli = (argv: readonly string[]): Effect.Effect<number, never> =>
-  Effect.gen(function* () {
-    const parsedEither = yield* Effect.either(Effect.try({ try: () => parseArgv(argv), catch: (error) => error }))
-    if (Either.isLeft(parsedEither)) {
-      return yield* emitFailure(undefined, parsedEither.left, "json")
+export const runCli = Effect.fn("runCli")(
+  function*(argv: readonly string[]): Effect.fn.Return<number, never, CliAnalyzers> {
+    const parsedResult = yield* Effect.result(Effect.try({ try: () => parseArgv(argv), catch: (error) => error }))
+    if (Result.isFailure(parsedResult)) {
+      return yield* emitFailure(undefined, parsedResult.failure, "json")
     }
 
-    const parsed = parsedEither.right
-    const resultEither = yield* Effect.either(executeParsed(parsed))
-    if (Either.isLeft(resultEither)) {
-      return yield* emitFailure(parsed.command, resultEither.left, parsed.options.format)
+    const parsed = parsedResult.success
+    const executionResult = yield* Effect.result(executeParsed(parsed))
+    if (Result.isFailure(executionResult)) {
+      return yield* emitFailure(parsed.command, executionResult.failure, parsed.options.format)
     }
 
-    return yield* emitSuccess(parsed.command, resultEither.right, parsed.options.format)
-  }).pipe(
-    Effect.catchAllDefect((defect) =>
-      emitFailure(undefined, new CommandExecutionError({ message: "Unexpected CLI defect", details: { defect: String(defect) } }), "json"),
-    ),
-  )
+    return yield* emitSuccess(parsed.command, executionResult.success, parsed.options.format)
+  },
+  Effect.provide(CliAnalyzers.layer, { local: true }),
+  Effect.catchDefect((defect) =>
+    emitFailure(undefined, new CommandExecutionError({ message: "Unexpected CLI defect", details: { defect: String(defect) } }), "json"),
+  ),
+)
 
 if (import.meta.main) {
   const exitCode = await Effect.runPromise(runCli(process.argv.slice(2)))
