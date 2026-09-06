@@ -1,6 +1,6 @@
 {
   "name": "@skastr0/quartz-engine",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -20,7 +20,7 @@
     "prepack": "bun run build"
   },
   "dependencies": {
-    "typescript": "7.1.0-dev.20260903.1"
+    "typescript": "7.1.0-dev.20260905.1"
   },
   "license": "MIT",
   "description": "Persistent TypeScript 7 native workspace engine for Quartz.",

@@ -1,6 +1,6 @@
 {
   "name": "@skastr0/quartz",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "description": "Agent-native TypeScript code intelligence CLI for Quartz.",
   "license": "MIT",
@@ -36,9 +36,9 @@
     "node": ">=18"
   },
   "optionalDependencies": {
-    "@skastr0/quartz-darwin-arm64": "0.2.0",
-    "@skastr0/quartz-darwin-x64": "0.2.0",
-    "@skastr0/quartz-linux-arm64": "0.2.0",
-    "@skastr0/quartz-linux-x64": "0.2.0"
+    "@skastr0/quartz-darwin-arm64": "0.2.1",
+    "@skastr0/quartz-darwin-x64": "0.2.1",
+    "@skastr0/quartz-linux-arm64": "0.2.1",
+    "@skastr0/quartz-linux-x64": "0.2.1"
   }
 }

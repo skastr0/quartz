@@ -1,6 +1,6 @@
 {
   "name": "@skastr0/quartz-linux-x64",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "description": "Quartz standalone CLI binary for Linux x64.",
   "license": "MIT",
@@ -28,6 +28,6 @@
     "LICENSE"
   ],
   "dependencies": {
-    "@typescript/typescript-linux-x64": "7.1.0-dev.20260903.1"
+    "@typescript/typescript-linux-x64": "7.1.0-dev.20260905.1"
   }
 }

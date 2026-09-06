@@ -6,8 +6,11 @@ The project follows Semantic Versioning for the declared public package, CLI, an
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-06
+
 ### Changed
 
+- Pinned TypeScript / TS-Go to exact `7.1.0-dev.20260905.1` (from `7.1.0-dev.20260903.1`).
 - Migrated the CLI from Effect v3 to the exact `4.0.0-rc.112` release candidate. Analyzer acquisition and disposal now run through a scoped Effect service while the engine and OpenCode plugin retain their Promise-based public APIs.
 - `schema show` now emits Effect v4's draft-2020-12 representation. Optional payload fields remain omit-or-value and reject JSON `null`; validation issue messages now use Effect v4's Standard Schema format.
 
