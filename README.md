@@ -107,20 +107,6 @@ Payload fields, batch calls, artifacts, and error envelopes are in [docs/referen
 
 ## How it works
 
-```mermaid
-flowchart LR
-  shell["agent in a shell"] -->|JSON payload| cli["Quartz CLI"]
-  oc["agent in OpenCode"] -->|type_* tool call| plugin["OpenCode plugin"]
-  pulsar["Pulsar"] -->|library import| engine
-  cli --> engine["@skastr0/quartz-engine"]
-  plugin --> engine
-  engine --> tsgo["TypeScript 7 native compiler"]
-  engine -->|snippet and transform checks| vf["virtual files"]
-  vf --> tsgo
-  tsgo -->|reads| src["tsconfig.json + sources"]
-  cli --> out["JSON envelope or artifact file"]
-```
-
 `@skastr0/quartz-engine` opens one TypeScript 7 native compiler per project through its async API. Snippets and transform checks compile as temporary virtual files, so your files are never changed. The CLI reuses one compiler across a batch of payloads. The OpenCode plugin keeps it warm for the whole session and refreshes it when files change.
 
 ## OpenCode plugin
