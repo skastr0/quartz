@@ -1,4 +1,4 @@
-# quartz reference
+# Quartz reference
 
 The full CLI contract, the OpenCode plugin, and the published packages. For a first run, start with the [README](../README.md).
 

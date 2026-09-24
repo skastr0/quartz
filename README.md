@@ -1,6 +1,6 @@
-# quartz
+# Quartz
 
-**quartz answers an agent's TypeScript questions with the compiler's own answers.**
+**Quartz answers an agent's TypeScript questions with the compiler's own answers.**
 
 ```bash
 npm install -g @skastr0/quartz
@@ -14,9 +14,9 @@ Your agent is changing TypeScript whose types it can't see.
 - **It finds out from `tsc`.** Write, run `tsc`, read the error, try again. Many turns go to flailing on type errors.
 - **It rewrites what already exists.** Nothing tells it there's already a `User → UserDTO` function two files over.
 
-## What quartz does
+## What Quartz does
 
-quartz keeps the TypeScript 7 native compiler open on your project and answers questions as JSON. Your agent checks a type, a snippet, or a conversion before it writes code, not after `tsc` fails.
+Quartz keeps the TypeScript 7 native compiler open on your project and answers questions as JSON. Your agent checks a type, a snippet, or a conversion before it writes code, not after `tsc` fails.
 
 | your agent wants to know | command | it gets back |
 |---|---|---|
@@ -25,7 +25,7 @@ quartz keeps the TypeScript 7 native compiler open on your project and answers q
 | whether a converter already exists | `transform-search` | matching functions, each checked by a test compile |
 | whether a proposed change holds | `verify-contract` | one pass/fail packet: assignability, snippet, diagnostics, transform |
 
-| quartz **is** | quartz **is not** |
+| Quartz **is** | Quartz **is not** |
 |---|---|
 | a JSON CLI and OpenCode plugin that agents call mid-task | a language server or editor extension |
 | answers from the TypeScript compiler | a guess from text search |
@@ -107,9 +107,9 @@ Payload fields, batch calls, artifacts, and error envelopes are in [docs/referen
 
 ```mermaid
 flowchart LR
-  shell["agent in a shell"] -->|JSON payload| cli["quartz CLI"]
+  shell["agent in a shell"] -->|JSON payload| cli["Quartz CLI"]
   oc["agent in OpenCode"] -->|type_* tool call| plugin["OpenCode plugin"]
-  pulsar["pulsar ts-pack"] -->|library import| engine
+  pulsar["Pulsar ts-pack"] -->|library import| engine
   cli --> engine["@skastr0/quartz-engine"]
   plugin --> engine
   engine --> tsgo["TypeScript 7 native compiler"]
@@ -131,11 +131,11 @@ Load `@skastr0/quartz-opencode-plugin/server` in OpenCode. It exposes the same a
 - `check-snippet` fails on snippets that write their own imports (`Duplicate identifier`). Leave the imports out: project types are already in scope.
 - `symbols` can list the same symbol twice in some workspaces.
 
-One-shot commands start a fresh compiler each time (0.7 to 2.8 s per command on quartz's own repo). Use batch payloads or the OpenCode plugin for repeated calls. quartz runs on a pinned TypeScript 7 nightly, so its output may change between releases.
+One-shot commands start a fresh compiler each time (0.7 to 2.8 s per command on Quartz's own repo). Use batch payloads or the OpenCode plugin for repeated calls. Quartz runs on a pinned TypeScript 7 nightly, so its output may change between releases.
 
 ## Where it fits
 
-quartz gives every agent in a TypeScript repo the same compiler facts. [pulsar](https://github.com/skastr0/pulsar) builds its TypeScript scoring on `@skastr0/quartz-engine`. More at [castro.engineer/projects/quartz](https://castro.engineer/projects/quartz).
+Quartz gives every agent in a TypeScript repo the same compiler facts. [Pulsar](https://github.com/skastr0/pulsar) builds its TypeScript scoring on `@skastr0/quartz-engine`. More at [castro.engineer/projects/quartz](https://castro.engineer/projects/quartz).
 
 ## Development
 
