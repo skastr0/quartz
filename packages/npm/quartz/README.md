@@ -1,27 +1,25 @@
 # @skastr0/quartz
 
-Agent-native TypeScript code intelligence CLI for Quartz.
+Quartz answers an agent's TypeScript questions with the compiler's own answers: what a type contains, whether a snippet compiles, whether a converter already exists. Every answer is JSON.
 
-## Status
-
-Experimental. The command protocol, package surface, and install channels may change while Quartz is in `0.y.z`.
-
-## Run
+## Install
 
 ```bash
-npx -y @skastr0/quartz capabilities
+npm install -g @skastr0/quartz
 ```
+
+Or run it without installing: `npx -y @skastr0/quartz@latest capabilities`, or `bunx @skastr0/quartz capabilities`.
+
+Prebuilt for macOS and Linux (arm64, x64). There is no Windows build. Quartz needs a `tsconfig.json` in the project.
+
+## Use
+
+Run these from a folder with a `tsconfig.json`:
 
 ```bash
-bunx @skastr0/quartz capabilities
+quartz packages
+quartz info '{"symbol":"User"}'
+quartz check-snippet '{"code":"const u: User = { id: \"1\", name: \"Ada\" };"}'
 ```
 
-```bash
-pnpm dlx @skastr0/quartz capabilities
-```
-
-The npm package uses a small Node launcher that selects the matching prebuilt Quartz binary for your platform. Supported npm binary packages are macOS arm64, macOS x64, Linux arm64, and Linux x64.
-
-## Commands
-
-Run `quartz capabilities` and `quartz schema list` to discover the protocol. The full CLI documentation lives in the repository README.
+`quartz capabilities` and `quartz schema list` describe every command. Full documentation: https://github.com/skastr0/quartz#readme

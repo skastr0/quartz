@@ -2,13 +2,7 @@
 
 OpenCode plugin wrapper for Quartz TypeScript code intelligence.
 
-## Status
-
-Experimental. The plugin is publishable as a Bun/ESM package, but the repository is still using explicit release gates before any real npm upload.
-
 ## Install
-
-After the first npm release:
 
 ```bash
 bun add -d @skastr0/quartz-opencode-plugin
