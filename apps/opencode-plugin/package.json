@@ -1,6 +1,6 @@
 {
   "name": "@skastr0/quartz-opencode-plugin",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "type": "module",
   "main": "./dist/server.js",
   "types": "./dist/server.d.ts",
@@ -21,7 +21,7 @@
     "prepack": "bun run build"
   },
   "dependencies": {
-    "@skastr0/quartz-engine": "0.2.2"
+    "@skastr0/quartz-engine": "0.2.3"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": ">=1.4.0"

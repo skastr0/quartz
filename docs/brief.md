@@ -1,8 +1,8 @@
 # Quartz — brief
 
-updated: 2026-09-24 · version: 0.2.2 · maturity: usable-with-gaps
+updated: 2026-09-24 · version: 0.2.3 · maturity: usable-with-gaps
 
-Why usable-with-gaps: 0.2.2 is on npm and Pulsar runs on it, but it runs on a nightly compiler API, one-shot commands start cold, and snippet path aliases don't resolve (see Gaps).
+Why usable-with-gaps: 0.2.3 is on npm and Pulsar runs on it, but it runs on a nightly compiler API, one-shot commands start cold, and snippet path aliases don't resolve (see Gaps).
 
 ## One line
 
@@ -126,7 +126,7 @@ npx -y @skastr0/quartz capabilities
 
 ## Proof
 
-- **On npm:** `@skastr0/quartz` 0.1.0 (2026-06-03), 0.2.0 (2026-08-17), 0.2.1 (2026-09-07), 0.2.2 (2026-09-24) (`npm view @skastr0/quartz time`).
+- **On npm:** `@skastr0/quartz` 0.1.0 (2026-06-03), 0.2.0 (2026-08-17), 0.2.1 (2026-09-07), 0.2.2 (2026-09-24), 0.2.3 (2026-09-24) (`npm view @skastr0/quartz time`).
 - **Tests:** `bun run verify` → `Tests 92 passed (92)` in 11 files, run 2026-09-24.
 - **Used by Pulsar:** "Scored TypeScript through Quartz 0.2.1 … instead of ts-morph" (`pulsar/CHANGELOG.md:38`).
 - **Used by agents after edits:** "Now quartz diagnostics on the edited/new `.ts` files" (Quasar `claude:66cd9633…`, 2026-07-24).

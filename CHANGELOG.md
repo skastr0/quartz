@@ -6,6 +6,12 @@ The project follows Semantic Versioning for the declared public package, CLI, an
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-09-24
+
+### Changed
+
+- The README and community files state the version, platforms, and the limits a user needs (snippet path aliases, cold one-shot starts) in place of maturity labels. The mechanism diagram was removed from the README.
+
 ## [0.2.2] - 2026-09-24
 
 ### Fixed

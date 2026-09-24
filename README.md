@@ -31,7 +31,7 @@ Quartz keeps the TypeScript 7 native compiler open on your project and answers q
 | answers from the TypeScript compiler | a guess from text search |
 | evidence that a type or change checks out | proof that the code is correct at runtime |
 
-Version 0.2.2, on npm for macOS and Linux (arm64, x64). There is no Windows build. Quartz needs a `tsconfig.json` in the project.
+Version 0.2.3, on npm for macOS and Linux (arm64, x64). There is no Windows build. Quartz needs a `tsconfig.json` in the project.
 
 ## Quick start
 
