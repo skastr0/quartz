@@ -58,15 +58,17 @@ export interface VirtualPackageImports {
 /**
  * Render imports for the package's public entrypoint into an ephemeral source.
  * Type-only exports are kept type-only so verbatimModuleSyntax remains valid.
+ * Names in `reserved` are bound by the source itself and are not imported.
  */
 export const synthesizePackageImports = async (
   project: Project,
   packageRoot: string,
   virtualFilePath: string,
+  reserved: ReadonlySet<string> = new Set(),
 ): Promise<VirtualPackageImports> => {
   const sources = await packageSources(project, packageRoot, virtualFilePath)
   if (sources.length === 0) return { content: "", lineOffset: 0 }
-  const claimedNames = new Set<string>()
+  const claimedNames = new Set<string>(reserved)
   const lines: string[] = []
   for (const source of sources) {
     const moduleSymbol = await project.checker.getSymbolAtLocation(source)

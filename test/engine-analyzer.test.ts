@@ -174,6 +174,23 @@ describe("QuartzAnalyzer", () => {
     }
   })
 
+  it("lets snippets bring their own imports and declarations", async () => {
+    const analyzer = await createTypeAnalyzer(fixture())
+    try {
+      expect(await analyzer.checkSnippet("import type { User } from './index'\nconst user: User = { name: 'Ada', age: 37 }\n")).toEqual({ valid: true })
+      expect(await analyzer.checkSnippet("import { toName } from './index'\nconst name: string = toName({ name: 'Ada', age: 37 })\n")).toEqual({ valid: true })
+      expect(await analyzer.checkSnippet("import * as api from './index'\nconst user: api.User = { name: 'Ada', age: 37 }\n")).toEqual({ valid: true })
+      expect(await analyzer.checkSnippet("interface User { local: true }\nconst user: User = { local: true }\n")).toEqual({ valid: true })
+      expect(await analyzer.checkSnippet("const toName = (value: Named) => value.name\nconst name: string = toName({ name: 'Ada' })\n")).toEqual({ valid: true })
+      const invalid = await analyzer.checkSnippet("import type { User } from './index'\nconst user: User = { name: 'Ada' }\n")
+      expect(invalid.valid).toBe(false)
+      expect(invalid.errors?.map((error) => error.message).join("\n")).not.toContain("Duplicate identifier")
+      expect(invalid.errors?.[0]?.line).toBe(2)
+    } finally {
+      await analyzer.dispose()
+    }
+  })
+
   it("disposes idempotently and rejects later analysis", async () => {
     const analyzer = await createTypeAnalyzer(fixture())
     await Promise.all([analyzer.dispose(), analyzer.dispose()])

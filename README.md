@@ -127,9 +127,9 @@ Load `@skastr0/quartz-opencode-plugin/server` in OpenCode. It exposes the same a
 
 ## Known issues
 
-- `transform-search` misses helpers that aren't exported from the package entry.
-- `check-snippet` fails on snippets that write their own imports (`Duplicate identifier`). Leave the imports out: project types are already in scope.
+- `check-snippet` reports `Duplicate identifier` when a snippet writes its own imports. Fixed in source, next release. In 0.2.1, leave the imports out: project types are already in scope.
 - `symbols` can list the same symbol twice in some workspaces.
+- `transform-search` misses helpers that aren't exported from the package entry.
 
 One-shot commands start a fresh compiler each time (0.7 to 2.8 s per command on Quartz's own repo). Use batch payloads or the OpenCode plugin for repeated calls. Quartz runs on a pinned TypeScript 7 nightly, so its output may change between releases.
 

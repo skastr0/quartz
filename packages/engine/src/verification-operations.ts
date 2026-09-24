@@ -17,6 +17,7 @@ import type {
   VerifyContractOptions,
   VerifyContractResult,
 } from "./contracts"
+import { snippetTopLevelBindings } from "./snippet-bindings"
 import {
   createVirtualFileRegistry,
   resolveVirtualFileDirectory,
@@ -166,7 +167,7 @@ export const createVerificationOperations = (
         typeof context.withProject !== "function"
           ? { content: "", lineOffset: 0 }
           : await context.withProject(
-              (project) => synthesizePackageImports(project, pkg.path, lease.path),
+              (project) => synthesizePackageImports(project, pkg.path, lease.path, snippetTopLevelBindings(code)),
               packageName,
             )
       return workspace.withVirtualFile(pkg.tsconfigPath, lease.path, `${imports.content}${lease.content}`, async (project, filePath) => {
