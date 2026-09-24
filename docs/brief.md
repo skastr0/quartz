@@ -37,7 +37,7 @@ Every agent in a TypeScript repo gets the same answers about the code, from the 
 
 ## See it run
 
-Run 2026-09-24, macOS arm64, `bunx @skastr0/quartz@0.2.1`. Output trimmed.
+Run 2026-09-24, macOS arm64, published `@skastr0/quartz@0.2.2` (same output as 0.2.1). Output trimmed.
 
 What does this type contain? (Quartz repo)
 
