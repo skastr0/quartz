@@ -27,13 +27,13 @@ The agent asks the compiler before it writes code.
 | what this type contains | `info`, `expand` | resolved members and signatures |
 | whether this code compiles | `check-snippet` | compiler errors with line and column; nothing written to disk |
 | whether a converter exists | `transform-search` | matching functions, each marked `verified` by a test compile |
-| whether a proposed change holds | `verify-contract` | one pass/fail packet: assignability, snippet, diagnostics, transform |
+| whether a planned conversion is safe | `verify-contract` | each check, passed or failed, and one overall answer |
 
 Every answer is JSON with a discoverable schema (`quartz schema show <command>`).
 
 ## Where it fits
 
-Every agent in a TypeScript repo gets the same codebase facts, from the compiler, through the CLI or the OpenCode plugin. Pulsar builds its TypeScript signals on `@skastr0/quartz-engine` (`pulsar/packages/ts-pack/package.json:47`). Prism keeps a tsconfig package so workflow files can be checked with Quartz (`prism/packages/prism-workflow-authoring/package.json:4`).
+Every agent in a TypeScript repo gets the same answers about the code, from the compiler. Pulsar's TypeScript checks run on it (`@skastr0/quartz-engine` in `pulsar/packages/ts-pack/package.json:47`). Prism keeps a tsconfig package so workflow files can be checked with Quartz (`prism/packages/prism-workflow-authoring/package.json:4`).
 
 ## See it run
 
@@ -68,7 +68,7 @@ $ quartz transform-search '{"root":"test/fixtures","from":"User","to":"UserDTO",
 … 3 more verified: toDTO(user), saveUser, deprecatedToDTO
 ```
 
-Does the change hold? (fixture repo)
+Can toDTO convert a User here? Four checks, one answer. (fixture repo)
 
 ```console
 $ quartz verify-contract '{"root":"test/fixtures","from":"User","to":"UserDTO","symbol":"toDTO","snippet":"declare const u: User;\nconst dto: UserDTO = toDTO(u);"}'
@@ -135,7 +135,7 @@ npx -y @skastr0/quartz capabilities
 
 ## Gaps
 
-- **transform-search misses internal helpers** in 0.2.1. In the Quartz repo, `createLeafOperations(context: AnalyzerContext): LeafOperations` failed its test compile (`Cannot find name 'AnalyzerContext'`), so the default query returned `[]`. Fixed in source, not yet released: the test compile now imports the candidate and bare-name query types from their own modules, and the same query returns it `verified`.
+- **transform-search misses helpers the package entry doesn't export** in 0.2.1, so it finds less in real repos than in small examples. In the Quartz repo, `createLeafOperations(context: AnalyzerContext): LeafOperations` failed its test compile (`Cannot find name 'AnalyzerContext'`), so the default query returned `[]`. Fixed in source, not yet released: the test compile now imports the candidate and bare-name query types from their own modules, and the same query returns it `verified`.
 - **check-snippet breaks on snippets with their own imports:** `Duplicate identifier` in 0.2.1. Fixed in source (snippet bindings are no longer auto-imported), not yet released. Path aliases in snippet imports still don't resolve (`docs/effect-v4-migration.md:41` hit the same).
 - **`symbols` lists duplicates** in 0.2.1 when a barrel or index re-exports a declaration (the Quartz repo showed each one twice). Fixed in source, not yet released. The `.d.ts` files from `dist/` are listed because the repo's tsconfig includes them; that is correct.
 - **README is stale:** it says "After the first npm release" (`README.md:28`) while 0.2.1 is on npm. GitHub's "Latest" release is still v0.1.0.
@@ -152,5 +152,5 @@ npx -y @skastr0/quartz capabilities
 
 - tagline: TypeScript answers for agents, from the compiler.
 - short description: Compiler-backed TypeScript answers for coding agents: types, snippet checks, existing transforms, as JSON. CLI and OpenCode plugin.
-- page lede: Quartz answers an agent's TypeScript questions with the compiler's own answers. Your agent checks a type or a snippet before it writes code, not after `tsc` fails.
+- page lede: Your agent asks what a type contains, whether a snippet compiles, or whether a converter already exists, before it writes code instead of after `tsc` fails. The answers come from the TypeScript compiler, as JSON.
 - X post: An agent that greps for a TypeScript type still has to guess what it resolves to. Quartz asks the compiler instead: `info`, `check-snippet`, `transform-search`, all JSON, on the TypeScript 7 native compiler. bunx @skastr0/quartz capabilities

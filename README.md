@@ -23,7 +23,7 @@ Quartz keeps the TypeScript 7 native compiler open on your project and answers q
 | what a type contains | `info`, `expand` | resolved members and signatures |
 | whether code compiles | `check-snippet` | compiler errors with line and column; nothing is written to disk |
 | whether a converter already exists | `transform-search` | matching functions, each checked by a test compile |
-| whether a proposed change holds | `verify-contract` | each check, passed or failed, and one overall answer |
+| whether a planned conversion is safe | `verify-contract` | each check, passed or failed, and one overall answer |
 
 | Quartz **is** | Quartz **is not** |
 |---|---|
