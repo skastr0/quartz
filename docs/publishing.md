@@ -2,9 +2,9 @@
 
 Quartz publishes through CI after an explicit human gate. Do not publish npm packages, push release tags, create GitHub Releases, or flip repository visibility from a local machine without an intentional release decision.
 
-## Public Promise
+## Versioning
 
-Quartz is experimental. The CLI protocol, package exports, plugin tool surface, and distribution channels may change while the project is in `0.y.z`. User-visible breaking changes should be documented in `CHANGELOG.md`.
+While Quartz is in `0.y.z`, the CLI protocol, package exports, plugin tool surface, and distribution channels can change between minor versions. Document user-visible breaking changes in `CHANGELOG.md`.
 
 ## Package Map
 

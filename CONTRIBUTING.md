@@ -1,6 +1,6 @@
 # Contributing
 
-quartz is an experimental, solo-maintained project. The most useful outside help is clear evidence: reproducible bugs, documentation corrections, and scoped proposals that explain the maintenance cost.
+Quartz has one maintainer. The most useful outside help is clear evidence: reproducible bugs, documentation corrections, and scoped proposals that explain the maintenance cost.
 
 ## What Helps
 

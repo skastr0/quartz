@@ -1,8 +1,8 @@
 # Security Policy
 
-## Supported Status
+## Response
 
-quartz is experimental and solo-maintained. Security reports are reviewed on a best-effort basis, without a formal response SLA.
+Quartz has one maintainer. Security reports are reviewed as they arrive, with no fixed response time.
 
 ## Reporting A Vulnerability
 

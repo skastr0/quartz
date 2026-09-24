@@ -31,7 +31,7 @@ Quartz keeps the TypeScript 7 native compiler open on your project and answers q
 | answers from the TypeScript compiler | a guess from text search |
 | evidence that a type or change checks out | proof that the code is correct at runtime |
 
-**Status:** 0.2.2, usable with known gaps. npm packages for macOS and Linux (arm64, x64). No Windows build. Needs a `tsconfig.json`.
+Version 0.2.2, on npm for macOS and Linux (arm64, x64). There is no Windows build. Quartz needs a `tsconfig.json` in the project.
 
 ## Quick start
 
@@ -65,6 +65,8 @@ Step 4 catches the missing field without touching a file:
  {"message":"Property 'email' is missing in type '{ id: string; name: string; }' but required in type 'User'.","line":1,"column":7}]}}
 ```
 
+Project types are in scope in a snippet without an import. A snippet can import packages by name; tsconfig path aliases (`paths`) don't resolve there.
+
 Or run it without installing: `npx -y @skastr0/quartz@latest packages`, or `bunx @skastr0/quartz packages`.
 
 ## Use
@@ -92,6 +94,8 @@ The direct assignment fails, but a verified converter exists, so the answer is y
 
 Both outputs are trimmed from the JSON envelope. Every command takes a JSON payload inline, from a file (`@payload.json`), or from stdin (`-`). Agents can discover every command and payload with `quartz capabilities` and `quartz schema show <command>`.
 
+Each one-shot command starts a fresh compiler (0.7 to 2.8 s on Quartz's own repo). For repeated calls, send a batch payload (a JSON array) or use the OpenCode plugin; both keep one compiler warm.
+
 All commands:
 
 | area | commands |
@@ -112,12 +116,6 @@ Payload fields, batch calls, artifacts, and error envelopes are in [docs/referen
 ## OpenCode plugin
 
 Load `@skastr0/quartz-opencode-plugin/server` in OpenCode. It exposes the same analysis as 19 `type_*` tools rooted at your workspace, with one compiler kept warm across calls. Tool list: [docs/reference.md#opencode-plugin](docs/reference.md#opencode-plugin).
-
-## Known issues
-
-- `check-snippet` doesn't resolve tsconfig path aliases (`paths`) in a snippet's own imports. Package imports work, and project types are already in scope without an import.
-
-One-shot commands start a fresh compiler each time (0.7 to 2.8 s per command on Quartz's own repo). Use batch payloads or the OpenCode plugin for repeated calls. Quartz runs on a pinned TypeScript 7 nightly, so its output may change between releases.
 
 ## Where it fits
 
