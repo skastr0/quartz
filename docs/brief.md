@@ -137,7 +137,7 @@ npx -y @skastr0/quartz capabilities
 
 - **transform-search misses internal helpers.** In the Quartz repo, `createLeafOperations(context: AnalyzerContext): LeafOperations` is found but fails its test compile (`Cannot find name 'AnalyzerContext'`), so the default query returns `[]`. Fixtures look better than real repos.
 - **check-snippet breaks on snippets with their own imports:** `Duplicate identifier` in 0.2.1. Fixed in source (snippet bindings are no longer auto-imported), not yet released. Path aliases in snippet imports still don't resolve (`docs/effect-v4-migration.md:41` hit the same).
-- **`symbols` lists duplicates** in the Quartz repo (twice per file) and picks up `.d.ts` files from ignored `dist/`. Cause unverified.
+- **`symbols` lists duplicates** in 0.2.1 when a barrel or index re-exports a declaration (the Quartz repo showed each one twice). Fixed in source, not yet released. The `.d.ts` files from `dist/` are listed because the repo's tsconfig includes them; that is correct.
 - **README is stale:** it says "After the first npm release" (`README.md:28`) while 0.2.1 is on npm. GitHub's "Latest" release is still v0.1.0.
 - **Cold start:** one-shot commands took 0.7 s (`diagnostics`) to 2.8 s (`info`) on the Quartz repo. Use batch mode or the plugin for warm speed.
 - **Nightly compiler:** pinned to TypeScript `7.1.0-dev.20260905.1` on an API Microsoft marks unstable (`package.json:408`).

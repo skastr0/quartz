@@ -207,7 +207,15 @@ const exportedMatches = async (project: Project, sourceFiles: readonly SourceFil
   const all = await Promise.all(
     moduleSymbols.map((moduleSymbol) => exportMatchesFor(project, moduleSymbol)),
   )
-  return all.flat()
+  // A declaration re-exported by another module (a barrel or index) comes back
+  // once per exporting module. Keep one match per declaration and exported name.
+  const seen = new Set<string>()
+  return all.flat().filter((match) => {
+    const key = `${match.node.getSourceFile().fileName}:${match.node.pos}:${match.exportedName ?? ""}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }
 
 const exportedMatchesFor = (

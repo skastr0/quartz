@@ -191,6 +191,23 @@ describe("QuartzAnalyzer", () => {
     }
   })
 
+  it("lists a re-exported symbol once per exported name", async () => {
+    const root = fixture()
+    writeFileSync(join(root, "src/model.ts"), "export interface Account { id: string }\n")
+    writeFileSync(join(root, "src/barrel.ts"), "export type * from './model'\nexport type { Account as Profile } from './model'\n")
+    const analyzer = await createTypeAnalyzer(root)
+    try {
+      const listed = await analyzer.listSymbols({ pattern: "^(Account|Profile)$" })
+      expect(listed.symbols.map((symbol) => `${symbol.name}@${symbol.file}:${symbol.line}`).sort()).toEqual([
+        "Account@src/model.ts:1",
+        "Profile@src/model.ts:1",
+      ])
+      expect(listed.total).toBe(2)
+    } finally {
+      await analyzer.dispose()
+    }
+  })
+
   it("disposes idempotently and rejects later analysis", async () => {
     const analyzer = await createTypeAnalyzer(fixture())
     await Promise.all([analyzer.dispose(), analyzer.dispose()])
