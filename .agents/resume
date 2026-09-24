@@ -1,27 +1,43 @@
 #!/usr/bin/env bash
-# Never echo the short-lived OIDC token, even when invoked with bash -x.
+# Never trace the short-lived workload identity, even when invoked with bash -x.
 set +x
 set -euo pipefail
+export PATH="${HOME}/.bun/bin:${HOME}/.local/bin:${PATH}"
 
-export PATH="$HOME/.local/bin:$PATH"
-: "${TAILSCALE_CLIENT_ID:?Refresh the Orb environment with amp orb restart-processes}"
-: "${TAILSCALE_AUDIENCE:?Refresh the Orb environment with amp orb restart-processes}"
-: "${QUASAR_SERVER_URL:?Refresh the Orb environment with amp orb restart-processes}"
-if [[ "$QUASAR_SERVER_URL" != https://* ]]; then
-  echo "QUASAR_SERVER_URL must use HTTPS" >&2
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+locate_orb_setup() {
+  local candidate
+  for candidate in \
+    "${repo_root}/../repos/orb-setup" \
+    "${repo_root}/../repos/skastr0/orb-setup" \
+    "${repo_root}/../orb-setup"; do
+    if [[ -x "${candidate}/bin/resume.sh" ]]; then
+      printf '%s' "$(cd "$candidate" && pwd)"
+      return 0
+    fi
+  done
+  return 1
+}
+
+workspace_cli="$HOME/.local/bin/quartz"
+workspace_entry="$repo_root/apps/cli/src/main.ts"
+if [[ ! -f "$workspace_cli" ]] || [[ -L "$workspace_cli" ]] || ! grep -Fq "$workspace_entry" "$workspace_cli" || ! grep -Fq 'exec bun' "$workspace_cli"; then
+  printf '[resume] error: workspace quartz is not the executable at %s\n' "$workspace_cli" >&2
+  exit 1
+fi
+if [[ ! -f "$repo_root/apps/cli/dist/main.js" ]]; then
+  printf '[resume] error: workspace quartz build is missing; run .agents/setup\n' >&2
+  exit 1
+fi
+if ! command -v bun >/dev/null 2>&1; then
+  printf '[resume] error: pinned Bun is missing; run .agents/setup\n' >&2
   exit 1
 fi
 
-# Start a stopped daemon without disrupting an already connected orb.
-sudo systemctl enable --now tailscaled
-trap 'unset token' EXIT
-token="$(amp orb id-token --audience "$TAILSCALE_AUDIENCE" --subject-scope project)"
-sudo tailscale up \
-  --client-id="${TAILSCALE_CLIENT_ID}?ephemeral=true&preauthorized=true" \
-  --id-token="$token" \
-  --advertise-tags=tag:amp-orb \
-  --hostname="amp-orb-$(hostname | cut -c1-40)" \
-  --timeout=60s
-unset token
-curl --fail --silent --show-error --proto '=https' --max-time 60 "${QUASAR_SERVER_URL%/}/health"
-printf '\nquasar: reachable over Tailscale\n'
+orb_setup="$(locate_orb_setup)" || {
+  printf '[resume] error: orb-setup checkout not found next to this repository\n' >&2
+  exit 1
+}
+bash "${orb_setup}/bin/resume.sh"
+printf '[resume] workspace quartz: %s\n' "$workspace_entry"
