@@ -10,7 +10,13 @@ quartz answers an agent's TypeScript questions with the compiler's own answers.
 
 ## The pain
 
-An agent is halfway through a TypeScript change and needs to know what `TypeAnalyzer` contains, or whether the line it is about to write will type-check. Its tools are text: it greps for the declaration, reads the file, and reconstructs the type in its head, through generics, `Pick`, and inference it cannot see. The mistake surfaces later, when `tsc` runs over the whole project, or it never surfaces and the agent writes a `User → UserDTO` converter that already existed two files over. The README states the design goal in these terms: agents that "inspect TypeScript projects without scraping editor UI or guessing from text search" (`README.md:5`). The specific scene above is my reading of that goal, not a recorded incident (unverified).
+An agent is writing TypeScript against types it cannot see. It reads files to rebuild a type in its head, writes the call, runs `tsc`, reads the error, and goes around again. Guilherme described this on 2026-08-02, about agents authoring prism workflows: "the agent spends many turns trying to figure out how it works / flailing on type errors." Each lap costs turns and context. A guess that compiles can still duplicate a converter that already exists (inferred; no session shows this case).
+
+Receipts (quasar sessions):
+- The flailing quote: `claude:b93b1d1bdd3efaf8b8645e5df95be6f2`, user turn 2026-08-02T02:48.
+- The origin request, 2025-12-08: "a tool that allows the agent to pass in arbitrary type-level typescript (no runtime execution) and have our plugin compute the type" (`amp:344c828277844ba13baf7bb418f19563`). That OpenCode plugin was `type-level-tools`, "deep TypeScript type system introspection for LLM agents" (its AGENTS.md, loaded in `opencode:4a3a6a01c9b6746648871433b9e7eca0`). It moved into this repo on 2026-04-24 (`ca2f1b4`, `6abeee9`).
+- The current bar, September 2026: "It needs to be useful out of the box" (`amp:512028fc854533a376b843be9236a80d`, 2026-09-04). "We need quartz to use it in other projects so it needs to be fast and ready" (`amp:bed410d443cadcd3632f3fb6989fbfbd`, 2026-09-06).
+- Agents already use it to close the loop: "Now quartz diagnostics on the edited/new `.ts` files" (`claude:66cd963365782e068b0a8801e387a204`, vellum, 2026-07-24). Also "quartz diagnostics on the changed protocol file" (`claude:3632c4559f684cfc7bdfe30fe56da0de`, quasar, 2026-08-18).
 
 ## What changes
 
@@ -18,9 +24,7 @@ The agent asks the compiler instead. `quartz info` returns the resolved members 
 
 ## Where it fits
 
-quartz is the type oracle agents share: the CLI and OpenCode plugin serve agents directly, and pulsar builds its TypeScript signals on `@skastr0/quartz-engine` (`pulsar/packages/ts-pack/package.json:47`).
-
-(Heading follows the coordinator's 2026-09-24 correction; final wording waits on the updated CONTRACT.md.)
+Every agent working in a TypeScript repo gets the same codebase facts from the compiler, through the CLI or the OpenCode plugin. pulsar builds its TypeScript signals on `@skastr0/quartz-engine` (`pulsar/packages/ts-pack/package.json:47`). prism keeps a tsconfig-only package, "Quartz/typecheck surface for workflow .ts files", so workflow files can be checked with quartz (`prism/packages/prism-workflow-authoring/package.json:4`).
 
 ## See it run
 
@@ -124,6 +128,8 @@ bunx @skastr0/quartz capabilities
 npx -y @skastr0/quartz capabilities
 ```
 
+npm is the install channel to point readers at. The 0.2.x GitHub Releases are still drafts, and publishing them is the operator's call.
+
 OpenCode plugin: add `@skastr0/quartz-opencode-plugin/server` to the OpenCode plugin config. Library: `bun add @skastr0/quartz-engine`.
 
 Platforms: macOS and Linux, arm64 and x64. I ran the macOS arm64 path only; Linux is unverified by me today. No Windows build.
@@ -141,7 +147,7 @@ Platforms: macOS and Linux, arm64 and x64. I ran the macOS arm64 path only; Linu
 ## Gaps
 
 - transform-search misses helpers that are not re-exported from the package entry. In the quartz repo, `createLeafOperations(context: AnalyzerContext): LeafOperations` (`packages/engine/src/leaf-operations.ts:485`) is found as an assignable match, but its synthetic check fails with `Cannot find name 'AnalyzerContext'`, so the default query returns `"results": []` with `"assignableMatches": 2, "verifiedMatches": 0`. Fixture runs look better than real-repo runs.
-- check-snippet injects `import type` for every project export, so a snippet that writes its own import gets `Duplicate identifier` errors, and the path alias `@skastr0/quartz-engine` did not resolve from the virtual file ("Cannot find module '@skastr0/quartz-engine'"). The Effect v4 dogfood hit the same wall: check-snippet "could not resolve the CLI-local `effect` package" (`docs/effect-v4-migration.md:41`).
+- check-snippet injects `import type` for every project export, so a snippet that writes its own import gets `Duplicate identifier` errors, and the path alias `@skastr0/quartz-engine` did not resolve from the virtual file ("Cannot find module '@skastr0/quartz-engine'"). The Effect v4 dogfood hit the same wall: check-snippet "could not resolve the CLI-local `effect` package" (`docs/effect-v4-migration.md:41`). Importing every export was the first `evalType` design, and a review flagged the name collisions on 2025-12-08 (`amp:344c828277844ba13baf7bb418f19563`).
 - `symbols` on the quartz repo listed `TypeAnalyzer` twice per file and included `.d.ts` files from ignored `dist/` folders; on the fixture repo it did not duplicate. Cause unverified.
 - GitHub Releases: v0.2.0 and v0.2.1 are drafts; the visible "Latest" is v0.1.0, the old ts-morph core (`gh release list`).
 - README is stale on distribution: it says "After the first npm release" (`README.md:28`, `:233`) while 0.2.1 is on npm.
