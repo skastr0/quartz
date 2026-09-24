@@ -31,7 +31,7 @@ Quartz keeps the TypeScript 7 native compiler open on your project and answers q
 | answers from the TypeScript compiler | a guess from text search |
 | evidence that a type or change checks out | proof that the code is correct at runtime |
 
-**Status:** 0.2.1, usable with known gaps. npm packages for macOS and Linux (arm64, x64). No Windows build. Needs a `tsconfig.json`.
+**Status:** 0.2.2, usable with known gaps. npm packages for macOS and Linux (arm64, x64). No Windows build. Needs a `tsconfig.json`.
 
 ## Quick start
 
@@ -129,9 +129,7 @@ Load `@skastr0/quartz-opencode-plugin/server` in OpenCode. It exposes the same a
 
 ## Known issues
 
-- `check-snippet` reports `Duplicate identifier` when a snippet writes its own imports. Fixed in source, next release. In 0.2.1, leave the imports out: project types are already in scope.
-- `symbols` lists a symbol twice when a barrel or index file re-exports it. Fixed in source, next release.
-- `transform-search` misses helpers that aren't exported from the package entry. Fixed in source, next release.
+- `check-snippet` doesn't resolve tsconfig path aliases (`paths`) in a snippet's own imports. Package imports work, and project types are already in scope without an import.
 
 One-shot commands start a fresh compiler each time (0.7 to 2.8 s per command on Quartz's own repo). Use batch payloads or the OpenCode plugin for repeated calls. Quartz runs on a pinned TypeScript 7 nightly, so its output may change between releases.
 

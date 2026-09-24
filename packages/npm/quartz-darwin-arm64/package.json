@@ -1,6 +1,6 @@
 {
   "name": "@skastr0/quartz-darwin-arm64",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "description": "Quartz standalone CLI binary for macOS arm64.",
   "license": "MIT",

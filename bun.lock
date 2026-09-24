@@ -16,7 +16,7 @@
     },
     "apps/cli": {
       "name": "@skastr0/quartz-cli",
-      "version": "0.2.1",
+      "version": "0.2.2",
       "bin": {
         "quartz": "dist/main.js",
       },
@@ -27,9 +27,9 @@
     },
     "apps/opencode-plugin": {
       "name": "@skastr0/quartz-opencode-plugin",
-      "version": "0.2.1",
+      "version": "0.2.2",
       "dependencies": {
-        "@skastr0/quartz-engine": "0.1.0",
+        "@skastr0/quartz-engine": "0.2.2",
       },
       "peerDependencies": {
         "@opencode-ai/plugin": ">=1.4.0",
@@ -37,48 +37,48 @@
     },
     "packages/engine": {
       "name": "@skastr0/quartz-engine",
-      "version": "0.2.1",
+      "version": "0.2.2",
       "dependencies": {
         "typescript": "7.1.0-dev.20260905.1",
       },
     },
     "packages/npm/quartz": {
       "name": "@skastr0/quartz",
-      "version": "0.2.1",
+      "version": "0.2.2",
       "bin": {
         "quartz": "bin/quartz.js",
       },
       "optionalDependencies": {
-        "@skastr0/quartz-darwin-arm64": "0.1.0",
-        "@skastr0/quartz-darwin-x64": "0.1.0",
-        "@skastr0/quartz-linux-arm64": "0.1.0",
-        "@skastr0/quartz-linux-x64": "0.1.0",
+        "@skastr0/quartz-darwin-arm64": "0.2.2",
+        "@skastr0/quartz-darwin-x64": "0.2.2",
+        "@skastr0/quartz-linux-arm64": "0.2.2",
+        "@skastr0/quartz-linux-x64": "0.2.2",
       },
     },
     "packages/npm/quartz-darwin-arm64": {
       "name": "@skastr0/quartz-darwin-arm64",
-      "version": "0.2.1",
+      "version": "0.2.2",
       "dependencies": {
         "@typescript/typescript-darwin-arm64": "7.1.0-dev.20260905.1",
       },
     },
     "packages/npm/quartz-darwin-x64": {
       "name": "@skastr0/quartz-darwin-x64",
-      "version": "0.2.1",
+      "version": "0.2.2",
       "dependencies": {
         "@typescript/typescript-darwin-x64": "7.1.0-dev.20260905.1",
       },
     },
     "packages/npm/quartz-linux-arm64": {
       "name": "@skastr0/quartz-linux-arm64",
-      "version": "0.2.1",
+      "version": "0.2.2",
       "dependencies": {
         "@typescript/typescript-linux-arm64": "7.1.0-dev.20260905.1",
       },
     },
     "packages/npm/quartz-linux-x64": {
       "name": "@skastr0/quartz-linux-x64",
-      "version": "0.2.1",
+      "version": "0.2.2",
       "dependencies": {
         "@typescript/typescript-linux-x64": "7.1.0-dev.20260905.1",
       },

@@ -6,6 +6,8 @@ The project follows Semantic Versioning for the declared public package, CLI, an
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-09-24
+
 ### Fixed
 
 - `check-snippet` no longer reports `Duplicate identifier` when a snippet imports or declares a name the package also exports. The snippet's own imports and top-level declarations now take precedence over the imports Quartz adds.

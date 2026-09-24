@@ -1,8 +1,8 @@
 # Quartz — brief
 
-updated: 2026-09-24 · version: 0.2.1 · maturity: usable-with-gaps
+updated: 2026-09-24 · version: 0.2.2 · maturity: usable-with-gaps
 
-Why usable-with-gaps: 0.2.1 is on npm and Pulsar runs on it, but 0.2.1 still carries three bugs fixed only in source (see Gaps).
+Why usable-with-gaps: 0.2.2 is on npm and Pulsar runs on it, but it runs on a nightly compiler API, one-shot commands start cold, and snippet path aliases don't resolve (see Gaps).
 
 ## One line
 
@@ -126,7 +126,7 @@ npx -y @skastr0/quartz capabilities
 
 ## Proof
 
-- **On npm:** `@skastr0/quartz` 0.1.0 (2026-06-03), 0.2.0 (2026-08-17), 0.2.1 (2026-09-07) (`npm view @skastr0/quartz time`).
+- **On npm:** `@skastr0/quartz` 0.1.0 (2026-06-03), 0.2.0 (2026-08-17), 0.2.1 (2026-09-07), 0.2.2 (2026-09-24) (`npm view @skastr0/quartz time`).
 - **Tests:** `bun run verify` → `Tests 92 passed (92)` in 11 files, run 2026-09-24.
 - **Used by Pulsar:** "Scored TypeScript through Quartz 0.2.1 … instead of ts-morph" (`pulsar/CHANGELOG.md:38`).
 - **Used by agents after edits:** "Now quartz diagnostics on the edited/new `.ts` files" (Quasar `claude:66cd9633…`, 2026-07-24).
@@ -135,12 +135,11 @@ npx -y @skastr0/quartz capabilities
 
 ## Gaps
 
-- **transform-search misses helpers the package entry doesn't export** in 0.2.1, so it finds less in real repos than in small examples. In the Quartz repo, `createLeafOperations(context: AnalyzerContext): LeafOperations` failed its test compile (`Cannot find name 'AnalyzerContext'`), so the default query returned `[]`. Fixed in source, not yet released: the test compile now imports the candidate and bare-name query types from their own modules, and the same query returns it `verified`.
-- **check-snippet breaks on snippets with their own imports:** `Duplicate identifier` in 0.2.1. Fixed in source (snippet bindings are no longer auto-imported), not yet released. Path aliases in snippet imports still don't resolve (`docs/effect-v4-migration.md:41` hit the same).
-- **`symbols` lists duplicates** in 0.2.1 when a barrel or index re-exports a declaration (the Quartz repo showed each one twice). Fixed in source, not yet released. The `.d.ts` files from `dist/` are listed because the repo's tsconfig includes them; that is correct.
-- **README is stale:** it says "After the first npm release" (`README.md:28`) while 0.2.1 is on npm. GitHub's "Latest" release is still v0.1.0.
+Fixed in 0.2.2: check-snippet `Duplicate identifier` on snippets with their own imports (`a539c34`), duplicate `symbols` entries from barrel re-exports (`66b788b`), and transform-search missing helpers the package entry doesn't export (`e1585ca`).
+
+- **check-snippet doesn't resolve tsconfig path aliases** in a snippet's own imports: `import { createTypeAnalyzer } from "@skastr0/quartz-engine"` in the Quartz repo returns `Cannot find module` (run 2026-09-24 from source). Package imports resolve (`typescript/unstable/ast` checked valid). `docs/effect-v4-migration.md:41` hit the same wall.
 - **Cold start:** one-shot commands took 0.7 s (`diagnostics`) to 2.8 s (`info`) on the Quartz repo. Use batch mode or the plugin for warm speed.
-- **Nightly compiler:** pinned to TypeScript `7.1.0-dev.20260905.1` on an API Microsoft marks unstable (`package.json:408`).
+- **Nightly compiler:** pinned to TypeScript `7.1.0-dev.20260905.1` on an API Microsoft marks unstable (`package.json:45`).
 
 ## Demo moments
 
