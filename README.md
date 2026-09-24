@@ -16,20 +16,20 @@ Your agent is changing TypeScript whose types it can't see.
 
 ## What Quartz does
 
-Quartz keeps the TypeScript 7 native compiler open on your project and answers questions as JSON. Your agent checks a type, a snippet, or a conversion before it writes code, not after `tsc` fails.
+Quartz keeps the TypeScript 7 native compiler open on your project and answers questions as JSON. Your agent checks a type, a snippet, or whether a converter already exists before it writes code, not after `tsc` fails.
 
 | your agent wants to know | command | it gets back |
 |---|---|---|
 | what a type contains | `info`, `expand` | resolved members and signatures |
 | whether code compiles | `check-snippet` | compiler errors with line and column; nothing is written to disk |
 | whether a converter already exists | `transform-search` | matching functions, each checked by a test compile |
-| whether a proposed change holds | `verify-contract` | one pass/fail packet: assignability, snippet, diagnostics, transform |
+| whether a proposed change holds | `verify-contract` | each check, passed or failed, and one overall answer |
 
 | Quartz **is** | Quartz **is not** |
 |---|---|
 | a JSON CLI and OpenCode plugin that agents call mid-task | a language server or editor extension |
 | answers from the TypeScript compiler | a guess from text search |
-| evidence that a type or contract checks out | proof that the code is correct at runtime |
+| evidence that a type or change checks out | proof that the code is correct at runtime |
 
 **Status:** 0.2.1, usable with known gaps. npm packages for macOS and Linux (arm64, x64). No Windows build. Needs a `tsconfig.json`.
 
@@ -77,7 +77,7 @@ toDTO(from: User): UserDTO        types/transforms.ts:30   verified
 transform(input: User): UserDTO   types/transforms.ts:211  verified
 ```
 
-Does converting with `toDTO` hold up?
+Can `toDTO` convert a `User` here? Four checks, one answer.
 
 ```console
 $ quartz verify-contract '{"from":"User","to":"UserDTO","symbol":"toDTO"}'
@@ -88,7 +88,9 @@ diagnostics    passed   Package diagnostics are clean.
 transform      passed   A compiler-verified transform satisfies the requested contract.
 ```
 
-Both outputs are trimmed from the JSON envelope. Every command takes a JSON payload inline, from a file (`@payload.json`), or from stdin (`-`). Agents can discover the whole contract with `quartz capabilities` and `quartz schema show <command>`.
+The direct assignment fails, but a verified converter exists, so the answer is yes.
+
+Both outputs are trimmed from the JSON envelope. Every command takes a JSON payload inline, from a file (`@payload.json`), or from stdin (`-`). Agents can discover every command and payload with `quartz capabilities` and `quartz schema show <command>`.
 
 All commands:
 
@@ -109,7 +111,7 @@ Payload fields, batch calls, artifacts, and error envelopes are in [docs/referen
 flowchart LR
   shell["agent in a shell"] -->|JSON payload| cli["Quartz CLI"]
   oc["agent in OpenCode"] -->|type_* tool call| plugin["OpenCode plugin"]
-  pulsar["Pulsar ts-pack"] -->|library import| engine
+  pulsar["Pulsar"] -->|library import| engine
   cli --> engine["@skastr0/quartz-engine"]
   plugin --> engine
   engine --> tsgo["TypeScript 7 native compiler"]
