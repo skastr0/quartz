@@ -20,16 +20,6 @@ locate_orb_setup() {
   return 1
 }
 
-workspace_cli="$HOME/.local/bin/quartz"
-workspace_entry="$repo_root/apps/cli/src/main.ts"
-if [[ ! -f "$workspace_cli" ]] || [[ -L "$workspace_cli" ]] || ! grep -Fq "$workspace_entry" "$workspace_cli" || ! grep -Fq 'exec bun' "$workspace_cli"; then
-  printf '[resume] error: workspace quartz is not the executable at %s\n' "$workspace_cli" >&2
-  exit 1
-fi
-if [[ ! -f "$repo_root/apps/cli/dist/main.js" ]]; then
-  printf '[resume] error: workspace quartz build is missing; run .agents/setup\n' >&2
-  exit 1
-fi
 if ! command -v bun >/dev/null 2>&1; then
   printf '[resume] error: pinned Bun is missing; run .agents/setup\n' >&2
   exit 1
@@ -40,4 +30,3 @@ orb_setup="$(locate_orb_setup)" || {
   exit 1
 }
 bash "${orb_setup}/bin/resume.sh"
-printf '[resume] workspace quartz: %s\n' "$workspace_entry"

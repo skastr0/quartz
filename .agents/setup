@@ -44,30 +44,6 @@ install_pinned_bun() {
   printf '[setup] Using Bun %s (%ss)\n' "$(bun --version)" "$((SECONDS - started))"
 }
 
-# Rig's quartz check is `test -x ~/.local/bin/quartz`. That check follows
-# symlinks, and the source entry is mode 644, so a symlink reads as missing
-# and Rig runs the published install. An executable file already at that
-# path makes the published install a skip. Write it before Rig, and write
-# it again after, so a published bin from an empty prefix cannot remain.
-link_workspace_cli() {
-  local entry="$repo_root/apps/cli/src/main.ts"
-  local link="$HOME/.local/bin/quartz"
-  if [[ ! -f "$entry" ]]; then
-    printf '[setup] error: workspace quartz entrypoint missing at %s\n' "$entry" >&2
-    exit 1
-  fi
-  mkdir -p "$HOME/.local/bin"
-  cat > "$link" <<EOF
-#!/usr/bin/env bash
-exec bun "$entry" "\$@"
-EOF
-  chmod 755 "$link"
-  if [[ ! -x "$link" ]] || [[ -L "$link" ]] || ! grep -Fq "$entry" "$link" || ! grep -Fq 'exec bun' "$link"; then
-    printf '[setup] error: workspace quartz command was not preserved\n' >&2
-    exit 1
-  fi
-}
-
 persist_tool_paths() {
   local marker="# quartz toolchain PATH"
   local profile="$HOME/.bash_profile"
@@ -99,19 +75,14 @@ orb_setup="$(locate_orb_setup)" || {
   exit 1
 }
 printf '[setup] Using shared runtime at %s\n' "$orb_setup"
-link_workspace_cli
 bash "${orb_setup}/bin/setup.sh"
 export PATH="${HOME}/.bun/bin:${HOME}/.local/bin:${PATH}"
 
 install_pinned_bun
 persist_tool_paths
-link_workspace_cli
 
 started=$SECONDS
 printf '[setup] Installing workspace dependencies\n'
 bun install --frozen-lockfile
 printf '[setup] Workspace dependencies ready (%ss)\n' "$((SECONDS - started))"
-printf '[setup] Building workspace quartz CLI\n'
-bun run cli:build
-link_workspace_cli
-printf '[setup] Complete; quartz workspace -> %s\n' "$repo_root/apps/cli/src/main.ts"
+printf '[setup] Complete\n'
