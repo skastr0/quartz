@@ -50,7 +50,7 @@ import type {
   VerificationStatus,
 } from "../contracts"
 import { QuartzEngineError } from "../errors"
-import { resolveVirtualFileDirectory, synthesizePackageImports } from "../virtual-files"
+import { modulePathFor, resolveVirtualFileDirectory, synthesizePackageImports } from "../virtual-files"
 
 type AsyncCallable = FunctionLikeBase & Node
 
@@ -493,10 +493,56 @@ const syntheticCall = (match: Match): string | null => {
   return `(null as unknown as (typeof ${candidate.containerName})["prototype"]).${candidate.name}(${args})`
 }
 
+const namedDeclarationKinds = new Set([
+  SyntaxKind.InterfaceDeclaration,
+  SyntaxKind.ClassDeclaration,
+  SyntaxKind.TypeAliasDeclaration,
+  SyntaxKind.EnumDeclaration,
+])
+
+/** The source file with a top-level exported type declaration named `name`. */
+const exportingFileFor = (name: string, sourceFiles: readonly SourceFile[]): SourceFile | null => {
+  for (const sourceFile of sourceFiles) {
+    for (const statement of sourceFile.statements) {
+      if (!namedDeclarationKinds.has(statement.kind) || !hasModifier(statement, ModifierFlags.Export)) continue
+      if ((statement as Node & { readonly name?: Node }).name?.getText(sourceFile) === name) return sourceFile
+    }
+  }
+  return null
+}
+
+/**
+ * Import the candidate and bare-name query types from the modules that declare
+ * them. Candidates are any exported callable, not only what the package entry
+ * re-exports, so the entry's imports alone cannot name them.
+ */
+const declaringModuleImports = (
+  match: Match,
+  options: TransformSearchOptions,
+  sourceFiles: readonly SourceFile[],
+  virtualFilePath: string,
+): { readonly content: string; readonly names: ReadonlySet<string> } => {
+  const names = new Set<string>()
+  const lines: string[] = []
+  const candidateName = match.candidate.containerName ?? match.candidate.name
+  names.add(candidateName)
+  lines.push(`import { ${candidateName} } from ${JSON.stringify(modulePathFor(virtualFilePath, match.candidate.sourceFile.fileName))}`)
+  for (const query of [options.from, options.to]) {
+    const name = query?.trim()
+    if (name === undefined || names.has(name) || !/^[A-Za-z_$][\w$]*$/.test(name)) continue
+    const sourceFile = exportingFileFor(name, sourceFiles)
+    if (sourceFile === null) continue
+    names.add(name)
+    lines.push(`import type { ${name} } from ${JSON.stringify(modulePathFor(virtualFilePath, sourceFile.fileName))}`)
+  }
+  return { content: `${lines.join("\n")}\n`, names }
+}
+
 const verifySyntheticMatch = async (
   context: AnalyzerContext,
   project: Project,
   packageInfo: { readonly path: string; readonly tsconfigPath: string },
+  sourceFiles: readonly SourceFile[],
   match: Match,
   options: TransformSearchOptions,
 ): Promise<SyntheticVerification> => {
@@ -511,11 +557,12 @@ const verifySyntheticMatch = async (
     resolveVirtualFileDirectory(packageInfo.path),
     `__quartz_transform_verify_${(syntheticSequence++).toString(36)}.ts`,
   )
-  const imports = await synthesizePackageImports(project, packageInfo.path, virtualFilePath)
+  const declaring = declaringModuleImports(match, options, sourceFiles, virtualFilePath)
+  const imports = await synthesizePackageImports(project, packageInfo.path, virtualFilePath, declaring.names)
   const assignment = match.to?.unwrapped && (match.to.wrapper === "Promise" || match.to.wrapper === "PromiseLike")
     ? `async function __quartzVerify() {\n  const __output: __QueryTo = await ${call}\n}`
     : `const __output: __QueryTo = ${call}`
-  const syntheticCode = `${imports.content}type __QueryFrom = ${options.from}\ntype __QueryTo = ${options.to}\ndeclare const __input: __QueryFrom\n${assignment}\n`
+  const syntheticCode = `${declaring.content}${imports.content}type __QueryFrom = ${options.from}\ntype __QueryTo = ${options.to}\ndeclare const __input: __QueryFrom\n${assignment}\n`
   const syntheticResult = await context.workspace.withVirtualFile(
     packageInfo.tsconfigPath,
     virtualFilePath,
@@ -824,7 +871,7 @@ export const createTransformSearchOperation = (context: AnalyzerContext) => asyn
       if (provisional.verification.reason !== "assignability_pending_synthetic") {
         return finalizeVerification(provisional, provisional.verification)
       }
-      const synthetic = await verifySyntheticMatch(context, project, pkg, provisional, options)
+      const synthetic = await verifySyntheticMatch(context, project, pkg, sourceFiles, provisional, options)
       const selected = synthetic.selectedSignatureKey === null
         ? undefined
         : group.find((match) => match.candidate.signatureKey === synthetic.selectedSignatureKey)

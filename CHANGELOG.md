@@ -10,6 +10,7 @@ The project follows Semantic Versioning for the declared public package, CLI, an
 
 - `check-snippet` no longer reports `Duplicate identifier` when a snippet imports or declares a name the package also exports. The snippet's own imports and top-level declarations now take precedence over the imports Quartz adds.
 - `symbols` no longer lists a declaration once per module that re-exports it. A barrel or index re-export now yields one entry per exported name.
+- `transform-search` verification no longer fails for exported helpers that the package entry does not re-export. The test compile imports the candidate and bare-name query types from the modules that declare them.
 
 ## [0.2.1] - 2026-09-06
 

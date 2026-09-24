@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -43,6 +43,36 @@ describe("native engine transform search", () => {
         expect(response.results).toEqual(expect.arrayContaining([
           expect.objectContaining({ name: "convert", file: "source.ts" }),
         ]))
+      } finally {
+        await temporaryContext.close()
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it("verifies helpers and query types that the package entry does not re-export", async () => {
+    const root = await mkdtemp(join(tmpdir(), "quartz-internal-transform-"))
+    try {
+      await mkdir(join(root, "src"))
+      await writeFile(join(root, "tsconfig.json"), JSON.stringify({
+        compilerOptions: { target: "ESNext", module: "ESNext", moduleResolution: "bundler", strict: true, noEmit: true },
+        include: ["src/**/*.ts"],
+      }))
+      await writeFile(join(root, "src/index.ts"), "export interface PublicShape { id: string }\n")
+      await writeFile(join(root, "src/internal.ts"), [
+        "export interface Draft { id: string }",
+        "export interface Published { id: string; slug: string }",
+        "export function publish(draft: Draft): Published { return { id: draft.id, slug: draft.id } }",
+        "export class Publisher { static run(draft: Draft): Published { return publish(draft) } }",
+      ].join("\n"))
+      const temporaryContext = await AnalyzerContext.open(root)
+      try {
+        const response = await createTransformSearchOperation(temporaryContext)({ from: "Draft", to: "Published", verifiedOnly: true })
+        expect(response.results.map((result) => [result.name, result.verification.status]).sort()).toEqual([
+          ["Publisher.run", "verified"],
+          ["publish", "verified"],
+        ])
       } finally {
         await temporaryContext.close()
       }

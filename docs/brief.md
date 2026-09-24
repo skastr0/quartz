@@ -2,7 +2,7 @@
 
 updated: 2026-09-24 · version: 0.2.1 · maturity: usable-with-gaps
 
-Why usable-with-gaps: 0.2.1 is on npm and Pulsar runs on it, but transform-search misses internal helpers in real repos (see Gaps).
+Why usable-with-gaps: 0.2.1 is on npm and Pulsar runs on it, but 0.2.1 still carries three bugs fixed only in source (see Gaps).
 
 ## One line
 
@@ -135,7 +135,7 @@ npx -y @skastr0/quartz capabilities
 
 ## Gaps
 
-- **transform-search misses internal helpers.** In the Quartz repo, `createLeafOperations(context: AnalyzerContext): LeafOperations` is found but fails its test compile (`Cannot find name 'AnalyzerContext'`), so the default query returns `[]`. Fixtures look better than real repos.
+- **transform-search misses internal helpers** in 0.2.1. In the Quartz repo, `createLeafOperations(context: AnalyzerContext): LeafOperations` failed its test compile (`Cannot find name 'AnalyzerContext'`), so the default query returned `[]`. Fixed in source, not yet released: the test compile now imports the candidate and bare-name query types from their own modules, and the same query returns it `verified`.
 - **check-snippet breaks on snippets with their own imports:** `Duplicate identifier` in 0.2.1. Fixed in source (snippet bindings are no longer auto-imported), not yet released. Path aliases in snippet imports still don't resolve (`docs/effect-v4-migration.md:41` hit the same).
 - **`symbols` lists duplicates** in 0.2.1 when a barrel or index re-exports a declaration (the Quartz repo showed each one twice). Fixed in source, not yet released. The `.d.ts` files from `dist/` are listed because the repo's tsconfig includes them; that is correct.
 - **README is stale:** it says "After the first npm release" (`README.md:28`) while 0.2.1 is on npm. GitHub's "Latest" release is still v0.1.0.

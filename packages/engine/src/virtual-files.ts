@@ -17,7 +17,7 @@ export const resolveVirtualFileDirectory = (packageRoot: string): string => {
   return root
 }
 
-const modulePathFor = (from: string, fileName: string): string => {
+export const modulePathFor = (from: string, fileName: string): string => {
   const withoutExtension = fileName.slice(0, -extname(fileName).length)
   const path = relative(dirname(from), withoutExtension).replaceAll("\\", "/")
   return path.startsWith(".") ? path : `./${path}`
