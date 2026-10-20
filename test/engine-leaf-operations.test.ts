@@ -103,6 +103,8 @@ describe("createLeafOperations", () => {
         nodeKind: "TypeReference",
         nodeText: "Box<string>",
         location: { file: "src/index.ts", line: 13, column: 25 },
+        symbol: "Box",
+        declaration: { file: "src/index.ts", line: 12 },
       })
       expect(argument).toMatchObject({
         type: "string",
@@ -115,6 +117,8 @@ describe("createLeafOperations", () => {
         nodeKind: "Identifier",
         nodeText: "user",
         location: { file: "src/index.ts", line: 9, column: 14 },
+        symbol: "user",
+        declaration: { file: "src/index.ts", line: 9 },
       })
     } finally {
       await context.close()

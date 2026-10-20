@@ -56,6 +56,7 @@ import {
   withVirtualFile,
   type VirtualFileRegistry,
 } from "./virtual-files"
+import { symbolDeclarationFor } from "./position-symbol"
 import { displaySymbolName } from "./symbol-names"
 
 const TYPE_FLAGS =
@@ -763,6 +764,12 @@ export const createLeafOperations = (context: AnalyzerContext): LeafOperations =
       project.checker.typeToString(type, node),
       project.checker.typeToString(type, node, EXPAND_FLAGS),
     ])
+    const { symbol, declaration } = await symbolDeclarationFor(
+      project,
+      node,
+      type,
+      (fileName) => relativePath(context.root, fileName),
+    )
     const text = node.getText(source)
     const nodeText = text.length > MAX_NODE_TEXT ? `${text.slice(0, MAX_NODE_TEXT)}...` : text
     return {
@@ -775,6 +782,8 @@ export const createLeafOperations = (context: AnalyzerContext): LeafOperations =
         line: point.line + 1,
         column: point.character + 1,
       },
+      symbol,
+      declaration,
     }
   }, packageName)
 
