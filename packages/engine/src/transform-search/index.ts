@@ -339,11 +339,12 @@ const compilerCandidates = async (
 ): Promise<Candidate[]> => {
   const groups = groupCandidateSeeds(seeds, await symbolsForSeeds(project, seeds))
   const valueTypes = await valueTypesForGroups(project, groups)
-  const candidates: Candidate[] = []
-  for (const [callableId, group] of groups) {
-    candidates.push(...await expandCandidateGroup(project, callableId, group, valueTypes))
-  }
-  return candidates
+  const expanded = await mapWithConcurrency(
+    [...groups.entries()],
+    ASSIGNABILITY_BATCH_SIZE,
+    ([callableId, group]) => expandCandidateGroup(project, callableId, group, valueTypes),
+  )
+  return expanded.flat()
 }
 
 const typeText = (node: Node | null, sourceFile: SourceFile): string => (node === null ? "unknown" : node.getText(sourceFile).trim())
@@ -615,6 +616,39 @@ const SYNTHETIC_OVERSCAN = 10
 const SYNTHETIC_VERIFICATION_BATCH_SIZE = 8
 /** Bound source-file transport fan-out on large projects while retaining parallel reads. */
 const SOURCE_FILE_BATCH_SIZE = 32
+/** Bound candidate assignability fan-out; each candidate costs compiler round trips. */
+const ASSIGNABILITY_BATCH_SIZE = 32
+
+/** Run `run` over every item with at most `limit` in flight, preserving input order. */
+const mapWithConcurrency = async <Item, Result>(
+  items: readonly Item[],
+  limit: number,
+  run: (item: Item) => Promise<Result>,
+): Promise<Result[]> => {
+  const results = new Array<Result>(items.length)
+  let next = 0
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const index = next++
+      results[index] = await run(items[index]!)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return results
+}
+
+interface FromSelection {
+  readonly candidate: Candidate
+  readonly from: FromMatchDetails | null
+}
+
+interface ToSelection extends FromSelection {
+  readonly returnType: Type | null
+  readonly returnText: string
+  readonly wrapper: ToMatchDetails["wrapper"]
+  readonly unwrapped: boolean
+  readonly to: ToMatchDetails | null
+}
 
 type VerifyMatchGroup = (group: readonly Match[]) => Promise<Match>
 
@@ -716,8 +750,11 @@ const loadTransformIndex = async (project: Project): Promise<TransformIndex> => 
   }
   const inferredReturnTypes = new Map<Candidate, Type | null>()
   const inferredReturnTexts = new Map<Candidate, string>()
-  for (const candidate of allCandidates) {
+  // Each candidate without a return type annotation costs up to three compiler
+  // round trips; issue them across candidates instead of serializing per candidate.
+  const inferred = await mapWithConcurrency(allCandidates, ASSIGNABILITY_BATCH_SIZE, async (candidate) => {
     let returnType = candidate.returnNode === null ? null : byNode.get(candidate.returnNode) ?? null
+    let returnText: string | null = null
     if (candidate.returnNode === null) {
       if (candidate.compilerSignature !== null) {
         returnType = await project.checker.getReturnTypeOfSignature(candidate.compilerSignature)
@@ -730,10 +767,14 @@ const loadTransformIndex = async (project: Project): Promise<TransformIndex> => 
         }
       }
       if (returnType !== null) {
-        inferredReturnTexts.set(candidate, await project.checker.typeToString(returnType, candidate.callable))
+        returnText = await project.checker.typeToString(returnType, candidate.callable)
       }
     }
+    return { candidate, returnType, returnText }
+  })
+  for (const { candidate, returnType, returnText } of inferred) {
     inferredReturnTypes.set(candidate, returnType)
+    if (returnText !== null) inferredReturnTexts.set(candidate, returnText)
   }
   return { sourceFiles, allCandidates, availableTypes, byNode, inferredReturnTypes, inferredReturnTexts }
 }
@@ -768,15 +809,18 @@ export const createTransformSearchOperation = (context: AnalyzerContext) => asyn
         `Could not resolve transform-search ${unresolved.field} type ${JSON.stringify(unresolved.query.raw)}. Declare an exported named type or alias and retry.`,
       )
     }
-    const matches: Match[] = []
-    for (const candidate of candidates) {
-      const positions = paramPosition === "any" ? candidate.params.map((_, index) => index) : [paramPosition]
-      let fromMatch: FromMatchDetails | null = null
-      let fromAssignable = options.from === undefined
-      let fromErased = false
-      let exactFrom = options.from === undefined
-      if (fromQuery !== null) {
-        for (const index of positions) {
+    const positionsFor = (candidate: Candidate): readonly number[] =>
+      paramPosition === "any" ? candidate.params.map((_, index) => index) : [paramPosition]
+
+    // Each candidate costs one compiler round trip per query. Issue the from-side
+    // checks together so the API transport batches them instead of paying a
+    // round trip per candidate in sequence.
+    const fromSelections = await mapWithConcurrency(
+      candidates,
+      ASSIGNABILITY_BATCH_SIZE,
+      async (candidate): Promise<FromSelection | null> => {
+        if (fromQuery === null) return { candidate, from: null }
+        for (const index of positionsFor(candidate)) {
           const param = candidate.params[index]
           if (param === undefined) continue
           const paramType = byNode.get((param as Node & { readonly type?: TypeNode }).type ?? param) ?? null
@@ -787,45 +831,68 @@ export const createTransformSearchOperation = (context: AnalyzerContext) => asyn
           const paramName = (param as Node & { readonly name?: Node }).name?.getText(candidate.sourceFile) ?? `arg${index}`
           const paramText = typeText((param as Node & { readonly type?: TypeNode }).type ?? null, candidate.sourceFile)
           const exact = paramText.replace(/\s/g, "") === fromQuery.raw.replace(/\s/g, "")
-          fromMatch = { matched: true, paramIndex: index, paramName, queryType: fromQuery.raw, paramType: paramText, exact, ...(paramErased ? { typeErasure: true } : {}) }
-          fromAssignable = true
-          fromErased = paramErased
-          exactFrom = exact
-          break
+          return {
+            candidate,
+            from: { matched: true, paramIndex: index, paramName, queryType: fromQuery.raw, paramType: paramText, exact, ...(paramErased ? { typeErasure: true } : {}) },
+          }
         }
-      }
-      if (fromQuery !== null && !fromAssignable) continue
+        return null
+      },
+    )
+    const fromSurvivors = fromSelections.filter((selection): selection is FromSelection => selection !== null)
 
-      let toMatch: ToMatchDetails | null = null
-      let toAssignable = options.to === undefined
-      let toErased = false
-      let exactTo = options.to === undefined
-      let returnType: Type | null = inferredReturnTypes.get(candidate) ?? null
-      let returnText = candidate.returnNode === null ? inferredReturnTexts.get(candidate) ?? "unknown" : typeText(candidate.returnNode, candidate.sourceFile)
-      if (candidate.kind === "Constructor" && candidate.containerName !== null) returnText = candidate.containerName
-      const wrapper = wrapperOf(returnText)
-      let comparisonText = returnText
-      let unwrapped = false
-      if (unwrapReturn && wrapper !== null) {
-        comparisonText = unwrapText(returnText, wrapper)
-        if (returnType !== null && returnType.isTypeReference()) {
-          const args = await project.checker.getTypeArguments(returnType as TypeReference)
-          if (args[0] !== undefined) returnType = args[0]
+    // The to-side check reads the inferred return type, so it runs after the from
+    // side narrowed the set — again with every survivor's round trips in flight.
+    const toSelections = await mapWithConcurrency(
+      fromSurvivors,
+      ASSIGNABILITY_BATCH_SIZE,
+      async (selection): Promise<ToSelection | null> => {
+        const candidate = selection.candidate
+        let returnType = inferredReturnTypes.get(candidate) ?? null
+        let returnText = candidate.returnNode === null ? inferredReturnTexts.get(candidate) ?? "unknown" : typeText(candidate.returnNode, candidate.sourceFile)
+        if (candidate.kind === "Constructor" && candidate.containerName !== null) returnText = candidate.containerName
+        const wrapper = wrapperOf(returnText)
+        let comparisonText = returnText
+        let unwrapped = false
+        if (unwrapReturn && wrapper !== null) {
+          comparisonText = unwrapText(returnText, wrapper)
+          if (returnType !== null && returnType.isTypeReference()) {
+            const args = await project.checker.getTypeArguments(returnType as TypeReference)
+            if (args[0] !== undefined) returnType = args[0]
+          }
+          unwrapped = true
         }
-        unwrapped = true
-      }
-      if (toQuery !== null) {
+        if (toQuery === null) return { ...selection, returnType, returnText, wrapper, unwrapped, to: null }
         const returnErased = erased(returnType)
-        if (!options.allowTypeErasure && returnErased) continue
+        if (!options.allowTypeErasure && returnErased) return null
         const constructorExact = candidate.kind === "Constructor" && candidate.containerName === toQuery.raw
         const assignable = constructorExact || (toQuery.type !== null && returnType !== null ? await project.checker.isTypeAssignableTo(returnType, toQuery.type) : comparisonText.replace(/\s/g, "") === toQuery.raw.replace(/\s/g, ""))
-        if (!assignable) continue
+        if (!assignable) return null
         const exact = constructorExact || comparisonText.replace(/\s/g, "") === toQuery.raw.replace(/\s/g, "")
-        toMatch = { matched: true, returnType: returnText, queryType: toQuery.raw, exact, unwrapped, wrapper, ...(returnErased ? { typeErasure: true } : {}) }
-        toAssignable = true
-        toErased = returnErased
-        exactTo = exact
-      }
+        return {
+          ...selection,
+          returnType,
+          returnText,
+          wrapper,
+          unwrapped,
+          to: { matched: true, returnType: returnText, queryType: toQuery.raw, exact, unwrapped, wrapper, ...(returnErased ? { typeErasure: true } : {}) },
+        }
+      },
+    )
+
+    const matches: Match[] = []
+    for (const selection of toSelections) {
+      if (selection === null) continue
+      const candidate = selection.candidate
+      const fromMatch = selection.from
+      const fromAssignable = fromQuery === null || fromMatch !== null
+      const fromErased = fromMatch?.typeErasure === true
+      const exactFrom = fromQuery === null || fromMatch?.exact === true
+      const toMatch = selection.to
+      const toAssignable = toQuery === null || toMatch !== null
+      const toErased = toMatch?.typeErasure === true
+      const exactTo = toQuery === null || toMatch?.exact === true
+      const returnText = selection.returnText
       const partial = fromQuery === null || toQuery === null || !fromQuery.resolved || !toQuery?.resolved
       // Assignability alone never ships as `verified` — synthetic is the only promotion path
       // for full from+to matches. Pre-synthetic "verified" would silently backfill past the
