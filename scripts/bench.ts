@@ -62,90 +62,97 @@ interface Queries {
   readonly from: string
   readonly to: string
   readonly rename: string
+  /** Package selector for monorepos; unset resolves the default package. */
+  readonly package?: string
 }
 
 const DEFAULT_QUERIES: Queries = { symbol: "User", from: "ExtendedUser", to: "User", rename: "Person" }
 
-const commandsFor = (root: string, q: Queries = DEFAULT_QUERIES): readonly CommandSpec[] => [
-  {
-    name: "doctor",
-    batchable: false,
-    cliArgs: (r) => ["doctor", JSON.stringify({ root: r })],
-    batchPayloads: () => [],
-    run: async (a) => ({ metadata: a.metadata, packages: await a.getPackages() }),
-  },
-  {
-    name: "diagnostics",
-    batchable: true,
-    cliArgs: (r) => ["diagnostics", JSON.stringify({ root: r })],
-    batchPayloads: (r, n) => Array.from({ length: n }, () => ({ root: r })),
-    run: (a) => a.getDiagnostics(),
-  },
-  {
-    name: "info",
-    batchable: true,
-    cliArgs: (r) => ["info", JSON.stringify({ root: r, symbol: q.symbol })],
-    batchPayloads: (r, n) => Array.from({ length: n }, () => ({ root: r, symbol: q.symbol })),
-    run: (a) => a.getTypeInfo(q.symbol),
-  },
-  {
-    name: "expand",
-    batchable: true,
-    cliArgs: (r) => ["expand", JSON.stringify({ root: r, symbol: q.symbol })],
-    batchPayloads: (r, n) => Array.from({ length: n }, () => ({ root: r, symbol: q.symbol })),
-    run: (a) => a.expandType(q.symbol),
-  },
-  {
-    name: "compatible",
-    batchable: true,
-    cliArgs: (r) => ["compatible", JSON.stringify({ root: r, from: q.from, to: q.to })],
-    batchPayloads: (r, n) => Array.from({ length: n }, () => ({ root: r, from: q.from, to: q.to })),
-    run: (a) => a.checkCompatibility(q.from, q.to),
-  },
-  {
-    name: "verify-contract",
-    batchable: true,
-    cliArgs: (r) => ["verify-contract", JSON.stringify({ root: r, from: q.symbol, to: q.symbol })],
-    batchPayloads: (r, n) => Array.from({ length: n }, () => ({ root: r, from: q.symbol, to: q.symbol })),
-    run: (a) => a.verifyContract({ from: q.symbol, to: q.symbol }),
-  },
-  {
-    name: "related",
-    batchable: true,
-    cliArgs: (r) => ["related", JSON.stringify({ root: r, symbol: q.symbol })],
-    batchPayloads: (r, n) => Array.from({ length: n }, () => ({ root: r, symbol: q.symbol })),
-    run: (a) => a.findRelated(q.symbol),
-  },
-  {
-    name: "graph",
-    batchable: true,
-    cliArgs: (r) => ["graph", JSON.stringify({ root: r, symbol: q.symbol, depth: 1, format: "mermaid" })],
-    batchPayloads: (r, n) => Array.from({ length: n }, () => ({ root: r, symbol: q.symbol, depth: 1, format: "mermaid" })),
-    run: (a) => a.generateGraph(q.symbol, { depth: 1, format: "mermaid" }),
-  },
-  {
-    name: "transform-search",
-    batchable: true,
-    cliArgs: (r) => ["transform-search", JSON.stringify({ root: r, from: q.symbol, limit: 5 })],
-    batchPayloads: (r, n) => Array.from({ length: n }, () => ({ root: r, from: q.symbol, limit: 5 })),
-    run: (a) => a.transformSearch({ from: q.symbol, limit: 5 }),
-  },
-  {
-    name: "refactor-preview",
-    batchable: true,
-    cliArgs: (r) => ["refactor-preview", JSON.stringify({ root: r, symbol: q.symbol, to: q.rename })],
-    batchPayloads: (r, n) => Array.from({ length: n }, () => ({ root: r, symbol: q.symbol, to: q.rename })),
-    run: (a) => a.previewRefactor({ action: "rename", symbol: q.symbol, to: q.rename }),
-  },
-  {
-    name: "check-snippet",
-    batchable: true,
-    cliArgs: (r) => ["check-snippet", JSON.stringify({ root: r, code: "const x: string = 42;" })],
-    batchPayloads: (r, n) =>
-      Array.from({ length: n }, () => ({ root: r, code: "const x: string = 42;" })),
-    run: (a) => a.checkSnippet("const x: string = 42;"),
-  },
-]
+const commandsFor = (root: string, q: Queries = DEFAULT_QUERIES): readonly CommandSpec[] => {
+  const pkg = q.package
+  const withPkg = <T extends object>(payload: T): T & { readonly package?: string } =>
+    pkg === undefined ? payload : { ...payload, package: pkg }
+  return [
+    {
+      name: "doctor",
+      batchable: false,
+      cliArgs: (r) => ["doctor", JSON.stringify(withPkg({ root: r }))],
+      batchPayloads: () => [],
+      run: async (a) => ({ metadata: a.metadata, packages: await a.getPackages() }),
+    },
+    {
+      name: "diagnostics",
+      batchable: true,
+      cliArgs: (r) => ["diagnostics", JSON.stringify(withPkg({ root: r }))],
+      batchPayloads: (r, n) => Array.from({ length: n }, () => withPkg({ root: r })),
+      run: (a) => a.getDiagnostics(pkg),
+    },
+    {
+      name: "info",
+      batchable: true,
+      cliArgs: (r) => ["info", JSON.stringify(withPkg({ root: r, symbol: q.symbol }))],
+      batchPayloads: (r, n) => Array.from({ length: n }, () => withPkg({ root: r, symbol: q.symbol })),
+      run: (a) => a.getTypeInfo(q.symbol, pkg),
+    },
+    {
+      name: "expand",
+      batchable: true,
+      cliArgs: (r) => ["expand", JSON.stringify(withPkg({ root: r, symbol: q.symbol }))],
+      batchPayloads: (r, n) => Array.from({ length: n }, () => withPkg({ root: r, symbol: q.symbol })),
+      run: (a) => a.expandType(q.symbol, pkg),
+    },
+    {
+      name: "compatible",
+      batchable: true,
+      cliArgs: (r) => ["compatible", JSON.stringify(withPkg({ root: r, from: q.from, to: q.to }))],
+      batchPayloads: (r, n) => Array.from({ length: n }, () => withPkg({ root: r, from: q.from, to: q.to })),
+      run: (a) => a.checkCompatibility(q.from, q.to, pkg),
+    },
+    {
+      name: "verify-contract",
+      batchable: true,
+      cliArgs: (r) => ["verify-contract", JSON.stringify(withPkg({ root: r, from: q.symbol, to: q.symbol }))],
+      batchPayloads: (r, n) => Array.from({ length: n }, () => withPkg({ root: r, from: q.symbol, to: q.symbol })),
+      run: (a) => a.verifyContract(withPkg({ from: q.symbol, to: q.symbol })),
+    },
+    {
+      name: "related",
+      batchable: true,
+      cliArgs: (r) => ["related", JSON.stringify(withPkg({ root: r, symbol: q.symbol }))],
+      batchPayloads: (r, n) => Array.from({ length: n }, () => withPkg({ root: r, symbol: q.symbol })),
+      run: (a) => a.findRelated(q.symbol, pkg),
+    },
+    {
+      name: "graph",
+      batchable: true,
+      cliArgs: (r) => ["graph", JSON.stringify(withPkg({ root: r, symbol: q.symbol, depth: 1, format: "mermaid" }))],
+      batchPayloads: (r, n) => Array.from({ length: n }, () => withPkg({ root: r, symbol: q.symbol, depth: 1, format: "mermaid" })),
+      run: (a) => a.generateGraph(q.symbol, withPkg({ depth: 1, format: "mermaid" as const })),
+    },
+    {
+      name: "transform-search",
+      batchable: true,
+      cliArgs: (r) => ["transform-search", JSON.stringify(withPkg({ root: r, from: q.symbol, limit: 5 }))],
+      batchPayloads: (r, n) => Array.from({ length: n }, () => withPkg({ root: r, from: q.symbol, limit: 5 })),
+      run: (a) => a.transformSearch(withPkg({ from: q.symbol, limit: 5 })),
+    },
+    {
+      name: "refactor-preview",
+      batchable: true,
+      cliArgs: (r) => ["refactor-preview", JSON.stringify(withPkg({ root: r, symbol: q.symbol, to: q.rename }))],
+      batchPayloads: (r, n) => Array.from({ length: n }, () => withPkg({ root: r, symbol: q.symbol, to: q.rename })),
+      run: (a) => a.previewRefactor(withPkg({ action: "rename" as const, symbol: q.symbol, to: q.rename })),
+    },
+    {
+      name: "check-snippet",
+      batchable: true,
+      cliArgs: (r) => ["check-snippet", JSON.stringify(withPkg({ root: r, code: "const x: string = 42;" }))],
+      batchPayloads: (r, n) =>
+        Array.from({ length: n }, () => withPkg({ root: r, code: "const x: string = 42;" })),
+      run: (a) => a.checkSnippet("const x: string = 42;", pkg),
+    },
+  ]
+}
 
 interface SampleStats {
   readonly samplesMs: readonly number[]
@@ -514,7 +521,7 @@ const parseArgs = (argv: readonly string[]): BenchOptions & { readonly out: stri
       options.timed = Number(need(++i, arg))
     } else if (arg === "--memory") {
       options.memory = true
-    } else if (arg === "--symbol" || arg === "--from" || arg === "--to" || arg === "--rename") {
+    } else if (arg === "--symbol" || arg === "--from" || arg === "--to" || arg === "--rename" || arg === "--package") {
       queries[arg.slice(2) as keyof Queries] = need(++i, arg)
     } else if (arg === "--help" || arg === "-h") {
       process.stdout.write(
@@ -522,10 +529,11 @@ const parseArgs = (argv: readonly string[]): BenchOptions & { readonly out: stri
           "Usage: bun scripts/bench.ts [--profile pr|release] [--root <path>] [--out report.json]",
           "                            [--commands a,b] [--modes cold-cli,warm-batch,warm-analyzer]",
           "                            [--warmup n] [--timed n] [--memory]",
-          "                            [--symbol S] [--from S] [--to S] [--rename S]",
+          "                            [--symbol S] [--from S] [--to S] [--rename S] [--package P]",
           "",
           "--symbol/--from/--to/--rename replace the fixture symbols (User, ExtendedUser, Person)",
-          "so a real repository can be measured. --memory adds untimed peak-RSS passes.",
+          "so a real repository can be measured; --package picks the package of a monorepo.",
+          "--memory adds untimed peak-RSS passes.",
           "",
         ].join("\n"),
       )
