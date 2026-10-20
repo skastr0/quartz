@@ -81,7 +81,7 @@ transform      passed: true   "A compiler-verified transform satisfies the reque
 
 ## How it works
 
-Quartz keeps one tsrs compiler open per project, through its async API (`tsrs/unstable/async`, `packages/engine/src/workspace.ts:112`). tsrs 0.18.0 is a Rust port of the TypeScript 7 native compiler, built from TypeScript `7.1.0-dev.20260929`. Snippets and transform checks compile as temporary virtual files, so your files are never touched (`withVirtualFile` → `runWithTemporaryFileUpdate`, `workspace.ts:181`). The CLI reuses one compiler across a batch of payloads. The OpenCode plugin keeps it warm for the whole session and refreshes it on file edits (`apps/opencode-plugin/src/server.ts:405`).
+Quartz keeps one tsrs compiler open per project, through its async API (`tsrs/unstable/async`, `packages/engine/src/workspace.ts:112`). tsrs 0.18.0 is a Rust port of the TypeScript 7 native compiler, built from TypeScript `7.1.0-dev.20260929`. Snippets and transform checks compile as temporary virtual files, so your files are never touched (`withVirtualFile` → `runWithTemporaryFileUpdate`, `workspace.ts:181`). `check-snippet` accepts one snippet (`code`) or a set of files (`files`) that compile as one program, so a multi-file change can be checked before it is written. The CLI reuses one compiler across a batch of payloads. The OpenCode plugin keeps it warm for the whole session and refreshes it on file edits (`apps/opencode-plugin/src/server.ts:405`).
 
 Diagram spec:
 

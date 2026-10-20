@@ -80,7 +80,7 @@ All command examples below use `test/fixtures`, the same fixture repo exercised 
 | `at-position` | Show the type at a one-based source position. | `{"root":"test/fixtures","file":"types/basic.ts","line":9,"column":3}` |
 | `related` | Find symbols that reference or are referenced by a symbol. | `{"root":"test/fixtures","symbol":"User"}` |
 | `eval` | Evaluate a TypeScript type expression. | `{"root":"test/fixtures","expression":"Pick<User, \"id\" | \"name\">"}` |
-| `check-snippet` | Type-check a snippet without writing to disk. | `{"root":"test/fixtures","code":"const value = 1 satisfies number;"}` |
+| `check-snippet` | Type-check one snippet, or several files as one program, without writing to disk. | `{"root":"test/fixtures","code":"const value = 1 satisfies number;"}` |
 | `file` | Inspect declarations in one source file. | `{"root":"test/fixtures","file":"types/basic.ts","includePrivate":false}` |
 | `compatible` | Check whether one type is assignable to another. | `{"root":"test/fixtures","from":"ExtendedUser","to":"User"}` |
 | `graph` | Generate a type dependency graph as Mermaid or DOT. | `{"root":"test/fixtures","symbol":"ExtendedUser","depth":2,"format":"mermaid"}` |
@@ -92,6 +92,25 @@ All command examples below use `test/fixtures`, the same fixture repo exercised 
 | `doctor` | Inspect local CLI health and project discovery. | `{"root":"test/fixtures"}` |
 
 Use `schema show <command>` for exact payload fields. Artifact-capable commands are `expand`, `diagnostics`, `file`, `graph`, `refactor-preview`, `why-error`, `explain`, `transform-search`, and `verify-contract`.
+
+### check-snippet: one snippet or several files
+
+`check-snippet` takes exactly one of `code` or `files`. Sending both, or neither, is a `CommandInputError`.
+
+- `code` checks a single snippet. Errors carry `message`, `line`, `column`, and `severity`.
+- `files` takes an array of `{ path, content }`. Every file joins one layered snapshot, so imports between the files resolve and nothing is written to disk. Errors gain a `file` field holding the exact `path` you passed.
+
+```bash
+quartz check-snippet '{"root":"test/fixtures","files":[
+  {"path":"src/a.ts","content":"import { b } from \"./b\"; export const a: string = b;"},
+  {"path":"src/b.ts","content":"export const b = 1;"}
+]}'
+```
+
+```json
+{"ok":true,"command":"check-snippet","backend":"tsrs","tsrs_version":"0.18.0-ts7.1.0-dev.20260929",
+ "data":{"valid":false,"errors":[{"message":"Type 'number' is not assignable to type 'string'.","line":1,"column":39,"severity":"error","file":"src/a.ts"}]}}
+```
 
 ### verify-contract evidence
 

@@ -21,7 +21,7 @@ Quartz keeps a TypeScript 7 compiler open on your project — tsrs, the Rust por
 | your agent wants to know | command | it gets back |
 |---|---|---|
 | what a type contains | `info`, `expand` | resolved members and signatures |
-| whether code compiles | `check-snippet` | compiler errors with line and column; nothing is written to disk |
+| whether code compiles | `check-snippet` | compiler errors with file, line, and column; nothing is written to disk |
 | whether a converter already exists | `transform-search` | matching functions, each checked by a test compile |
 | whether a planned conversion is safe | `verify-contract` | each check, passed or failed, and one overall answer |
 
