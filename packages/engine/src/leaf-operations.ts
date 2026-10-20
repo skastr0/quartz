@@ -138,23 +138,39 @@ const sourceFilesFor = (
     loadPackageSources(project, packageInfo, await packageSourceNames(project, packageInfo)),
   )
 
+/** Names of the package modules that are not external library files; no trees are fetched. */
+const moduleNamesAmong = async (project: Project, names: readonly string[]): Promise<string[]> => {
+  const external = await mapBounded(names, FAN_OUT, async (name) => (await project.program.getSourceFileMetadata(name))?.isFromExternalLibrary === true)
+  return names.filter((_, index) => !external[index])
+}
+
+const moduleNamesFor = (
+  context: AnalyzerContext,
+  project: Project,
+  packageInfo: PackageInfo,
+  revision: number,
+): Promise<readonly string[]> =>
+  context.cacheForRevision(`module-names:${packageInfo.tsconfigPath}`, revision, async () =>
+    moduleNamesAmong(project, await packageSourceNames(project, packageInfo)),
+  )
+
 /**
- * The package sources that can export `name`: files whose disk text provably matches the snapshot
+ * The package modules that can export `name`: files whose disk text provably matches the snapshot
  * are kept only if they spell the name or contain `export *`; every other file is kept. Same order
- * as sourceFilesFor, and every module that could contribute an export called `name`, or declared
+ * as moduleNamesFor, and every module that could contribute an export called `name`, or declared
  * with it, is in the list.
  */
-const sourceFilesMentioning = (
+const moduleNamesMentioning = (
   context: AnalyzerContext,
   project: Project,
   packageInfo: PackageInfo,
   revision: number,
   name: string,
-): Promise<readonly SourceFile[]> =>
-  context.cacheForRevision(`source-files-mentioning:${packageInfo.tsconfigPath}:${name}`, revision, async () => {
+): Promise<readonly string[]> =>
+  context.cacheForRevision(`module-names-mentioning:${packageInfo.tsconfigPath}:${name}`, revision, async () => {
     const names = await packageSourceNames(project, packageInfo)
     const index = await diskIndexFor(project, names)
-    return loadPackageSources(project, packageInfo, index === null ? names : index.candidates(name, names, { starExports: true }))
+    return moduleNamesAmong(project, index === null ? names : index.candidates(name, names, { starExports: true }))
   })
 
 /**
@@ -260,10 +276,8 @@ const exportMatchesFor = async (
   return matches
 }
 
-const exportedMatches = async (project: Project, sourceFiles: readonly SourceFile[]): Promise<readonly SymbolMatch[]> => {
-  const moduleSymbols = await project.checker.getSymbolOfSourceFile(
-    sourceFiles.map((sourceFile) => sourceFile.fileName),
-  )
+const exportedMatches = async (project: Project, moduleNames: readonly string[]): Promise<readonly SymbolMatch[]> => {
+  const moduleSymbols = await project.checker.getSymbolOfSourceFile(moduleNames)
   const all = await Promise.all(
     moduleSymbols.map((moduleSymbol) => exportMatchesFor(project, moduleSymbol)),
   )
@@ -283,10 +297,9 @@ const exportedMatchesFor = (
   project: Project,
   packageInfo: PackageInfo,
   revision: number,
-  sourceFiles: readonly SourceFile[],
 ): Promise<readonly SymbolMatch[]> =>
-  context.cacheForRevision(`exported-matches:${packageInfo.tsconfigPath}`, revision, () =>
-    exportedMatches(project, sourceFiles),
+  context.cacheForRevision(`exported-matches:${packageInfo.tsconfigPath}`, revision, async () =>
+    exportedMatches(project, await moduleNamesFor(context, project, packageInfo, revision)),
   )
 
 const parseFileReference = (value: string): { readonly file: string; readonly symbol: string } | null => {
@@ -558,27 +571,33 @@ const matchFor = async (
   revision: number,
   symbolName: string,
 ): Promise<SymbolMatch | null> => {
-  if (parseFileReference(symbolName) !== null) {
-    const sourceFiles = await sourceFilesFor(context, project, pkg, revision)
-    const matches = await exportedMatchesFor(context, project, pkg, revision, sourceFiles)
-    return findMatch(project, sourceFiles, context.root, symbolName, matches)
+  const reference = parseFileReference(symbolName)
+  if (reference !== null) {
+    // A file reference never reads the export index: it needs only the file it names.
+    const target = resolve(context.root, reference.file)
+    let sourceFiles: readonly SourceFile[] = []
+    for (const name of await packageSourceNames(project, pkg)) {
+      if (resolve(name) !== target && !name.endsWith(reference.file)) continue
+      sourceFiles = await loadPackageSources(project, pkg, [name])
+      if (sourceFiles.length > 0) break
+    }
+    return findMatch(project, sourceFiles, context.root, symbolName, [])
   }
   const rootName = symbolName.split(".")[0]!
-  const sourceFiles = await sourceFilesMentioning(context, project, pkg, revision, rootName)
+  const moduleNames = await moduleNamesMentioning(context, project, pkg, revision, rootName)
   const matches = await context.cacheForRevision(
     `exported-matches-mentioning:${pkg.tsconfigPath}:${rootName}`,
     revision,
-    () => exportedMatches(project, sourceFiles),
+    () => exportedMatches(project, moduleNames),
   )
-  return findMatch(project, sourceFiles, context.root, symbolName, matches)
+  return findMatch(project, [], context.root, symbolName, matches)
 }
 
 export const createLeafOperations = (context: AnalyzerContext): LeafOperations => {
   const virtualFiles = createVirtualFileRegistry(resolveVirtualFileDirectory(context.root), "__quartz_type_eval_")
   const getPackages = async (): Promise<readonly PackageInfo[]> => context.packages
   const listSymbols = (options: ListSymbolsOptions = {}): Promise<SymbolListResult> => context.withProject(async (project, pkg, revision) => {
-    const sourceFiles = await sourceFilesFor(context, project, pkg, revision)
-    const matches = await exportedMatchesFor(context, project, pkg, revision, sourceFiles)
+    const matches = await exportedMatchesFor(context, project, pkg, revision)
     const namePattern = options.pattern === undefined ? undefined : new RegExp(options.pattern, "i")
     const filePattern = options.file === undefined ? undefined : new RegExp(options.file, "i")
     const all: SymbolInfo[] = []
@@ -617,8 +636,7 @@ export const createLeafOperations = (context: AnalyzerContext): LeafOperations =
   }, packageName)
 
   const searchTypes = (options: SearchTypesOptions): Promise<readonly TypeInfo[]> => context.withProject(async (project, pkg, revision) => {
-    const sourceFiles = await sourceFilesFor(context, project, pkg, revision)
-    const matches = await exportedMatchesFor(context, project, pkg, revision, sourceFiles)
+    const matches = await exportedMatchesFor(context, project, pkg, revision)
     const pattern = options.pattern ?? options.query
     const regex = pattern === undefined ? undefined : new RegExp(pattern, "i")
     const results: TypeInfo[] = []
