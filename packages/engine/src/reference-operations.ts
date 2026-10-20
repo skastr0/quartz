@@ -2,7 +2,7 @@ import { relative, resolve } from "node:path"
 import type { Identifier, Node, SourceFile } from "tsrs/unstable/ast"
 import { SyntaxKind } from "tsrs/unstable/ast"
 import { isIdentifier, isTypeReferenceNode } from "tsrs/unstable/ast/is"
-import type { NodeHandle, Project, Symbol, Type } from "tsrs/unstable/async"
+import { SymbolFlags, type NodeHandle, type Project, type Symbol, type Type } from "tsrs/unstable/async"
 import type { AnalyzerContext } from "./context"
 import type {
   GraphEdge,
@@ -547,10 +547,13 @@ const findContainingSymbol = async (project: Project, start: Node, target: Symbo
 
 const resolveSymbol = async (project: Project, symbol: Symbol): Promise<Symbol> => {
   let resolved = symbol
-  try {
-    resolved = await project.checker.getAliasedSymbol(resolved)
-  } catch {
-    // Non-alias symbols are already resolved.
+  // tsrs panics when getAliasedSymbol receives a non-alias symbol.
+  if ((symbol.flags & SymbolFlags.Alias) !== SymbolFlags.None) {
+    try {
+      resolved = await project.checker.getAliasedSymbol(symbol)
+    } catch {
+      // An unresolvable alias stays as written.
+    }
   }
   return project.checker.getTargetSymbol(resolved)
 }
