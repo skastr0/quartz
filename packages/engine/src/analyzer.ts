@@ -1,5 +1,6 @@
 import type {
   DiagnosticOptions,
+  SnippetFilesCheckOptions as CheckSnippetFilesOptions,
   DiagnosticInfo,
   ErrorExplanationOptions,
   ExplainedDiagnosticInfo,
@@ -15,6 +16,7 @@ import { AnalyzerContext } from "./context"
 import { QuartzEngineError } from "./errors"
 import { createLeafOperations } from "./leaf-operations"
 import { createReferenceOperations } from "./reference-operations"
+import { createSnippetFilesOperation } from "./snippet-files"
 import { createTransformSearchOperation } from "./transform-search"
 import type { WorkspaceMetadata, WorkspaceOptions } from "./types"
 import { createVerificationOperations } from "./verification-operations"
@@ -25,6 +27,7 @@ export class QuartzAnalyzer implements TypeAnalyzer {
   readonly #references: ReturnType<typeof createReferenceOperations>
   readonly #transformSearchOperation: ReturnType<typeof createTransformSearchOperation>
   readonly #verification: ReturnType<typeof createVerificationOperations>
+  readonly #snippetFiles: ReturnType<typeof createSnippetFilesOperation>
   #disposePromise: Promise<void> | null = null
 
   private constructor(context: AnalyzerContext) {
@@ -37,6 +40,7 @@ export class QuartzAnalyzer implements TypeAnalyzer {
       diagnostics: this.#leaf.getDiagnostics,
       transformSearch: this.#transformSearchOperation,
     })
+    this.#snippetFiles = createSnippetFilesOperation(context)
   }
 
   static async open(root: string, options?: WorkspaceOptions): Promise<QuartzAnalyzer> {
@@ -61,6 +65,7 @@ export class QuartzAnalyzer implements TypeAnalyzer {
   searchTypes = (options: SearchTypesOptions) => this.#leaf.searchTypes(options)
   evalType = (expression: string, packageName?: string) => this.#leaf.evalType(expression, packageName)
   checkSnippet = (code: string, packageName?: string) => this.#verification.checkSnippet(code, packageName)
+  checkSnippetFiles = (options: CheckSnippetFilesOptions) => this.#snippetFiles(options)
   getFileDeclarations = (
     file: string,
     options?: { readonly symbol?: string; readonly includePrivate?: boolean; readonly packageName?: string },

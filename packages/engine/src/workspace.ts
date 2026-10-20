@@ -7,7 +7,7 @@ import { typescriptVersion } from "tsrs"
 import { API, type Project, type Snapshot } from "tsrs/unstable/async"
 import { QuartzEngineError } from "./errors"
 import { collectDiagnostics } from "./diagnostics"
-import type { EngineDiagnostic, WorkspaceFileChanges, WorkspaceMetadata, WorkspaceOptions } from "./types"
+import type { EngineDiagnostic, WorkspaceFileChanges, WorkspaceMetadata, WorkspaceOptions, WorkspaceVirtualFile } from "./types"
 
 // tsrs ships its native binary in a per-platform package, GNU-suffixed on Linux.
 const tsrsPlatformPackage = (): string =>
@@ -231,6 +231,81 @@ export class QuartzWorkspace {
       throw new QuartzEngineError(
         "WORKSPACE_REFRESH_FAILED",
         `Temporary file analysis failed for ${resolvedFile}`,
+        cause,
+      )
+    } finally {
+      lease.active = false
+      this.#releaseState(base)
+      this.#endOperation()
+    }
+  }
+
+  /**
+   * Run analysis against several temporary file updates in one snapshot without
+   * mutating the base snapshot or revision. Every file lands in the same layered
+   * filesystem, so imports between them resolve; files outside the tsconfig
+   * include join one synthetic program built from the package's options.
+   */
+  async withVirtualFiles<T>(
+    tsconfigPath: string,
+    files: readonly WorkspaceVirtualFile[],
+    operation: (project: Project, paths: readonly string[]) => Promise<T>,
+  ): Promise<T> {
+    if (files.length === 0) {
+      throw new QuartzEngineError("WORKSPACE_REFRESH_FAILED", "withVirtualFiles requires at least one file")
+    }
+    this.#assertAcceptingWork()
+    this.#beginOperation()
+    const resolvedConfig = resolve(tsconfigPath)
+    const resolvedFiles = files.map((file) => resolve(file.path))
+    if (new Set(resolvedFiles).size !== resolvedFiles.length) {
+      throw new QuartzEngineError("WORKSPACE_REFRESH_FAILED", "withVirtualFiles received the same path more than once")
+    }
+    // Prefer the caller's request-local lease so this work cannot drift onto a
+    // newer #current advanced by a concurrent refresh.
+    const inheritedLease = this.#revisionLease.getStore()
+    const base = inheritedLease?.active === true ? inheritedLease.state : this.#requireCurrent()
+    const lease: RevisionLease = { state: base, active: true }
+    base.readers += 1
+    try {
+      return await this.#revisionLease.run(lease, async () => {
+        const baseProject = base.snapshot.getConfiguredProject(resolvedConfig)
+        if (baseProject === undefined) {
+          throw new QuartzEngineError("WORKSPACE_OPEN_FAILED", `Project is not open at ${resolvedConfig}`)
+        }
+        const { fileNames, options } = baseProject.parsedCommandLine
+        const included = resolvedFiles.every((file) => fileNames.some((fileName) => resolve(fileName) === file))
+        const layered: Record<string, string> = {}
+        for (let index = 0; index < resolvedFiles.length; index += 1) {
+          layered[resolvedFiles[index]!] = files[index]!.content
+        }
+        const temporarySnapshot = await base.snapshot.update({
+          fileSystem: { kind: "layer", files: layered },
+          ensurePrograms: true,
+          ...(included ? {} : { createPrograms: [{ rootFiles: [...fileNames, ...resolvedFiles], compilerOptions: options }] }),
+        })
+        try {
+          this.#assertAcceptingWork()
+          const syntheticProgram = temporarySnapshot.operation.createdPrograms?.[0]
+          const project = included || syntheticProgram === undefined
+            ? temporarySnapshot.getConfiguredProject(resolvedConfig)
+            : temporarySnapshot.getProject(syntheticProgram.id)
+          if (project === undefined) {
+            throw new QuartzEngineError(
+              "WORKSPACE_REFRESH_FAILED",
+              `TypeScript did not load a project for temporary files under ${resolvedConfig}`,
+            )
+          }
+          return await operation(project, resolvedFiles)
+        } finally {
+          await temporarySnapshot.dispose()
+        }
+      })
+    } catch (cause) {
+      if (cause instanceof QuartzEngineError) throw cause
+      throw new QuartzEngineError(
+        "WORKSPACE_REFRESH_FAILED",
+        `Temporary file analysis failed for ${resolvedFiles.length} files under ${resolvedConfig}`,
         cause,
       )
     } finally {

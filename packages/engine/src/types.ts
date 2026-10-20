@@ -17,6 +17,12 @@ export interface WorkspaceFileChanges {
   readonly deleted?: readonly string[]
 }
 
+/** One ephemeral source file for {@link QuartzWorkspace.withVirtualFiles}. */
+export interface WorkspaceVirtualFile {
+  readonly path: string
+  readonly content: string
+}
+
 export interface WorkspaceMetadata {
   readonly root: string
   readonly configFile: string
