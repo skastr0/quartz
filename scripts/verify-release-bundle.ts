@@ -100,6 +100,37 @@ const verifyArchiveShape = async (
   }
 }
 
+const cString = (bytes: Uint8Array, start: number, length: number): string => {
+  const field = Buffer.from(bytes.subarray(start, start + length))
+  const end = field.indexOf(0)
+  return field.subarray(0, end === -1 ? field.length : end).toString("latin1")
+}
+
+// Extended attributes live in pax ("x") headers, not in file payloads. The compiled CLI
+// embeds libarchive, whose strings include the same markers, so only header records count.
+const verifyArchiveMetadata = async (archive: string): Promise<void> => {
+  const tar = Bun.gunzipSync(await readFile(archive))
+  let offset = 0
+  while (offset + 512 <= tar.length) {
+    const header = tar.subarray(offset, offset + 512)
+    if (header.every((byte) => byte === 0)) return
+    const sizeField = cString(header, 124, 12).trim()
+    const size = sizeField === "" ? 0 : Number.parseInt(sizeField, 8)
+    if (!Number.isFinite(size) || size < 0) throw new Error(`Release archive has an unreadable header at byte ${offset}`)
+    const typeflag = String.fromCharCode(header[156] ?? 0)
+    const dataStart = offset + 512
+    if (typeflag === "x" || typeflag === "g") {
+      const payload = Buffer.from(tar.subarray(dataStart, dataStart + size)).toString("latin1")
+      for (const marker of ["LIBARCHIVE.xattr.", "SCHILY.xattr."]) {
+        if (payload.includes(marker)) {
+          throw new Error(`Release archive carries extended attribute headers (${marker}); rebuild with --no-xattrs`)
+        }
+      }
+    }
+    offset = dataStart + Math.ceil(size / 512) * 512
+  }
+}
+
 const verifyNativePackage = async (
   nativePackageRoot: string,
   nativePackageName: string,
@@ -189,6 +220,7 @@ const main = async (): Promise<void> => {
 
   try {
     await verifyArchiveShape(archive, bundleName, nativePackageRelative, work)
+    await verifyArchiveMetadata(archive)
     const extraction = await runCapture(["tar", "-xzf", archive, "-C", work], work)
     if (extraction.status !== 0) throw new Error(`Could not extract ${archive}: ${extraction.stderr}`)
 

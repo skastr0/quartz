@@ -54,6 +54,7 @@ Agents should discover the contract instead of scraping help text:
 
 ```bash
 quartz capabilities
+quartz --version
 quartz schema list
 quartz schema show graph
 quartz examples list
@@ -61,7 +62,7 @@ quartz examples show info
 quartz doctor '{"root":"test/fixtures"}'
 ```
 
-`capabilities` reports the compiler backend (`backend`, `tsrs_version`, `analysis_typescript_version`), supported input modes, execution flags, envelope shape, batch behavior, and command inventory. `doctor` reports the same backend versions alongside project discovery and the fitness checks. `schema show <command>` returns the JSON schema and example for one command. `examples show <command>` returns a payload plus inline, file, and stdin invocation forms.
+`capabilities` reports the compiler backend (`backend`, `tsrs_version`, `analysis_typescript_version`), supported input modes, execution flags, envelope shape, batch behavior, and command inventory. `quartz --version` (or `-v`) returns a `version` envelope with the CLI version and the same backend fields. `doctor` reports the same backend versions alongside project discovery and the fitness checks. `schema show <command>` returns the JSON schema and example for one command. `examples show <command>` returns a payload plus inline, file, and stdin invocation forms.
 
 Architecture fitness checks are documented in [architecture-fitness.md](architecture-fitness.md), and `doctor` reports the same check inventory for agents that need executable obligations.
 

@@ -988,6 +988,10 @@ const resolveCommandTokens = (argv: readonly string[]): ResolvedCommandTokens =>
     return { command: "capabilities", rest: [] }
   }
 
+  if (first === "--version" || first === "-v") {
+    return { command: "version", rest: [] }
+  }
+
   if (first !== "schema" && first !== "examples") {
     return { command: first, rest: argv.slice(1) }
   }
@@ -1013,7 +1017,7 @@ const assertKnownCommand = (command: string): void => {
   throw new CommandInputError({
     message: `Unknown command: ${command}`,
     details: {
-      expected: [...commandNames, "capabilities", "schema list", "schema show", "examples list", "examples show"],
+      expected: [...commandNames, "capabilities", "version", "schema list", "schema show", "examples list", "examples show"],
       received: command,
       retryable: false,
     },
@@ -1137,8 +1141,9 @@ const defaultExecutionOptions = (): ExecutionOptions => ({
   concurrency: DEFAULT_CONCURRENCY,
 })
 
-const isKnownCommand = (command: string): command is CommandName | "capabilities" | "schema list" | "schema show" | "examples list" | "examples show" =>
+const isKnownCommand = (command: string): command is CommandName | "capabilities" | "version" | "schema list" | "schema show" | "examples list" | "examples show" =>
   command === "capabilities"
+  || command === "version"
   || command === "schema list"
   || command === "schema show"
   || command === "examples list"
@@ -1225,6 +1230,8 @@ const executeParsed = (parsed: ParsedCommand): Effect.Effect<CommandResult, CliE
   switch (parsed.command) {
     case "capabilities":
       return Effect.succeed({ data: capabilities(), exitCode: 0 })
+    case "version":
+      return Effect.succeed({ data: versionInfo(), exitCode: 0 })
     case "schema list":
       return Effect.succeed({ data: schemaList(), exitCode: 0 })
     case "schema show":
@@ -1400,13 +1407,17 @@ const writeArtifact = (
       }),
   })
 
-const capabilities = () => ({
+const versionInfo = () => ({
   name: "quartz",
   version: VERSION,
   engine: "native",
   backend: ENGINE_BACKEND,
   tsrs_version: analysisTsrsVersion,
   analysis_typescript_version: analysisTypeScriptVersion,
+})
+
+const capabilities = () => ({
+  ...versionInfo(),
   protocol: "agentic-cli/v1",
   input_modes: ["inline JSON", "@file", "stdin (-)"],
   execution_flags: {
@@ -1447,6 +1458,7 @@ const capabilities = () => ({
       }
     }),
     { name: "capabilities", description: "Describe CLI protocol support.", schema: null, batch: false, artifact_output: false },
+    { name: "version", description: "Print the CLI and compiler versions.", schema: null, batch: false, artifact_output: false },
     { name: "schema list", description: "List available payload schemas.", schema: null, batch: false, artifact_output: false },
     { name: "schema show", description: "Show one payload schema contract.", schema: null, batch: false, artifact_output: false },
     { name: "examples list", description: "List example payloads.", schema: null, batch: false, artifact_output: false },
