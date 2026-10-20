@@ -56,14 +56,33 @@ interface RevisionState {
   disposePromise: Promise<void> | null
   /** Directories whose virtual files the configured program did not pick up (outside include). */
   readonly outsideInclude: Set<string>
+  readonly disk: DiskView
 }
+
+/**
+ * What the base snapshot is known to share with the disk. A file whose mtime is at or before
+ * `trustedAt` and that is not in `volatile` has the same text on disk as in the snapshot, so a
+ * scan may read the disk instead of fetching its tree.
+ */
+export interface DiskView {
+  readonly trustedAt: number
+  readonly volatile: ReadonlySet<string>
+}
+
+/** File times can be coarse, and a write may land just after the snapshot read the file. */
+const DISK_TRUST_MARGIN_MS = 2000
+
+const diskViewByProject = new WeakMap<object, DiskView>()
+
+/** The disk view of the snapshot a project belongs to; undefined for temporary snapshots. */
+export const projectDiskView = (project: object): DiskView | undefined => diskViewByProject.get(project)
 
 interface RevisionLease {
   readonly state: RevisionState
   active: boolean
 }
 
-const createRevisionState = (snapshot: Snapshot, revision: number): RevisionState => ({
+const createRevisionState = (snapshot: Snapshot, revision: number, disk: DiskView): RevisionState => ({
   snapshot,
   revision,
   drained: Promise.withResolvers<void>(),
@@ -71,6 +90,7 @@ const createRevisionState = (snapshot: Snapshot, revision: number): RevisionStat
   retired: false,
   disposePromise: null,
   outsideInclude: new Set(),
+  disk,
 })
 
 export class QuartzWorkspace {
@@ -118,6 +138,7 @@ export class QuartzWorkspace {
       ...(options.collectTiming === undefined ? {} : { collectTiming: options.collectTiming }),
     })
 
+    const startedAt = Date.now()
     try {
       const snapshot = await api.createSnapshot({ openProjects: configFiles })
       const missingConfig = configFiles.find((configFile) => snapshot.getConfiguredProject(configFile) === undefined)
@@ -128,7 +149,7 @@ export class QuartzWorkspace {
           `TypeScript did not load the configured project at ${missingConfig}`,
         )
       }
-      return new QuartzWorkspace(resolvedRoot, configFiles, api, createRevisionState(snapshot, 1))
+      return new QuartzWorkspace(resolvedRoot, configFiles, api, createRevisionState(snapshot, 1, { trustedAt: startedAt - DISK_TRUST_MARGIN_MS, volatile: new Set() }))
     } catch (cause) {
       await api.close().catch(() => undefined)
       if (cause instanceof QuartzEngineError) throw cause
@@ -172,6 +193,7 @@ export class QuartzWorkspace {
       if (project === undefined) {
         throw new QuartzEngineError("WORKSPACE_OPEN_FAILED", `Project is not open at ${resolvedConfig}`)
       }
+      diskViewByProject.set(project, state.disk)
       return operation(project, state.revision)
     })
   }
@@ -344,6 +366,7 @@ export class QuartzWorkspace {
     return this.#enqueueMutation(async () => {
       try {
         const previous = this.#requireCurrent()
+        const startedAt = Date.now()
         // Without ensurePrograms the new snapshot keeps the stale programs.
         const snapshot = await previous.snapshot.update({
           ensurePrograms: true,
@@ -365,7 +388,19 @@ export class QuartzWorkspace {
           )
         }
 
-        this.#current = createRevisionState(snapshot, previous.revision + 1)
+        // A full invalidation re-reads everything; a partial one leaves unlisted files as the old
+        // snapshot saw them, so the old trust time stays and the listed files are never trusted.
+        const disk: DiskView =
+          changes === undefined
+            ? { trustedAt: startedAt - DISK_TRUST_MARGIN_MS, volatile: new Set() }
+            : {
+                trustedAt: previous.disk.trustedAt,
+                volatile: new Set([
+                  ...previous.disk.volatile,
+                  ...[...(changes.changed ?? []), ...(changes.created ?? []), ...(changes.deleted ?? [])].map((path) => resolve(path)),
+                ]),
+              }
+        this.#current = createRevisionState(snapshot, previous.revision + 1, disk)
         this.#retire(previous)
         return this.metadata
       } catch (cause) {
