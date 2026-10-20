@@ -226,6 +226,27 @@ export interface SnippetCheckResult {
   readonly errors?: readonly SnippetDiagnostic[]
 }
 
+/** One ephemeral source file in a multi-file snippet check. */
+export interface SnippetFile {
+  readonly path: string
+  readonly content: string
+}
+
+export interface SnippetFilesCheckOptions {
+  readonly files: readonly SnippetFile[]
+  readonly packageName?: string
+}
+
+export interface SnippetFileDiagnostic extends SnippetDiagnostic {
+  /** The `path` the caller supplied for the file that produced this diagnostic. */
+  readonly file: string
+}
+
+export interface SnippetFilesCheckResult {
+  readonly valid: boolean
+  readonly errors?: readonly SnippetFileDiagnostic[]
+}
+
 export interface ErrorExplanationResult {
   readonly error: {
     readonly code: number
@@ -469,6 +490,11 @@ export interface TypeAnalyzer {
   readonly searchTypes: (options: SearchTypesOptions) => Promise<readonly TypeInfo[]>
   readonly evalType: (expression: string, packageName?: string) => Promise<TypeEvaluationResult>
   readonly checkSnippet: (code: string, packageName?: string) => Promise<SnippetCheckResult>
+  /**
+   * Compile several ephemeral files as one program. Files land in one layered
+   * snapshot, so imports between them resolve without touching disk.
+   */
+  readonly checkSnippetFiles: (options: SnippetFilesCheckOptions) => Promise<SnippetFilesCheckResult>
   readonly getFileDeclarations: (
     file: string,
     options?: { readonly symbol?: string; readonly includePrivate?: boolean; readonly packageName?: string },

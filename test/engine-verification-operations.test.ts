@@ -1,6 +1,11 @@
-import { afterEach, describe, expect, it } from "vitest"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { dirname, join } from "node:path"
+import { fileURLToPath } from "node:url"
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest"
 import type { Project } from "tsrs/unstable/async"
-import type { AnalyzerContext } from "../packages/engine/src/context"
+import { AnalyzerContext } from "../packages/engine/src/context"
+import { createSnippetFilesOperation, type SnippetFilesOperation } from "../packages/engine/src/snippet-files"
 import type { DiagnosticInfo, TransformSearchResponse } from "../packages/engine/src/contracts"
 import { createVerificationOperations } from "../packages/engine/src/verification-operations"
 import { createVirtualFileRegistry } from "../packages/engine/src/virtual-files"
@@ -183,5 +188,99 @@ describe("verification operations", () => {
 
     await expect(operations.checkSnippet("const value = 1;")).rejects.toThrow("snapshot failed")
     expect(registry.size).toBe(0)
+  })
+})
+
+const fixturesPath = join(dirname(fileURLToPath(import.meta.url)), "fixtures")
+
+describe("multi-file snippet check", () => {
+  let context: AnalyzerContext
+  let check: SnippetFilesOperation
+
+  beforeAll(async () => {
+    context = await AnalyzerContext.open(fixturesPath)
+    check = createSnippetFilesOperation(context)
+  })
+
+  afterAll(async () => {
+    await context.close()
+  })
+
+  it("resolves imports between the supplied files", async () => {
+    const result = await check({
+      files: [
+        { path: "types/__pair_a.ts", content: "export interface Draft { id: string; name: string }\n" },
+        {
+          path: "types/__pair_b.ts",
+          content: "import type { Draft } from \"./__pair_a.ts\";\nexport const draft: Draft = { id: \"1\", name: \"Ada\" };\n",
+        },
+      ],
+    })
+
+    expect(result).toEqual({ valid: true })
+  })
+
+  it("attributes each error to the path the caller supplied", async () => {
+    const result = await check({
+      files: [
+        { path: "types/__pair_c.ts", content: "export interface Draft { id: string; name: string }\n" },
+        {
+          path: "types/__pair_d.ts",
+          content: "import type { Draft } from \"./__pair_c.ts\";\nexport const draft: Draft = { id: 1, name: \"Ada\" };\n",
+        },
+      ],
+    })
+
+    expect(result.valid).toBe(false)
+    expect(result.errors).toEqual([
+      { file: "types/__pair_d.ts", line: 2, column: 31, severity: "error", message: "Type 'number' is not assignable to type 'string'." },
+    ])
+  })
+
+  it("layers over a file that already exists in the project", async () => {
+    const result = await check({
+      files: [{
+        path: "types/basic.ts",
+        content: "export interface User { id: string; name: string; email: string }\nexport const broken: string = 1\n",
+      }],
+    })
+
+    expect(result.valid).toBe(false)
+    expect(result.errors?.map((error) => [error.file, error.line])).toEqual([["types/basic.ts", 2]])
+  })
+
+  it("keeps tsconfig path aliases working inside the layered project", async () => {
+    const root = await mkdtemp(join(tmpdir(), "quartz-snippet-paths-"))
+    try {
+      await mkdir(join(root, "src"), { recursive: true })
+      await writeFile(join(root, "tsconfig.json"), JSON.stringify({
+        compilerOptions: {
+          target: "ESNext",
+          module: "ESNext",
+          moduleResolution: "bundler",
+          strict: true,
+          noEmit: true,
+          paths: { "@lib/*": ["./src/*"] },
+        },
+        include: ["src/**/*.ts"],
+      }))
+      await writeFile(join(root, "src/lib.ts"), "export interface Box { value: string }\n")
+      const temporary = await AnalyzerContext.open(root)
+      try {
+        const result = await createSnippetFilesOperation(temporary)({
+          files: [{
+            path: "src/check.ts",
+            content: "import type { Box } from \"@lib/lib\";\nexport const box: Box = { value: 42 };\n",
+          }],
+        })
+
+        expect(result.valid).toBe(false)
+        expect(result.errors?.[0]?.message).toBe("Type 'number' is not assignable to type 'string'.")
+      } finally {
+        await temporary.close()
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 })
