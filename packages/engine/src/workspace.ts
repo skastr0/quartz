@@ -225,40 +225,12 @@ export class QuartzWorkspace {
         if (baseProject === undefined) {
           throw new QuartzEngineError("WORKSPACE_OPEN_FAILED", `Project is not open at ${resolvedConfig}`)
         }
-        const { fileNames, options } = baseProject.parsedCommandLine
-        const fileSystem = { kind: "layer" as const, files: { [resolvedFile]: content } }
-        const directory = dirname(resolvedFile)
-        const included = fileNames.some((fileName) => resolve(fileName) === resolvedFile)
-        // A layered file inside the tsconfig's include globs joins the configured
-        // program through an incremental update, about half the cost of a fresh
-        // synthetic program (junto, 2.7k files: 250ms vs 520ms median).
-        let temporarySnapshot: Snapshot | undefined
-        let project: Project | undefined
-        if (!included && !base.outsideInclude.has(directory)) {
-          const attempt = await base.snapshot.update({ fileSystem, ensurePrograms: true })
-          const candidate = attempt.getConfiguredProject(resolvedConfig)
-          if (candidate !== undefined && (await candidate.program.getSourceFile(resolvedFile)) !== undefined) {
-            temporarySnapshot = attempt
-            project = candidate
-          } else {
-            await attempt.dispose()
-            base.outsideInclude.add(directory)
-          }
-        }
-        // Outside the include globs the file joins no configured program, so check it
-        // in a synthetic program with the package's options.
-        if (temporarySnapshot === undefined) {
-          const synthetic = !included
-          temporarySnapshot = await base.snapshot.update({
-            fileSystem,
-            ensurePrograms: true,
-            ...(synthetic ? { createPrograms: [{ rootFiles: [...fileNames, resolvedFile], compilerOptions: options }] } : {}),
-          })
-          const syntheticProgram = temporarySnapshot.operation.createdPrograms?.[0]
-          project = !synthetic || syntheticProgram === undefined
-            ? temporarySnapshot.getConfiguredProject(resolvedConfig)
-            : temporarySnapshot.getProject(syntheticProgram.id)
-        }
+        const { snapshot: temporarySnapshot, project } = await this.#openTemporary(
+          base,
+          baseProject,
+          resolvedConfig,
+          { [resolvedFile]: content },
+        )
         try {
           this.#assertAcceptingWork()
           if (project === undefined) {
@@ -319,23 +291,13 @@ export class QuartzWorkspace {
         if (baseProject === undefined) {
           throw new QuartzEngineError("WORKSPACE_OPEN_FAILED", `Project is not open at ${resolvedConfig}`)
         }
-        const { fileNames, options } = baseProject.parsedCommandLine
-        const included = resolvedFiles.every((file) => fileNames.some((fileName) => resolve(fileName) === file))
         const layered: Record<string, string> = {}
         for (let index = 0; index < resolvedFiles.length; index += 1) {
           layered[resolvedFiles[index]!] = files[index]!.content
         }
-        const temporarySnapshot = await base.snapshot.update({
-          fileSystem: { kind: "layer", files: layered },
-          ensurePrograms: true,
-          ...(included ? {} : { createPrograms: [{ rootFiles: [...fileNames, ...resolvedFiles], compilerOptions: options }] }),
-        })
+        const { snapshot: temporarySnapshot, project } = await this.#openTemporary(base, baseProject, resolvedConfig, layered)
         try {
           this.#assertAcceptingWork()
-          const syntheticProgram = temporarySnapshot.operation.createdPrograms?.[0]
-          const project = included || syntheticProgram === undefined
-            ? temporarySnapshot.getConfiguredProject(resolvedConfig)
-            : temporarySnapshot.getProject(syntheticProgram.id)
           if (project === undefined) {
             throw new QuartzEngineError(
               "WORKSPACE_REFRESH_FAILED",
@@ -359,6 +321,55 @@ export class QuartzWorkspace {
       this.#releaseState(base)
       this.#endOperation()
     }
+  }
+
+  /**
+   * Open a temporary snapshot with `layered` files on top of the base. Files inside the tsconfig's
+   * include globs join the configured program through an incremental update, about half the cost of
+   * a fresh synthetic program (junto, 2.7k files: 250ms vs 520ms median for one file). When any file
+   * falls outside the globs, every file is checked in one synthetic program with the package's
+   * options; directories that missed the globs are remembered per revision.
+   */
+  async #openTemporary(
+    base: RevisionState,
+    baseProject: Project,
+    resolvedConfig: string,
+    layered: Record<string, string>,
+  ): Promise<{ readonly snapshot: Snapshot; readonly project: Project | undefined }> {
+    const { fileNames, options } = baseProject.parsedCommandLine
+    const paths = Object.keys(layered)
+    const fileSystem = { kind: "layer" as const, files: layered }
+    const known = new Set(fileNames.map((fileName) => resolve(fileName)))
+    const included = paths.every((path) => known.has(path))
+    if (!included && !paths.some((path) => base.outsideInclude.has(dirname(path)))) {
+      const attempt = await base.snapshot.update({ fileSystem, ensurePrograms: true })
+      const candidate = attempt.getConfiguredProject(resolvedConfig)
+      let present: boolean[] = []
+      try {
+        present = candidate === undefined
+          ? []
+          : await Promise.all(paths.map(async (path) => (await candidate.program.getSourceFile(path)) !== undefined))
+      } catch (cause) {
+        await attempt.dispose()
+        throw cause
+      }
+      if (candidate !== undefined && present.every(Boolean)) return { snapshot: attempt, project: candidate }
+      await attempt.dispose()
+      paths.forEach((path, index) => {
+        if (present[index] !== true) base.outsideInclude.add(dirname(path))
+      })
+    }
+    const synthetic = !included
+    const snapshot = await base.snapshot.update({
+      fileSystem,
+      ensurePrograms: true,
+      ...(synthetic ? { createPrograms: [{ rootFiles: [...fileNames, ...paths], compilerOptions: options }] } : {}),
+    })
+    const syntheticProgram = snapshot.operation.createdPrograms?.[0]
+    const project = !synthetic || syntheticProgram === undefined
+      ? snapshot.getConfiguredProject(resolvedConfig)
+      : snapshot.getProject(syntheticProgram.id)
+    return { snapshot, project }
   }
 
   refresh(changes?: WorkspaceFileChanges): Promise<WorkspaceMetadata> {
