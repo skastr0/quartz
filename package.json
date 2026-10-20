@@ -33,7 +33,7 @@
     "bench": "bun scripts/bench.ts",
     "bench:pr": "bun scripts/bench.ts --profile pr --out .quartz/bench/pr-latest.json",
     "bench:release": "bun scripts/bench.ts --profile release --out .quartz/bench/release-latest.json",
-    "canary:typescript": "bun scripts/nightly-canary.ts",
+    "canary:tsrs": "bun scripts/nightly-canary.ts",
     "bench:record": "bun scripts/record-bench-history.ts --from .quartz/bench/pr-latest.json",
     "pack:dry-run": "bun run build && bun run build:npm-cli && npm pack --dry-run \"./packages/engine\" && npm pack --dry-run \"./apps/opencode-plugin\" && npm pack --dry-run \"./packages/npm/quartz-darwin-arm64\" && npm pack --dry-run \"./packages/npm/quartz-linux-arm64\" && npm pack --dry-run \"./packages/npm/quartz-linux-x64\" && npm pack --dry-run \"./packages/npm/quartz\"",
     "smoke:npm-cli": "bun run build:npm-cli && node packages/npm/quartz/bin/quartz.js capabilities",
