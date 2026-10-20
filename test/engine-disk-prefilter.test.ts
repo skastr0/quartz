@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, realpathSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
@@ -106,7 +106,7 @@ describe("engine disk prefilter", () => {
 
       await context.refresh({ changed: [model] })
       const partial = await viewOf()
-      expect(partial?.volatile.has(model)).toBe(true)
+      expect(partial?.volatile.has(realpathSync(model))).toBe(true)
       expect(partial?.trustedAt).toBe(opened?.trustedAt)
 
       await context.refresh()

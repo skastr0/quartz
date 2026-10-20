@@ -1,7 +1,7 @@
-import { existsSync } from "node:fs"
+import { existsSync, realpathSync } from "node:fs"
 import { AsyncLocalStorage } from "node:async_hooks"
 import { createRequire } from "node:module"
-import { dirname, join, resolve } from "node:path"
+import { basename, dirname, join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import { typescriptVersion } from "tsrs"
 import { API, type Project, type Snapshot } from "tsrs/unstable/async"
@@ -71,6 +71,34 @@ export interface DiskView {
 
 /** File times can be coarse, and a write may land just after the snapshot read the file. */
 const DISK_TRUST_MARGIN_MS = 2000
+
+/**
+ * The real path of `path`. A path that no longer exists, such as a deleted file, keeps its
+ * basename under the real path of its parent.
+ */
+const realPath = (path: string): string => {
+  const resolved = resolve(path)
+  try {
+    return realpathSync(resolved)
+  } catch {
+    try {
+      return join(realpathSync(dirname(resolved)), basename(resolved))
+    } catch {
+      return resolved
+    }
+  }
+}
+
+/**
+ * A path as tsrs names it: files under the workspace root use the root as it was opened (tsrs
+ * ignores a notification whose spelling differs, e.g. /var against /private/var on macOS); other
+ * files use their real path.
+ */
+const notificationPath = (root: string, path: string): string => {
+  const real = realPath(path)
+  const realRoot = realPath(root)
+  return real === realRoot ? root : real.startsWith(`${realRoot}/`) ? join(root, real.slice(realRoot.length + 1)) : real
+}
 
 const diskViewByProject = new WeakMap<object, DiskView>()
 
@@ -385,9 +413,9 @@ export class QuartzWorkspace {
             changes === undefined
               ? { invalidateAll: true }
               : {
-                  ...(changes.changed === undefined ? {} : { changed: changes.changed.map((path) => resolve(path)) }),
-                  ...(changes.created === undefined ? {} : { created: changes.created.map((path) => resolve(path)) }),
-                  ...(changes.deleted === undefined ? {} : { deleted: changes.deleted.map((path) => resolve(path)) }),
+                  ...(changes.changed === undefined ? {} : { changed: changes.changed.map((path) => notificationPath(this.root, path)) }),
+                  ...(changes.created === undefined ? {} : { created: changes.created.map((path) => notificationPath(this.root, path)) }),
+                  ...(changes.deleted === undefined ? {} : { deleted: changes.deleted.map((path) => notificationPath(this.root, path)) }),
                 },
         })
         const missingConfig = this.configFiles.find((configFile) => snapshot.getConfiguredProject(configFile) === undefined)
@@ -408,7 +436,7 @@ export class QuartzWorkspace {
                 trustedAt: previous.disk.trustedAt,
                 volatile: new Set([
                   ...previous.disk.volatile,
-                  ...[...(changes.changed ?? []), ...(changes.created ?? []), ...(changes.deleted ?? [])].map((path) => resolve(path)),
+                  ...[...(changes.changed ?? []), ...(changes.created ?? []), ...(changes.deleted ?? [])].map((path) => notificationPath(this.root, path)),
                 ]),
               }
         this.#current = createRevisionState(snapshot, previous.revision + 1, disk)
