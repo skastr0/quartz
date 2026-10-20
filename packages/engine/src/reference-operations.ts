@@ -388,32 +388,48 @@ const findDeclarationForSymbol = async (sourceFile: SourceFile, project: Project
 }
 
 
+type IncomingReference = {
+  readonly sourceFile: SourceFile
+  readonly start: number
+  readonly containing: string
+  readonly context: string
+  readonly line: number
+}
+
 const findIncomingReferences = async (project: Project, target: Target): Promise<RelatedInfo["referencedBy"]> => {
   const results: Array<RelatedInfo["referencedBy"][number]> = []
   const seen = new Set<string>()
   const perFileCounts = new Map<string, number>()
-  const add = async (node: Node, symbol: Symbol = target.symbol): Promise<void> => {
-    if (node.kind !== SyntaxKind.Identifier || isImportReference(node)) return
+  // Per node, independent of the others: safe to run concurrently so the checker queries batch.
+  const describe = async (node: Node, symbol: Symbol = target.symbol): Promise<IncomingReference | null> => {
+    if (node.kind !== SyntaxKind.Identifier || isImportReference(node)) return null
     const sourceFile = node.getSourceFile()
-    if (!isProjectSourceFile(sourceFile.fileName, target.packagePath)) return
-    const fileCount = perFileCounts.get(sourceFile.fileName) ?? 0
-    if (fileCount >= MAX_REFERENCE_RESULTS_PER_FILE) return
-    if (!(await matchesCanonicalSymbol(project, symbol, target.symbol))) return
-    if (isTargetDeclarationName(node, target)) return
+    if (!isProjectSourceFile(sourceFile.fileName, target.packagePath)) return null
+    if (!(await matchesCanonicalSymbol(project, symbol, target.symbol))) return null
+    if (isTargetDeclarationName(node, target)) return null
     const containing = await findContainingSymbol(project, node.parent, target.symbol)
-    const position = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile))
-    const context = classifyReferenceContext(node.parent)
-    const key = `${sourceFile.fileName}:${node.getStart(sourceFile)}:${containing}:${context}`
+    const start = node.getStart(sourceFile)
+    const position = sourceFile.getLineAndCharacterOfPosition(start)
+    return { sourceFile, start, containing, context: classifyReferenceContext(node.parent), line: position.line + 1 }
+  }
+  // Order-dependent bookkeeping (per-file cap, de-duplication) stays sequential.
+  const accept = (reference: IncomingReference | null): void => {
+    if (reference === null) return
+    const fileName = reference.sourceFile.fileName
+    const fileCount = perFileCounts.get(fileName) ?? 0
+    if (fileCount >= MAX_REFERENCE_RESULTS_PER_FILE) return
+    const key = `${fileName}:${reference.start}:${reference.containing}:${reference.context}`
     if (seen.has(key)) return
     seen.add(key)
-    perFileCounts.set(sourceFile.fileName, fileCount + 1)
+    perFileCounts.set(fileName, fileCount + 1)
     results.push({
-      symbol: containing,
-      context,
-      file: relativePath(target.rootPath, sourceFile.fileName),
-      line: position.line + 1,
+      symbol: reference.containing,
+      context: reference.context,
+      file: relativePath(target.rootPath, fileName),
+      line: reference.line,
     })
   }
+  const add = async (node: Node, symbol: Symbol = target.symbol): Promise<void> => accept(await describe(node, symbol))
 
   // Prefer compiler-native reference collection: scales with references, not
   // every identifier / type-reference node in the project.
@@ -421,13 +437,14 @@ const findIncomingReferences = async (project: Project, target: Target): Promise
   const declarationPosition = declarationName.getStart(declarationName.getSourceFile())
   try {
     const referenced = await project.languageService.getReferencedSymbolsForNode(declarationName, declarationPosition)
-    for (const entry of referenced) {
-      const handles = [entry.definition, ...entry.references]
-      for (const handle of handles) {
-        const node = await resolveIdentifierHandle(project, handle)
-        if (node !== undefined) await add(node, entry.symbol ?? target.symbol)
-      }
-    }
+    const entries = referenced.flatMap((entry) =>
+      [entry.definition, ...entry.references].map((handle) => ({ handle, symbol: entry.symbol ?? target.symbol })),
+    )
+    const described = await mapBounded(entries, FAN_OUT, async ({ handle, symbol }) => {
+      const node = await resolveIdentifierHandle(project, handle)
+      return node === undefined ? null : describe(node, symbol)
+    })
+    for (const reference of described) accept(reference)
     if (results.length > 0) return results
   } catch {
     // Fall through to the per-file scan if the native reference API rejects the node.
@@ -458,30 +475,41 @@ const findIncomingReferences = async (project: Project, target: Target): Promise
 const findOutgoingReferences = async (project: Project, target: Target): Promise<RelatedInfo["references"]> => {
   const references: Array<RelatedInfo["references"][number]> = []
   const seen = new Set<string>()
-  const add = async (symbol: Symbol | undefined, context: string): Promise<void> => {
-    if (symbol === undefined) return
+  const describe = async (
+    symbol: Symbol | undefined,
+    context: string,
+  ): Promise<{ readonly resolved: Symbol; readonly identity: string; readonly context: string } | null> => {
+    if (symbol === undefined) return null
     const resolved = await resolveSymbol(project, symbol)
-    if (resolved.id === target.symbol.id || PRIMITIVE_NAMES[resolved.name] === true) return
-    const key = `${await symbolIdentity(project, resolved)}:${context}`
+    if (resolved.id === target.symbol.id || PRIMITIVE_NAMES[resolved.name] === true) return null
+    return { resolved, identity: await symbolIdentity(project, resolved), context }
+  }
+  const accept = (described: Awaited<ReturnType<typeof describe>>): void => {
+    if (described === null) return
+    const key = `${described.identity}:${described.context}`
     if (seen.has(key)) return
     seen.add(key)
-    references.push({ symbol: resolved.name, context })
+    references.push({ symbol: described.resolved.name, context: described.context })
   }
+  const symbolOf = async (type: Type): Promise<Symbol | undefined> =>
+    (await type.getSymbol()) ?? (await type.getAliasSymbol())
 
   const type = await project.checker.getTypeAtLocation(target.declaration)
   if (await skipOutgoingType(type)) return references
   const properties = await project.checker.getPropertiesOfType(type)
-  for (const property of properties.slice(0, 50)) {
+  const described = await mapBounded(properties.slice(0, 50), FAN_OUT, async (property) => {
     const declarationHandle = property.declarations[0]
-    if (declarationHandle === undefined) continue
+    if (declarationHandle === undefined) return null
     const declaration = await declarationHandle.resolve(project)
-    if (declaration === undefined) continue
+    if (declaration === undefined) return null
     const propertyType = await project.checker.getTypeOfSymbolAtLocation(property, declaration)
-    await add((await propertyType.getSymbol()) ?? (await propertyType.getAliasSymbol()), `property "${property.name}"`)
-  }
+    return describe(await symbolOf(propertyType), `property "${property.name}"`)
+  })
+  for (const entry of described) accept(entry)
   if (type.isClassOrInterface()) {
     const baseTypes = await project.checker.getBaseTypes(type)
-    for (const baseType of baseTypes) await add((await baseType.getSymbol()) ?? (await baseType.getAliasSymbol()), "extends")
+    const bases = await mapBounded(baseTypes, FAN_OUT, async (baseType) => describe(await symbolOf(baseType), "extends"))
+    for (const entry of bases) accept(entry)
   }
   return references
 }
