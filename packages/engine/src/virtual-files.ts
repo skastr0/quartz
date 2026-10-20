@@ -31,11 +31,10 @@ const isSourceFileIn = (fileName: string, root: string): boolean => {
 
 const isIndexFile = (fileName: string): boolean => /(?:^|\/)index\.[cm]?[jt]sx?$/.test(fileName.replaceAll("\\", "/"))
 
-const packageSources = async (project: Project, packageRoot: string, virtualFilePath: string) => {
+const packageSources = async (project: Project, packageRoot: string) => {
   const files = (await project.program.getSourceFileNames())
     .filter((fileName) =>
-      fileName !== virtualFilePath
-      && isSourceFileIn(fileName, packageRoot)
+      isSourceFileIn(fileName, packageRoot)
       && !fileName.endsWith(".d.ts")
       && /\.[cm]?[jt]sx?$/.test(fileName))
     .sort((left, right) => {
@@ -55,43 +54,74 @@ export interface VirtualPackageImports {
   readonly lineOffset: number
 }
 
+/** One public module of a package: its file and the importable names it exports. */
+export interface PackageModuleExports {
+  readonly fileName: string
+  readonly names: readonly { readonly name: string; readonly value: boolean }[]
+}
+
+/**
+ * Read the public entrypoint exports of a package. Holds plain data only, so it can be
+ * cached for the life of a revision; the module symbols and export lists are fetched as
+ * two batched round trips instead of two per source file.
+ */
+export const loadPackageExports = async (
+  project: Project,
+  packageRoot: string,
+): Promise<readonly PackageModuleExports[]> => {
+  const sources = await packageSources(project, packageRoot)
+  if (sources.length === 0) return []
+  const moduleSymbols = await project.checker.getSymbolAtLocation(sources)
+  const present = sources.flatMap((source, index) => {
+    const symbol = moduleSymbols[index]
+    return symbol === undefined ? [] : [{ source, symbol }]
+  })
+  const exported = await Promise.all(present.map(({ symbol }) => project.checker.getExportsOfModule(symbol)))
+  return present.map(({ source }, index) => ({
+    fileName: source.fileName,
+    names: exported[index]!
+      .filter((symbol) => symbol.name !== "default" && /^[A-Za-z_$][\w$]*$/.test(symbol.name))
+      .map((symbol) => ({ name: symbol.name, value: (symbol.flags & SymbolFlags.Value) !== SymbolFlags.None })),
+  }))
+}
+
 /**
  * Render imports for the package's public entrypoint into an ephemeral source.
  * Type-only exports are kept type-only so verbatimModuleSyntax remains valid.
  * Names in `reserved` are bound by the source itself and are not imported.
  */
-export const synthesizePackageImports = async (
-  project: Project,
-  packageRoot: string,
+export const renderPackageImports = (
+  modules: readonly PackageModuleExports[],
   virtualFilePath: string,
   reserved: ReadonlySet<string> = new Set(),
-): Promise<VirtualPackageImports> => {
-  const sources = await packageSources(project, packageRoot, virtualFilePath)
-  if (sources.length === 0) return { content: "", lineOffset: 0 }
+): VirtualPackageImports => {
   const claimedNames = new Set<string>(reserved)
   const lines: string[] = []
-  for (const source of sources) {
-    const moduleSymbol = await project.checker.getSymbolAtLocation(source)
-    if (moduleSymbol === undefined) continue
-    const exported = await project.checker.getExportsOfModule(moduleSymbol)
+  for (const module of modules) {
+    if (module.fileName === virtualFilePath) continue
     const typeNames: string[] = []
     const valueNames: string[] = []
-    for (const symbol of exported) {
-      if (
-        symbol.name === "default"
-        || claimedNames.has(symbol.name)
-        || !/^[A-Za-z_$][\w$]*$/.test(symbol.name)
-      ) continue
-      claimedNames.add(symbol.name)
-      if ((symbol.flags & SymbolFlags.Value) !== SymbolFlags.None) valueNames.push(symbol.name)
-      else typeNames.push(symbol.name)
+    for (const { name, value } of module.names) {
+      if (claimedNames.has(name)) continue
+      claimedNames.add(name)
+      if (value) valueNames.push(name)
+      else typeNames.push(name)
     }
-    const modulePath = modulePathFor(virtualFilePath, source.fileName)
+    const modulePath = modulePathFor(virtualFilePath, module.fileName)
     if (typeNames.length > 0) lines.push(`import type { ${typeNames.sort().join(", ")} } from ${JSON.stringify(modulePath)}`)
     if (valueNames.length > 0) lines.push(`import { ${valueNames.sort().join(", ")} } from ${JSON.stringify(modulePath)}`)
   }
   return { content: lines.length === 0 ? "" : `${lines.join("\n")}\n`, lineOffset: lines.length }
 }
+
+export const synthesizePackageImports = async (
+  project: Project,
+  packageRoot: string,
+  virtualFilePath: string,
+  reserved: ReadonlySet<string> = new Set(),
+  modules: Promise<readonly PackageModuleExports[]> = loadPackageExports(project, packageRoot),
+): Promise<VirtualPackageImports> => renderPackageImports(await modules, virtualFilePath, reserved)
+
 export interface VirtualFileLease {
   readonly path: string
   readonly content: string

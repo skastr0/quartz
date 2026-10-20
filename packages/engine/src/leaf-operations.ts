@@ -21,6 +21,7 @@ import type {
   TypeInfo,
   TypePropertyInfo,
 } from "./contracts"
+import { FAN_OUT, mapBounded } from "./concurrency"
 import { AnalyzerContext } from "./context"
 import {
   DiagnosticCategory,
@@ -109,15 +110,17 @@ const sourceFilesFor = (
 ): Promise<readonly SourceFile[]> =>
   context.cacheForRevision(`source-files:${packageInfo.tsconfigPath}`, revision, async () => {
     const root = resolve(packageInfo.path)
-    const names = await project.program.getSourceFileNames()
-    const files = await Promise.all(
-      names.map(async (name) => {
-        const source = await project.program.getSourceFile(name)
-        if (source === undefined || await project.program.isSourceFileFromExternalLibrary(source)) return undefined
-        const file = resolve(source.fileName)
-        return file === root || file.startsWith(`${root}/`) ? source : undefined
-      }),
-    )
+    // Only files under the package root are kept, so skip fetching the rest (default libs, other packages).
+    const names = (await project.program.getSourceFileNames()).filter((name) => {
+      const file = resolve(name)
+      return file === root || file.startsWith(`${root}/`)
+    })
+    const files = await mapBounded(names, FAN_OUT, async (name) => {
+      const source = await project.program.getSourceFile(name)
+      if (source === undefined || await project.program.isSourceFileFromExternalLibrary(source)) return undefined
+      const file = resolve(source.fileName)
+      return file === root || file.startsWith(`${root}/`) ? source : undefined
+    })
     return files.filter((source): source is SourceFile => source !== undefined)
   })
 

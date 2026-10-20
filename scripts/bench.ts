@@ -8,8 +8,13 @@
  *   - warm-analyzer: in-process createTypeAnalyzer, warmup then timed steady-state ops
  *
  * Records wall-clock p50/p95, open time (warm-analyzer), process/TS versions, and
- * optional complexity counters when the command returns them. Writes a JSON
- * report; never invents thresholds — budgets freeze from measured distributions.
+ * optional complexity counters when the command returns them. Warm-analyzer rows
+ * also carry the tsrs JSON-RPC cost per call (round trips, batched items, time with a
+ * request outstanding), and a separate untimed pass records peak RSS of the server
+ * process tree (warm: whole run; cold-cli: per command). Host load average is stored
+ * because a loaded machine moves wall-clock far more than most optimizations do.
+ * Writes a JSON report; never invents thresholds — budgets freeze from measured
+ * distributions.
  *
  * Profiles:
  *   --profile pr       fixtures only, fewer samples (default)
@@ -18,9 +23,9 @@
  * Compare versions on the same machine/run. CI should ratchet ratios or
  * complexity counts, not absolute milliseconds alone.
  */
-import { execFileSync, spawnSync } from "node:child_process"
+import { execFileSync, spawn, spawnSync } from "node:child_process"
 import { mkdirSync, writeFileSync } from "node:fs"
-import { cpus, hostname, platform, arch, totalmem } from "node:os"
+import { cpus, hostname, loadavg, platform, arch, totalmem } from "node:os"
 import { dirname, isAbsolute, relative, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import { performance } from "node:perf_hooks"
@@ -52,86 +57,105 @@ interface CommandSpec {
   readonly batchable: boolean
 }
 
-const commandsFor = (root: string): readonly CommandSpec[] => [
-  {
-    name: "doctor",
-    batchable: false,
-    cliArgs: (r) => ["doctor", JSON.stringify({ root: r })],
-    batchPayloads: () => [],
-    run: async (a) => ({ metadata: a.metadata, packages: await a.getPackages() }),
-  },
-  {
-    name: "diagnostics",
-    batchable: true,
-    cliArgs: (r) => ["diagnostics", JSON.stringify({ root: r })],
-    batchPayloads: (r, n) => Array.from({ length: n }, () => ({ root: r })),
-    run: (a) => a.getDiagnostics(),
-  },
-  {
-    name: "info",
-    batchable: true,
-    cliArgs: (r) => ["info", JSON.stringify({ root: r, symbol: "User" })],
-    batchPayloads: (r, n) => Array.from({ length: n }, () => ({ root: r, symbol: "User" })),
-    run: (a) => a.getTypeInfo("User"),
-  },
-  {
-    name: "expand",
-    batchable: true,
-    cliArgs: (r) => ["expand", JSON.stringify({ root: r, symbol: "User" })],
-    batchPayloads: (r, n) => Array.from({ length: n }, () => ({ root: r, symbol: "User" })),
-    run: (a) => a.expandType("User"),
-  },
-  {
-    name: "compatible",
-    batchable: true,
-    cliArgs: (r) => ["compatible", JSON.stringify({ root: r, from: "ExtendedUser", to: "User" })],
-    batchPayloads: (r, n) => Array.from({ length: n }, () => ({ root: r, from: "ExtendedUser", to: "User" })),
-    run: (a) => a.checkCompatibility("ExtendedUser", "User"),
-  },
-  {
-    name: "verify-contract",
-    batchable: true,
-    cliArgs: (r) => ["verify-contract", JSON.stringify({ root: r, from: "User", to: "User" })],
-    batchPayloads: (r, n) => Array.from({ length: n }, () => ({ root: r, from: "User", to: "User" })),
-    run: (a) => a.verifyContract({ from: "User", to: "User" }),
-  },
-  {
-    name: "related",
-    batchable: true,
-    cliArgs: (r) => ["related", JSON.stringify({ root: r, symbol: "User" })],
-    batchPayloads: (r, n) => Array.from({ length: n }, () => ({ root: r, symbol: "User" })),
-    run: (a) => a.findRelated("User"),
-  },
-  {
-    name: "graph",
-    batchable: true,
-    cliArgs: (r) => ["graph", JSON.stringify({ root: r, symbol: "User", depth: 1, format: "mermaid" })],
-    batchPayloads: (r, n) => Array.from({ length: n }, () => ({ root: r, symbol: "User", depth: 1, format: "mermaid" })),
-    run: (a) => a.generateGraph("User", { depth: 1, format: "mermaid" }),
-  },
-  {
-    name: "transform-search",
-    batchable: true,
-    cliArgs: (r) => ["transform-search", JSON.stringify({ root: r, from: "User", limit: 5 })],
-    batchPayloads: (r, n) => Array.from({ length: n }, () => ({ root: r, from: "User", limit: 5 })),
-    run: (a) => a.transformSearch({ from: "User", limit: 5 }),
-  },
-  {
-    name: "refactor-preview",
-    batchable: true,
-    cliArgs: (r) => ["refactor-preview", JSON.stringify({ root: r, symbol: "User", to: "Person" })],
-    batchPayloads: (r, n) => Array.from({ length: n }, () => ({ root: r, symbol: "User", to: "Person" })),
-    run: (a) => a.previewRefactor({ action: "rename", symbol: "User", to: "Person" }),
-  },
-  {
-    name: "check-snippet",
-    batchable: true,
-    cliArgs: (r) => ["check-snippet", JSON.stringify({ root: r, code: "const x: string = 42;" })],
-    batchPayloads: (r, n) =>
-      Array.from({ length: n }, () => ({ root: r, code: "const x: string = 42;" })),
-    run: (a) => a.checkSnippet("const x: string = 42;"),
-  },
-]
+interface Queries {
+  readonly symbol: string
+  readonly from: string
+  readonly to: string
+  readonly rename: string
+  /** Package selector for monorepos; unset resolves the default package. */
+  readonly package?: string
+}
+
+const DEFAULT_QUERIES: Queries = { symbol: "User", from: "ExtendedUser", to: "User", rename: "Person" }
+
+const commandsFor = (root: string, q: Queries = DEFAULT_QUERIES): readonly CommandSpec[] => {
+  const pkg = q.package
+  // CLI payloads select a package with `package`; analyzer option bags use `packageName`.
+  const withPkg = <T extends object>(payload: T): T & { readonly package?: string } =>
+    pkg === undefined ? payload : { ...payload, package: pkg }
+  const withPackageName = <T extends object>(options: T): T & { readonly packageName?: string } =>
+    pkg === undefined ? options : { ...options, packageName: pkg }
+  return [
+    {
+      name: "doctor",
+      batchable: false,
+      cliArgs: (r) => ["doctor", JSON.stringify(withPkg({ root: r }))],
+      batchPayloads: () => [],
+      run: async (a) => ({ metadata: a.metadata, packages: await a.getPackages() }),
+    },
+    {
+      name: "diagnostics",
+      batchable: true,
+      cliArgs: (r) => ["diagnostics", JSON.stringify(withPkg({ root: r }))],
+      batchPayloads: (r, n) => Array.from({ length: n }, () => withPkg({ root: r })),
+      run: (a) => a.getDiagnostics(pkg),
+    },
+    {
+      name: "info",
+      batchable: true,
+      cliArgs: (r) => ["info", JSON.stringify(withPkg({ root: r, symbol: q.symbol }))],
+      batchPayloads: (r, n) => Array.from({ length: n }, () => withPkg({ root: r, symbol: q.symbol })),
+      run: (a) => a.getTypeInfo(q.symbol, pkg),
+    },
+    {
+      name: "expand",
+      batchable: true,
+      cliArgs: (r) => ["expand", JSON.stringify(withPkg({ root: r, symbol: q.symbol }))],
+      batchPayloads: (r, n) => Array.from({ length: n }, () => withPkg({ root: r, symbol: q.symbol })),
+      run: (a) => a.expandType(q.symbol, pkg),
+    },
+    {
+      name: "compatible",
+      batchable: true,
+      cliArgs: (r) => ["compatible", JSON.stringify(withPkg({ root: r, from: q.from, to: q.to }))],
+      batchPayloads: (r, n) => Array.from({ length: n }, () => withPkg({ root: r, from: q.from, to: q.to })),
+      run: (a) => a.checkCompatibility(q.from, q.to, pkg),
+    },
+    {
+      name: "verify-contract",
+      batchable: true,
+      cliArgs: (r) => ["verify-contract", JSON.stringify(withPkg({ root: r, from: q.symbol, to: q.symbol }))],
+      batchPayloads: (r, n) => Array.from({ length: n }, () => withPkg({ root: r, from: q.symbol, to: q.symbol })),
+      run: (a) => a.verifyContract(withPackageName({ from: q.symbol, to: q.symbol })),
+    },
+    {
+      name: "related",
+      batchable: true,
+      cliArgs: (r) => ["related", JSON.stringify(withPkg({ root: r, symbol: q.symbol }))],
+      batchPayloads: (r, n) => Array.from({ length: n }, () => withPkg({ root: r, symbol: q.symbol })),
+      run: (a) => a.findRelated(q.symbol, pkg),
+    },
+    {
+      name: "graph",
+      batchable: true,
+      cliArgs: (r) => ["graph", JSON.stringify(withPkg({ root: r, symbol: q.symbol, depth: 1, format: "mermaid" }))],
+      batchPayloads: (r, n) => Array.from({ length: n }, () => withPkg({ root: r, symbol: q.symbol, depth: 1, format: "mermaid" })),
+      run: (a) => a.generateGraph(q.symbol, withPackageName({ depth: 1, format: "mermaid" as const })),
+    },
+    {
+      name: "transform-search",
+      batchable: true,
+      cliArgs: (r) => ["transform-search", JSON.stringify(withPkg({ root: r, from: q.symbol, limit: 5 }))],
+      batchPayloads: (r, n) => Array.from({ length: n }, () => withPkg({ root: r, from: q.symbol, limit: 5 })),
+      run: (a) => a.transformSearch(withPackageName({ from: q.symbol, limit: 5 })),
+    },
+    {
+      name: "refactor-preview",
+      batchable: true,
+      cliArgs: (r) => ["refactor-preview", JSON.stringify(withPkg({ root: r, symbol: q.symbol, to: q.rename }))],
+      batchPayloads: (r, n) => Array.from({ length: n }, () => withPkg({ root: r, symbol: q.symbol, to: q.rename })),
+      run: (a) => a.previewRefactor(withPackageName({ action: "rename" as const, symbol: q.symbol, to: q.rename })),
+    },
+    {
+      name: "check-snippet",
+      batchable: true,
+      cliArgs: (r) => ["check-snippet", JSON.stringify(withPkg({ root: r, code: "const x: string = 42;" }))],
+      batchPayloads: (r, n) =>
+        Array.from({ length: n }, () => withPkg({ root: r, code: "const x: string = 42;" })),
+      run: (a) => a.checkSnippet("const x: string = 42;", pkg),
+    },
+  ]
+}
 
 interface SampleStats {
   readonly samplesMs: readonly number[]
@@ -142,11 +166,32 @@ interface SampleStats {
   readonly maxMs: number
 }
 
+/** tsrs JSON-RPC cost of one command call, averaged over the timed samples. */
+interface RpcCost {
+  /** Wire round trips (a batchRequests counts as one). */
+  readonly roundTrips: number
+  /** Requests carried, with batchRequests unpacked. */
+  readonly requests: number
+  /** Wall time with at least one request outstanding. */
+  readonly busyMs: number
+  /** Requests per round trip method, unpacked batches counted under their own method. */
+  readonly byMethod: Readonly<Record<string, number>>
+}
+
+interface PeakRss {
+  readonly peakMb: number
+  readonly samples: number
+}
+
 interface ModeResult {
   readonly mode: Mode
   readonly command: string
   readonly stats: SampleStats
   readonly openMs?: number
+  readonly rpc?: RpcCost
+  readonly peakRss?: PeakRss
+  /** 1-minute load average when the row finished. */
+  readonly loadAvg1m?: number
   readonly notes?: string
 }
 
@@ -168,6 +213,10 @@ interface BenchReport {
   }
   readonly config: ProfileConfig
   readonly cliBinary: string
+  readonly queries: Queries
+  readonly load: { readonly startAvg1m: number; readonly endAvg1m: number }
+  /** Peak RSS of the tsrs server over one untimed warm-analyzer session (open plus every command once). */
+  readonly warmServerPeakRss?: PeakRss & { readonly afterOpenMb: number }
   readonly results: readonly ModeResult[]
 }
 
@@ -217,6 +266,101 @@ const resolveCliBinary = (): string => {
   }
 }
 
+const mb = (kib: number): number => round(kib / 1024)
+
+/** Sum of RSS (KiB) over `root` and every descendant, from one `ps` snapshot. */
+const treeRssKib = (root: number): number => {
+  const out = spawnSync("ps", ["-A", "-o", "pid=,ppid=,rss="], { encoding: "utf8" }).stdout
+  const rows = new Map<number, { ppid: number; rss: number }>()
+  for (const line of out.split("\n")) {
+    const [pid, ppid, rss] = line.trim().split(/\s+/).map(Number)
+    if (pid !== undefined && ppid !== undefined && rss !== undefined && !Number.isNaN(rss)) rows.set(pid, { ppid, rss })
+  }
+  let total = 0
+  const stack = [root]
+  while (stack.length > 0) {
+    const pid = stack.pop()!
+    const row = rows.get(pid)
+    if (row !== undefined && pid !== root) total += row.rss
+    for (const [child, info] of rows) if (info.ppid === pid) stack.push(child)
+  }
+  return total
+}
+
+/** Descendant RSS of `pid` (the process itself excluded when `self` is false). */
+const startRssSampler = (pid: number, intervalMs = 40) => {
+  let peak = 0
+  let count = 0
+  const sample = () => {
+    peak = Math.max(peak, treeRssKib(pid))
+    count += 1
+  }
+  const timer = setInterval(sample, intervalMs)
+  return {
+    sampleNow: sample,
+    stop: (): PeakRss => {
+      clearInterval(timer)
+      sample()
+      return { peakMb: mb(peak), samples: count }
+    },
+  }
+}
+
+/**
+ * tsrs async client instrumentation. The client already folds every request issued in one
+ * event-loop tick into a single batchRequests, so round trips (not requests) are what a
+ * serial await chain pays for.
+ */
+const installRpcProbe = async () => {
+  const clientPath = resolve(dirname(Bun.resolveSync("tsrs/package.json", REPO_ROOT)), "dist/api/async/client.js")
+  const mod = (await import(pathToFileURL(clientPath).href)) as {
+    readonly Client: { readonly prototype: { sendRequestWithTiming: (type: { method: string }, params: unknown) => Promise<unknown> } }
+  }
+  const proto = mod.Client.prototype
+  const original = proto.sendRequestWithTiming
+  const byMethod = new Map<string, number>()
+  let roundTrips = 0
+  let requests = 0
+  let busyMs = 0
+  let inflight = 0
+  let busySince = 0
+  proto.sendRequestWithTiming = async function (this: unknown, type, params) {
+    roundTrips += 1
+    if (type.method === "batchRequests") {
+      const items = (params as { requests?: readonly { method: string }[] }).requests ?? []
+      requests += items.length
+      for (const item of items) byMethod.set(item.method, (byMethod.get(item.method) ?? 0) + 1)
+    } else {
+      requests += 1
+      byMethod.set(type.method, (byMethod.get(type.method) ?? 0) + 1)
+    }
+    if (inflight === 0) busySince = performance.now()
+    inflight += 1
+    try {
+      return await original.call(this, type, params)
+    } finally {
+      inflight -= 1
+      if (inflight === 0) busyMs += performance.now() - busySince
+    }
+  }
+  return {
+    reset: () => {
+      byMethod.clear()
+      roundTrips = 0
+      requests = 0
+      busyMs = 0
+    },
+    read: (calls: number): RpcCost => ({
+      roundTrips: round(roundTrips / calls),
+      requests: round(requests / calls),
+      busyMs: round(busyMs / calls),
+      byMethod: Object.fromEntries(
+        [...byMethod.entries()].sort((a, b) => b[1] - a[1]).map(([method, n]) => [method, round(n / calls)]),
+      ),
+    }),
+  }
+}
+
 const runColdCli = (
   cli: string,
   command: CommandSpec,
@@ -240,6 +384,14 @@ const runColdCli = (
   }
   return statsOf(samples)
 }
+
+const coldPeakRss = (cli: string, command: CommandSpec, root: string): Promise<PeakRss> =>
+  new Promise((resolvePeak, reject) => {
+    const child = spawn(cli, [...command.cliArgs(root)], { cwd: REPO_ROOT, env: process.env, stdio: "ignore" })
+    const sampler = startRssSampler(child.pid!, 25)
+    child.once("error", reject)
+    child.once("close", () => resolvePeak(sampler.stop()))
+  })
 
 const runWarmBatch = (
   cli: string,
@@ -286,80 +438,147 @@ const runWarmAnalyzer = async (
   root: string,
   warmup: number,
   timed: number,
-): Promise<{ readonly stats: SampleStats; readonly openMs: number }> => {
+  probe: Awaited<ReturnType<typeof installRpcProbe>>,
+): Promise<{ readonly stats: SampleStats; readonly openMs: number; readonly rpc: RpcCost }> => {
   const openStarted = performance.now()
   const analyzer = await createTypeAnalyzer(root)
   const openMs = performance.now() - openStarted
   try {
     for (let i = 0; i < warmup; i += 1) await command.run(analyzer)
     const samples: number[] = []
+    probe.reset()
     for (let i = 0; i < timed; i += 1) {
       const started = performance.now()
       await command.run(analyzer)
       samples.push(performance.now() - started)
     }
-    return { stats: statsOf(samples), openMs: round(openMs) }
+    return { stats: statsOf(samples), openMs: round(openMs), rpc: probe.read(timed) }
   } finally {
     await analyzer.dispose()
   }
 }
 
-const parseArgs = (argv: readonly string[]): {
-  readonly profile: Profile
-  readonly root: string
-  readonly out: string | null
-  readonly commands: readonly string[] | null
-} => {
-  let profile: Profile = "pr"
-  let root = DEFAULT_FIXTURE_ROOT
-  let out: string | null = null
-  let commands: string[] | null = null
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i]!
-    if (arg === "--profile") {
-      const value = argv[++i]
-      if (value !== "pr" && value !== "release") throw new Error(`Unknown profile: ${value}`)
-      profile = value
-    } else if (arg === "--root") {
-      root = resolve(argv[++i] ?? root)
-    } else if (arg === "--out") {
-      out = resolve(argv[++i] ?? "")
-    } else if (arg === "--commands") {
-      commands = (argv[++i] ?? "").split(",").map((s) => s.trim()).filter(Boolean)
-    } else if (arg === "--help" || arg === "-h") {
-      process.stdout.write(`Usage: bun scripts/bench.ts [--profile pr|release] [--root <path>] [--out report.json] [--commands a,b]\n`)
-      process.exit(0)
+/** One untimed session: open, run every selected command once, report the server's peak RSS. */
+const runWarmMemoryPass = async (
+  commands: readonly CommandSpec[],
+  root: string,
+): Promise<PeakRss & { readonly afterOpenMb: number }> => {
+  const sampler = startRssSampler(process.pid)
+  const analyzer = await createTypeAnalyzer(root)
+  try {
+    const afterOpenMb = mb(treeRssKib(process.pid))
+    for (const command of commands) {
+      process.stderr.write(`[bench] warm-memory ${command.name}\n`)
+      await command.run(analyzer)
     }
+    return { ...sampler.stop(), afterOpenMb }
+  } finally {
+    await analyzer.dispose()
   }
-  return { profile, root, out, commands }
 }
 
-export const runBench = async (options: {
+interface BenchOptions {
   readonly profile?: Profile
   readonly root?: string
   readonly commands?: readonly string[] | null
   readonly cliBinary?: string
-}): Promise<BenchReport> => {
+  readonly queries?: Partial<Queries>
+  /** Overrides the profile's modes. */
+  readonly modes?: readonly Mode[]
+  readonly warmup?: number
+  readonly timed?: number
+  /** Add peak-RSS passes (untimed): one warm session, plus one extra process per cold-cli command. */
+  readonly memory?: boolean
+}
+
+const parseArgs = (argv: readonly string[]): BenchOptions & { readonly out: string | null } => {
+  let out: string | null = null
+  const options: { -readonly [K in keyof BenchOptions]: BenchOptions[K] } = {}
+  const queries: { -readonly [K in keyof Queries]?: Queries[K] } = {}
+  const need = (i: number, flag: string): string => {
+    const value = argv[i]
+    if (value === undefined) throw new Error(`${flag} needs a value`)
+    return value
+  }
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i]!
+    if (arg === "--profile") {
+      const value = need(++i, arg)
+      if (value !== "pr" && value !== "release") throw new Error(`Unknown profile: ${value}`)
+      options.profile = value
+    } else if (arg === "--root") {
+      options.root = resolve(need(++i, arg))
+    } else if (arg === "--out") {
+      out = resolve(need(++i, arg))
+    } else if (arg === "--commands") {
+      options.commands = need(++i, arg).split(",").map((s) => s.trim()).filter(Boolean)
+    } else if (arg === "--modes") {
+      options.modes = need(++i, arg).split(",").map((s) => {
+        const mode = s.trim()
+        if (mode !== "cold-cli" && mode !== "warm-batch" && mode !== "warm-analyzer") throw new Error(`Unknown mode: ${mode}`)
+        return mode
+      })
+    } else if (arg === "--warmup") {
+      options.warmup = Number(need(++i, arg))
+    } else if (arg === "--timed") {
+      options.timed = Number(need(++i, arg))
+    } else if (arg === "--memory") {
+      options.memory = true
+    } else if (arg === "--symbol" || arg === "--from" || arg === "--to" || arg === "--rename" || arg === "--package") {
+      queries[arg.slice(2) as keyof Queries] = need(++i, arg)
+    } else if (arg === "--help" || arg === "-h") {
+      process.stdout.write(
+        [
+          "Usage: bun scripts/bench.ts [--profile pr|release] [--root <path>] [--out report.json]",
+          "                            [--commands a,b] [--modes cold-cli,warm-batch,warm-analyzer]",
+          "                            [--warmup n] [--timed n] [--memory]",
+          "                            [--symbol S] [--from S] [--to S] [--rename S] [--package P]",
+          "",
+          "--symbol/--from/--to/--rename replace the fixture symbols (User, ExtendedUser, Person)",
+          "so a real repository can be measured; --package picks the package of a monorepo.",
+          "--memory adds untimed peak-RSS passes.",
+          "",
+        ].join("\n"),
+      )
+      process.exit(0)
+    }
+  }
+  return { ...options, queries, out }
+}
+
+export const runBench = async (options: BenchOptions): Promise<BenchReport> => {
   const profile = options.profile ?? "pr"
-  const config = PROFILES[profile]
+  const base = PROFILES[profile]
+  const config: ProfileConfig = {
+    warmup: options.warmup ?? base.warmup,
+    timed: options.timed ?? base.timed,
+    modes: options.modes ?? base.modes,
+  }
   const root = resolve(options.root ?? DEFAULT_FIXTURE_ROOT)
   const cli = options.cliBinary ?? resolveCliBinary()
-  const allCommands = commandsFor(root)
+  const queries: Queries = { ...DEFAULT_QUERIES, ...options.queries }
+  const allCommands = commandsFor(root, queries)
   const selected =
     options.commands === undefined || options.commands === null || options.commands.length === 0
       ? allCommands
       : allCommands.filter((c) => options.commands!.includes(c.name))
 
   const results: ModeResult[] = []
+  const startLoad = loadavg()[0]!
+  const probe = config.modes.includes("warm-analyzer") ? await installRpcProbe() : null
 
   for (const command of selected) {
     for (const mode of config.modes) {
       if (mode === "cold-cli") {
         process.stderr.write(`[bench] cold-cli ${command.name}\n`)
+        const stats = runColdCli(cli, command, root, config.timed)
+        const peakRss = options.memory === true ? await coldPeakRss(cli, command, root) : undefined
         results.push({
           mode,
           command: command.name,
-          stats: runColdCli(cli, command, root, config.timed),
+          stats,
+          ...(peakRss === undefined ? {} : { peakRss }),
+          loadAvg1m: round(loadavg()[0]!),
         })
       } else if (mode === "warm-batch") {
         if (!command.batchable) continue
@@ -368,21 +587,25 @@ export const runBench = async (options: {
           mode,
           command: command.name,
           stats: runWarmBatch(cli, command, root, config.warmup, config.timed),
+          loadAvg1m: round(loadavg()[0]!),
           notes: "amortized total_wall / item_count from one multi-item process",
         })
       } else {
         process.stderr.write(`[bench] warm-analyzer ${command.name}\n`)
-        const warm = await runWarmAnalyzer(command, root, config.warmup, config.timed)
+        const warm = await runWarmAnalyzer(command, root, config.warmup, config.timed, probe!)
         results.push({
           mode,
           command: command.name,
           stats: warm.stats,
           openMs: warm.openMs,
+          rpc: warm.rpc,
+          loadAvg1m: round(loadavg()[0]!),
         })
       }
     }
   }
 
+  const warmServerPeakRss = options.memory === true ? await runWarmMemoryPass(selected, root) : undefined
   const cpu = cpus()[0]
   return {
     schemaVersion: "quartz-bench/v1",
@@ -402,6 +625,9 @@ export const runBench = async (options: {
     },
     config,
     cliBinary: isAbsolute(cli) ? relative(process.cwd(), cli) || cli : cli,
+    queries,
+    load: { startAvg1m: round(startLoad), endAvg1m: round(loadavg()[0]!) },
+    ...(warmServerPeakRss === undefined ? {} : { warmServerPeakRss }),
     results,
   }
 }
@@ -413,11 +639,7 @@ const isEntrypoint = (): boolean => {
 
 if (isEntrypoint()) {
   const args = parseArgs(process.argv.slice(2))
-  runBench({
-    profile: args.profile,
-    root: args.root,
-    commands: args.commands,
-  })
+  runBench(args)
     .then((report) => {
       const text = `${JSON.stringify(report, null, 2)}\n`
       process.stdout.write(text)
