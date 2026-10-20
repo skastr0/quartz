@@ -66,6 +66,14 @@ export interface TypeAtPositionResult {
     readonly line: number
     readonly column: number
   }
+  /** Symbol the position names, aliases resolved to their target. */
+  readonly symbol: string | null
+  /** Where that symbol is declared, once for the resolved target. */
+  readonly declaration: {
+    readonly file: string
+    readonly line: number
+    readonly column: number
+  } | null
 }
 
 export interface DiagnosticInfo {
