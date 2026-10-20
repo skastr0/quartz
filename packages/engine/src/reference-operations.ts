@@ -4,6 +4,7 @@ import { SyntaxKind } from "tsrs/unstable/ast"
 import { isIdentifier, isTypeReferenceNode } from "tsrs/unstable/ast/is"
 import { SymbolFlags, type NodeHandle, type Project, type Symbol, type Type } from "tsrs/unstable/async"
 import type { AnalyzerContext } from "./context"
+import { FAN_OUT, mapBounded } from "./concurrency"
 import type {
   GraphEdge,
   GraphResult,
@@ -200,9 +201,9 @@ const findTarget = (
 ): Promise<Target | null> => targetIndexFor(context, project, pkg, revision).lookup(requestedName)
 
 /**
- * Revision-keyed name → Target index. Built once per package revision so recursive
- * graph expansion (and repeated findTarget callers) do not re-scan the project for
- * every child symbol name.
+ * Revision-keyed name → Target index. A name is resolved to its Target on first lookup, from the
+ * declaration name nodes spelled that way, so a cold lookup costs a few round trips instead of
+ * one symbol query per file; results are memoized for recursive graph expansion.
  */
 const targetIndexFor = (
   context: AnalyzerContext,
@@ -212,19 +213,23 @@ const targetIndexFor = (
 ): TargetIndex =>
   context.cacheForRevision(`target-index:${pkg.tsconfigPath}`, revision, () => {
     const memo = new Map<string, Promise<Target | null>>()
-    let declarationIndex: Promise<Map<string, Target>> | undefined
-    const loadDeclarationIndex = (): Promise<Map<string, Target>> => {
-      declarationIndex ??= buildDeclarationTargetIndex(project, pkg.path, context.root)
-      return declarationIndex
-    }
     return {
       lookup: (requestedName: string): Promise<Target | null> => {
         const cached = memo.get(requestedName)
         if (cached !== undefined) return cached
         const pending = (async (): Promise<Target | null> => {
-          const byName = await loadDeclarationIndex()
-          const fromIndex = byName.get(requestedName)
+          const fromIndex = await resolveDeclaredName(
+            project,
+            pkg.path,
+            context.root,
+            await collectNameOccurrences(project, pkg.path, requestedName),
+          )
           if (fromIndex !== undefined) return fromIndex
+          if (requestedName === "default") {
+            const sourceFiles = await projectSourceFiles(project, pkg.path)
+            const defaultTarget = await findDefaultExportTarget(project, sourceFiles, pkg.path, context.root)
+            if (defaultTarget !== undefined) return defaultTarget
+          }
           // Preserve full-scan semantics for names that only appear as usages / default.
           return findTargetByScan(project, pkg.path, context.root, requestedName)
         })()
@@ -234,76 +239,98 @@ const targetIndexFor = (
     }
   })
 
-const buildDeclarationTargetIndex = async (
+type NameOccurrence = {
+  readonly sourceFile: SourceFile
+  readonly nameNode: Node
+}
+
+const declaredNamesByFile = new WeakMap<SourceFile, Map<string, Node[]>>()
+
+/** Declaration names (and export specifier names) of one file by spelling; each tree is walked once. */
+const declaredNamesOf = (sourceFile: SourceFile): Map<string, Node[]> => {
+  const cached = declaredNamesByFile.get(sourceFile)
+  if (cached !== undefined) return cached
+  const byName = new Map<string, Node[]>()
+  visit(sourceFile, (node) => {
+    let nameNode: Node | undefined
+    if (node.kind === SyntaxKind.Identifier && declarationForName(node) !== undefined) {
+      nameNode = node
+    } else if (node.kind === SyntaxKind.ExportSpecifier) {
+      const exportName = (node as ExportSpecifierNode).name
+      if (exportName.kind === SyntaxKind.Identifier) nameNode = exportName
+    }
+    if (nameNode === undefined) return
+    const key = nameNode.getText(sourceFile)
+    const list = byName.get(key)
+    if (list === undefined) byName.set(key, [nameNode])
+    else list.push(nameNode)
+  })
+  declaredNamesByFile.set(sourceFile, byName)
+  return byName
+}
+
+/** Declaration names (and export specifier names) spelled `name`, in file then node order. */
+const collectNameOccurrences = async (
+  project: Project,
+  packagePath: string,
+  name: string,
+): Promise<NameOccurrence[]> => {
+  const occurrences: NameOccurrence[] = []
+  for (const sourceFile of await projectSourceFiles(project, packagePath)) {
+    // The source text is already on the client: skip walking trees that cannot contain the name.
+    if (!sourceFile.text.includes(name)) continue
+    for (const nameNode of declaredNamesOf(sourceFile).get(name) ?? []) occurrences.push({ sourceFile, nameNode })
+  }
+  return occurrences
+}
+
+/** First occurrence of a declared name that resolves to a declaration wins. */
+const resolveDeclaredName = async (
   project: Project,
   packagePath: string,
   rootPath: string,
-): Promise<Map<string, Target>> => {
-  const byName = new Map<string, Target>()
-  const sourceFiles = await projectSourceFiles(project, packagePath)
-
-  for (const sourceFile of sourceFiles) {
-    const named: Node[] = []
-    visit(sourceFile, (node) => {
-      if (node.kind === SyntaxKind.Identifier && declarationForName(node) !== undefined) {
-        named.push(node)
-        return
-      }
-      if (node.kind === SyntaxKind.ExportSpecifier) {
-        const exportName = (node as ExportSpecifierNode).name
-        if (exportName.kind === SyntaxKind.Identifier) named.push(exportName)
-      }
-    })
-    if (named.length === 0) continue
-
-    const symbols = await project.checker.getSymbolAtLocation(named)
-    for (let index = 0; index < named.length; index += 1) {
-      const nameNode = named[index]!
-      const key = nameNode.getText(sourceFile)
-      if (byName.has(key)) continue
-      const symbol = symbols[index]
-      if (symbol === undefined) continue
-      const resolved = await resolveSymbol(project, symbol)
-      const declaration =
-        declarationForName(nameNode)
-        ?? (await findDeclarationForSymbol(sourceFile, project, resolved))
-      if (declaration !== undefined) {
-        byName.set(key, { symbol: resolved, declaration, packagePath, rootPath })
-        continue
-      }
-      const first = resolved.declarations[0]
-      const fallback = first === undefined ? undefined : await first.resolve(project)
-      if (fallback !== undefined) byName.set(key, { symbol: resolved, declaration: fallback, packagePath, rootPath })
-    }
+  occurrences: readonly NameOccurrence[],
+): Promise<Target | undefined> => {
+  for (const { sourceFile, nameNode } of occurrences) {
+    const symbol = await project.checker.getSymbolAtLocation(nameNode)
+    if (symbol === undefined) continue
+    const resolved = await resolveSymbol(project, symbol)
+    const declaration =
+      declarationForName(nameNode)
+      ?? (await findDeclarationForSymbol(sourceFile, project, resolved))
+    if (declaration !== undefined) return { symbol: resolved, declaration, packagePath, rootPath }
+    const first = resolved.declarations[0]
+    const fallback = first === undefined ? undefined : await first.resolve(project)
+    if (fallback !== undefined) return { symbol: resolved, declaration: fallback, packagePath, rootPath }
   }
+  return undefined
+}
 
-  if (!byName.has("default")) {
-    const moduleSymbols = await project.checker.getSymbolOfSourceFile(
-      sourceFiles.map((sourceFile) => sourceFile.fileName),
-    )
-    for (let index = 0; index < sourceFiles.length; index += 1) {
-      const sourceFile = sourceFiles[index]!
-      const moduleSymbol = moduleSymbols[index]
-      if (moduleSymbol === undefined) continue
-      const exports = await project.checker.getExportsOfModule(moduleSymbol)
-      const defaultExport = exports.find((candidate) => candidate.name === "default")
-      if (defaultExport === undefined) continue
-      const resolved = await resolveSymbol(project, defaultExport)
-      const declaration = await findDeclarationForSymbol(sourceFile, project, resolved)
-      if (declaration !== undefined) {
-        byName.set("default", { symbol: resolved, declaration, packagePath, rootPath })
-        break
-      }
-      const first = resolved.declarations[0]
-      const node = first === undefined ? undefined : await first.resolve(project)
-      if (node !== undefined) {
-        byName.set("default", { symbol: resolved, declaration: node, packagePath, rootPath })
-        break
-      }
-    }
+/** The first file (in project order) whose module has a default export. */
+const findDefaultExportTarget = async (
+  project: Project,
+  sourceFiles: readonly SourceFile[],
+  packagePath: string,
+  rootPath: string,
+): Promise<Target | undefined> => {
+  const moduleSymbols = await project.checker.getSymbolOfSourceFile(sourceFiles.map((sourceFile) => sourceFile.fileName))
+  const defaults = await mapBounded(sourceFiles, FAN_OUT, async (_sourceFile, index) => {
+    const moduleSymbol = moduleSymbols[index]
+    if (moduleSymbol === undefined) return undefined
+    const exports = await project.checker.getExportsOfModule(moduleSymbol)
+    return exports.find((candidate) => candidate.name === "default")
+  })
+  for (let index = 0; index < sourceFiles.length; index += 1) {
+    const defaultExport = defaults[index]
+    if (defaultExport === undefined) continue
+    const resolved = await resolveSymbol(project, defaultExport)
+    const declaration = await findDeclarationForSymbol(sourceFiles[index]!, project, resolved)
+    if (declaration !== undefined) return { symbol: resolved, declaration, packagePath, rootPath }
+    const first = resolved.declarations[0]
+    const node = first === undefined ? undefined : await first.resolve(project)
+    if (node !== undefined) return { symbol: resolved, declaration: node, packagePath, rootPath }
   }
-
-  return byName
+  return undefined
 }
 
 const findTargetByScan = async (
@@ -316,6 +343,7 @@ const findTargetByScan = async (
   let canonical: Symbol | undefined
 
   for (const sourceFile of sourceFiles) {
+    if (!sourceFile.text.includes(requestedName)) continue
     const identifiers: Node[] = []
     visit(sourceFile, (node) => {
       if (node.kind === SyntaxKind.Identifier && node.getText(sourceFile) === requestedName) identifiers.push(node)
@@ -346,25 +374,7 @@ const findTargetByScan = async (
     if (declaration !== undefined) return { symbol: canonical, declaration, packagePath, rootPath }
   }
 
-  if (requestedName === "default") {
-    const moduleSymbols = await project.checker.getSymbolOfSourceFile(
-      sourceFiles.map((sourceFile) => sourceFile.fileName),
-    )
-    for (let index = 0; index < sourceFiles.length; index += 1) {
-      const sourceFile = sourceFiles[index]!
-      const moduleSymbol = moduleSymbols[index]
-      if (moduleSymbol === undefined) continue
-      const exports = await project.checker.getExportsOfModule(moduleSymbol)
-      const defaultExport = exports.find((candidate) => candidate.name === "default")
-      if (defaultExport === undefined) continue
-      const resolved = await resolveSymbol(project, defaultExport)
-      const declaration = await findDeclarationForSymbol(sourceFile, project, resolved)
-      if (declaration !== undefined) return { symbol: resolved, declaration, packagePath, rootPath }
-      const first = resolved.declarations[0]
-      const node = first === undefined ? undefined : await first.resolve(project)
-      if (node !== undefined) return { symbol: resolved, declaration: node, packagePath, rootPath }
-    }
-  }
+  if (requestedName === "default") return (await findDefaultExportTarget(project, sourceFiles, packagePath, rootPath)) ?? null
 
   return null
 }
@@ -545,17 +555,30 @@ const findContainingSymbol = async (project: Project, start: Node, target: Symbo
   return moduleSymbol?.name ?? "anonymous"
 }
 
-const resolveSymbol = async (project: Project, symbol: Symbol): Promise<Symbol> => {
-  let resolved = symbol
-  // tsrs panics when getAliasedSymbol receives a non-alias symbol.
-  if ((symbol.flags & SymbolFlags.Alias) !== SymbolFlags.None) {
-    try {
-      resolved = await project.checker.getAliasedSymbol(symbol)
-    } catch {
-      // An unresolvable alias stays as written.
-    }
+const resolvedSymbols = new WeakMap<Project, Map<number, Promise<Symbol>>>()
+
+const resolveSymbol = (project: Project, symbol: Symbol): Promise<Symbol> => {
+  let byId = resolvedSymbols.get(project)
+  if (byId === undefined) {
+    byId = new Map()
+    resolvedSymbols.set(project, byId)
   }
-  return project.checker.getTargetSymbol(resolved)
+  const cached = byId.get(symbol.id)
+  if (cached !== undefined) return cached
+  const resolving = (async (): Promise<Symbol> => {
+    let resolved = symbol
+    // tsrs panics when getAliasedSymbol receives a non-alias symbol.
+    if ((symbol.flags & SymbolFlags.Alias) !== SymbolFlags.None) {
+      try {
+        resolved = await project.checker.getAliasedSymbol(symbol)
+      } catch {
+        // An unresolvable alias stays as written.
+      }
+    }
+    return project.checker.getTargetSymbol(resolved)
+  })()
+  byId.set(symbol.id, resolving)
+  return resolving
 }
 
 const matchesCanonicalSymbol = async (project: Project, candidate: Symbol, target: Symbol): Promise<boolean> =>
@@ -573,15 +596,26 @@ const resolveIdentifierHandle = async (
   return node !== undefined && isIdentifier(node) ? node : undefined
 }
 
-const projectSourceFiles = async (project: Project, packagePath: string): Promise<SourceFile[]> => {
-  const names = await project.program.getSourceFileNames()
-  const files: SourceFile[] = []
-  for (const name of names) {
-    if (!isProjectSourceFile(name, packagePath)) continue
-    const sourceFile = await project.program.getSourceFile(name)
-    if (sourceFile !== undefined) files.push(sourceFile)
+const sourceFilesByProject = new WeakMap<Project, Map<string, Promise<SourceFile[]>>>()
+
+const projectSourceFiles = (project: Project, packagePath: string): Promise<SourceFile[]> => {
+  let byPackage = sourceFilesByProject.get(project)
+  if (byPackage === undefined) {
+    byPackage = new Map()
+    sourceFilesByProject.set(project, byPackage)
   }
-  return files
+  const cached = byPackage.get(packagePath)
+  if (cached !== undefined) return cached
+  const loading = (async (): Promise<SourceFile[]> => {
+    const names = (await project.program.getSourceFileNames()).filter((name) => isProjectSourceFile(name, packagePath))
+    const loaded = await mapBounded(names, FAN_OUT, (name) => project.program.getSourceFile(name))
+    return loaded.filter((sourceFile): sourceFile is SourceFile => sourceFile !== undefined)
+  })()
+  byPackage.set(packagePath, loading)
+  loading.catch(() => {
+    if (byPackage.get(packagePath) === loading) byPackage.delete(packagePath)
+  })
+  return loading
 }
 
 const isProjectSourceFile = (fileName: string, packagePath: string): boolean => {
