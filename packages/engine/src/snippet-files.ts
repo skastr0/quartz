@@ -48,6 +48,7 @@ const diagnosticsFor = async (project: Project, filePath: string): Promise<reado
       line: location.line + 1,
       column: location.character + 1,
       severity: diagnostic.category === DiagnosticCategory.Error ? "error" : "warning",
+      code: diagnostic.code,
     })
   }
   return diagnostics.sort((left, right) =>

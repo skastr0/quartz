@@ -219,11 +219,21 @@ export interface SnippetDiagnostic {
   readonly line: number
   readonly column: number
   readonly severity: "error" | "warning"
+  /** Compiler diagnostic code, when the engine has it. */
+  readonly code?: number
+}
+
+/** The import line the compiler would add for a name the snippet uses but does not import. */
+export interface SnippetImportSuggestion {
+  readonly name: string
+  readonly importText: string
 }
 
 export interface SnippetCheckResult {
   readonly valid: boolean
   readonly errors?: readonly SnippetDiagnostic[]
+  /** Present when the snippet names a symbol that an unimported module exports. */
+  readonly importSuggestions?: readonly SnippetImportSuggestion[]
 }
 
 /** One ephemeral source file in a multi-file snippet check. */

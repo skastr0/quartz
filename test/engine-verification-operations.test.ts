@@ -233,7 +233,7 @@ describe("multi-file snippet check", () => {
 
     expect(result.valid).toBe(false)
     expect(result.errors).toEqual([
-      { file: "types/__pair_d.ts", line: 2, column: 31, severity: "error", message: "Type 'number' is not assignable to type 'string'." },
+      { file: "types/__pair_d.ts", line: 2, column: 31, severity: "error", message: "Type 'number' is not assignable to type 'string'.", code: 2322 },
     ])
   })
 
@@ -278,6 +278,49 @@ describe("multi-file snippet check", () => {
         expect(result.errors?.[0]?.message).toBe("Type 'number' is not assignable to type 'string'.")
       } finally {
         await temporary.close()
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("snippet import suggestions", () => {
+  it("names the module that exports an unresolved symbol, and stays quiet when there is none", async () => {
+    const root = await mkdtemp(join(tmpdir(), "quartz-snippet-imports-"))
+    try {
+      await mkdir(join(root, "src"), { recursive: true })
+      await writeFile(join(root, "tsconfig.json"), JSON.stringify({
+        compilerOptions: { target: "ESNext", module: "ESNext", moduleResolution: "bundler", strict: true, noEmit: true },
+        include: ["src/**/*.ts"],
+      }))
+      await writeFile(join(root, "src/index.ts"), "export interface PublicShape { value: string }\n")
+      await writeFile(join(root, "src/internal.ts"), "export const helper = (input: string): number => input.length\nexport interface Hidden { flag: boolean }\n")
+      const context = await AnalyzerContext.open(root)
+      try {
+        const withSuggestion = await createVerificationOperations(context, {
+          compatibility: async () => ({ compatible: true, from: "Source", to: "Target" }),
+          diagnostics: async () => [],
+          transformSearch: async () => transformEvidence,
+        }).checkSnippet("export const h: Hidden = { flag: true };\nexport const n: number = helper(\"abc\");\n")
+
+        expect(withSuggestion.valid).toBe(false)
+        expect(withSuggestion.errors?.map((error) => error.code)).toEqual([2304, 2304])
+        expect(withSuggestion.importSuggestions).toEqual([
+          { name: "Hidden", importText: "import { Hidden } from \"./internal\";" },
+          { name: "helper", importText: "import { helper } from \"./internal\";" },
+        ])
+
+        const withoutSuggestion = await createVerificationOperations(context, {
+          compatibility: async () => ({ compatible: true, from: "Source", to: "Target" }),
+          diagnostics: async () => [],
+          transformSearch: async () => transformEvidence,
+        }).checkSnippet("export const value = missingEverything(1);\n")
+
+        expect(withoutSuggestion.valid).toBe(false)
+        expect(withoutSuggestion).not.toHaveProperty("importSuggestions")
+      } finally {
+        await context.close()
       }
     } finally {
       await rm(root, { recursive: true, force: true })

@@ -94,6 +94,7 @@ export const renderPackageImports = (
   modules: readonly PackageModuleExports[],
   virtualFilePath: string,
   reserved: ReadonlySet<string> = new Set(),
+  wanted?: ReadonlySet<string>,
 ): VirtualPackageImports => {
   const claimedNames = new Set<string>(reserved)
   const lines: string[] = []
@@ -102,7 +103,7 @@ export const renderPackageImports = (
     const typeNames: string[] = []
     const valueNames: string[] = []
     for (const { name, value } of module.names) {
-      if (claimedNames.has(name)) continue
+      if (claimedNames.has(name) || (wanted !== undefined && !wanted.has(name))) continue
       claimedNames.add(name)
       if (value) valueNames.push(name)
       else typeNames.push(name)
@@ -120,7 +121,8 @@ export const synthesizePackageImports = async (
   virtualFilePath: string,
   reserved: ReadonlySet<string> = new Set(),
   modules: Promise<readonly PackageModuleExports[]> = loadPackageExports(project, packageRoot),
-): Promise<VirtualPackageImports> => renderPackageImports(await modules, virtualFilePath, reserved)
+  wanted?: ReadonlySet<string>,
+): Promise<VirtualPackageImports> => renderPackageImports(await modules, virtualFilePath, reserved, wanted)
 
 export interface VirtualFileLease {
   readonly path: string
