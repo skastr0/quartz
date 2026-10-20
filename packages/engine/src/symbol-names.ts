@@ -1,7 +1,8 @@
 /**
- * The checker stores symbol-keyed members under an escaped internal name:
- * `__@iterator@100` for `[Symbol.iterator]`, `__@key@7` for a unique symbol `key`.
- * The numeric suffix is a per-program id that differs between programs and
+ * The checker stores some members under an escaped internal name:
+ * `__@iterator@100` for `[Symbol.iterator]`, `__@key@7` for a unique symbol `key`,
+ * `__#5@#states` for a private field `#states`.
+ * The number is a per-program id that differs between programs, runs and
  * compiler backends, so it never belongs in output.
  */
 const wellKnownSymbols: ReadonlySet<string> = new Set([
@@ -23,8 +24,11 @@ const wellKnownSymbols: ReadonlySet<string> = new Set([
 ])
 
 const escapedSymbolName = /^__@(.+)@\d+$/
+const escapedPrivateName = /^__#\d+@(#.+)$/
 
 export const displaySymbolName = (name: string): string => {
+  const privateMatch = escapedPrivateName.exec(name)
+  if (privateMatch !== null) return privateMatch[1]!
   const match = escapedSymbolName.exec(name)
   if (match === null) return name
   const inner = match[1]!
