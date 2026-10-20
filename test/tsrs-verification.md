@@ -28,10 +28,10 @@ The in-process stress also matched TS-Go, which covers the `ensurePrograms` refr
    `tsc` on the renamed copy reports TS2428 and TS2314. Test: `engine-rename-collisions.test.ts` (`it.fails`).
 2. **`related` leaks checker-internal names.** `symbol: "__@iterator@100"`, `context: "property \"__@iterator@100\""`.
    The suffix is a per-program id (tsrs `@93`, TS-Go `@137` for the same query), so output is not stable across backends.
-   Test: `engine-related-symbol-names.test.ts` (`it.fails`).
+   **Fixed** in 1b1963f (`[Symbol.iterator]`, `[uniqueKey]`; also `info` properties and compatibility messages). Test: `engine-related-symbol-names.test.ts`.
 3. **Cross-package declarations are not reachable by file.** In vortex, `symbols`/`info` with `package: packages/agent` report
    `Actor` at `packages/plugin/src/actor.ts`; `file` and `at-position` on that path with the same package return NotFound
-   (they work with `package: packages/plugin`). Test: `engine-cross-package-files.test.ts` (`it.fails`).
+   (they work with `package: packages/plugin`). **Fixed** in f286667. Test: `engine-cross-package-files.test.ts`.
 4. **Renaming a re-export alias rewrites the source declaration.** `refactor-preview` on `RenamedCore` (`export { Core as RenamedCore }`)
    renames `Core` in `lib/core.ts` and rewrites the specifier to `RenamedCoreRenamed as RenamedCore`. A rename of the alias name
    alone is the usual expectation. Behavior choice; no test.
@@ -47,7 +47,10 @@ The in-process stress also matched TS-Go, which covers the `ensurePrograms` refr
 10. **`doctor` on a directory without a tsconfig walks the whole tree** (113 packages under `/tmp`).
 11. **`leaf-operations.ts:186` calls `getAliasedSymbol(exportedSymbol)` without the alias-flag check** the other call sites now have.
     It sits behind an `isExportSpecifier` branch, so it is low risk, but it is the one remaining path to the panic below.
-12. **`compatible` accepts symbol names only.** `from: "{a: string}"` returns `Symbol "{a: string}" not found`.
+12. **A symlinked workspace root yields absolute paths.** When the root is reached through a symlink (macOS `/tmp` and `/var`),
+    TypeScript reports the realpath of workspace dependencies, which is not under `context.root`, so `symbols` returns absolute
+    file paths and the cross-package fallback in `findSourceFile` does not apply. Resolve the root with `realpath` to fix. No test.
+13. **`compatible` accepts symbol names only.** `from: "{a: string}"` returns `Symbol "{a: string}" not found`.
 
 ## Findings: tsrs
 
