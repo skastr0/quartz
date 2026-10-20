@@ -11,6 +11,11 @@ const LICENSE_PATH = join(REPO_ROOT, "LICENSE")
 const targets = ["darwin-arm64", "linux-arm64", "linux-x64"] as const
 type Target = (typeof targets)[number]
 
+// bsdtar on macOS stores extended attributes (com.apple.provenance) unless told not to,
+// and Linux tar reports every such header while extracting. --no-mac-metadata alone does
+// not drop them on libarchive 3.7, so --no-xattrs is explicit.
+const tarMetadataFlags = process.platform === "darwin" ? ["--no-mac-metadata", "--no-xattrs"] : []
+
 interface NativePackageSpec {
   readonly name: string
   readonly os: string
@@ -158,7 +163,7 @@ const main = async (): Promise<void> => {
       const archive = join(DIST_DIR, `${bundleName}.tar.gz`)
       await run(
         `Archiving ${bundleName}`,
-        ["tar", "-czf", archive, "-C", work, bundleName],
+        ["tar", "-czf", archive, ...tarMetadataFlags, "-C", work, bundleName],
         REPO_ROOT,
         { ...process.env, COPYFILE_DISABLE: "1" },
       )
