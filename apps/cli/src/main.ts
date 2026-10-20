@@ -117,9 +117,15 @@ const EvalPayload = Schema.Struct({
   expression: TypeExpression,
 })
 
+const SnippetFileInput = Schema.Struct({
+  path: FilePath,
+  content: Schema.String,
+})
+
 const CheckSnippetPayload = Schema.Struct({
   ...baseFields,
-  code: Schema.NonEmptyString,
+  code: Schema.optionalKey(Schema.NonEmptyString),
+  files: Schema.optionalKey(Schema.NonEmptyArray(SnippetFileInput)),
 })
 
 const FilePayload = Schema.Struct({
@@ -631,12 +637,40 @@ const commandSpecs = {
   } satisfies CommandSpec<EvalPayload>,
   "check-snippet": {
     name: "check-snippet",
-    description: "Type-check a code snippet without writing it to disk.",
+    description: "Type-check a code snippet, or several files as one program, without writing to disk.",
     schema: CheckSnippetPayload,
     batch: true,
     artifactEligible: false,
     example: { root: "test/fixtures", code: "const x: string = 42;" },
-    execute: (payload: CheckSnippetPayload) => callAnalyzer(payload, (analyzer) => analyzer.checkSnippet(payload.code, packageNameOf(payload))),
+    execute: (payload: CheckSnippetPayload) => {
+      if (payload.code !== undefined && payload.files !== undefined) {
+        return Effect.fail(
+          new CommandInputError({
+            message: "Provide either code or files, not both",
+            details: { expected: ["code", "files"], provided: ["code", "files"], retryable: false },
+          }),
+        )
+      }
+      if (payload.code !== undefined) {
+        const code = payload.code
+        return callAnalyzer(payload, (analyzer) => analyzer.checkSnippet(code, packageNameOf(payload)))
+      }
+      if (payload.files !== undefined) {
+        const files = payload.files
+        return callAnalyzer(payload, (analyzer) =>
+          analyzer.checkSnippetFiles({
+            files,
+            ...(payload.package === undefined ? {} : { packageName: payload.package }),
+          }),
+        )
+      }
+      return Effect.fail(
+        new CommandInputError({
+          message: "One of code or files is required",
+          details: { expected: ["code", "files"], provided: [], retryable: false },
+        }),
+      )
+    },
     target: () => ({ kind: "snippet" }),
   } satisfies CommandSpec<CheckSnippetPayload>,
   file: {
