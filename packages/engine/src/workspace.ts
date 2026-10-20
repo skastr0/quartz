@@ -245,7 +245,9 @@ export class QuartzWorkspace {
     return this.#enqueueMutation(async () => {
       try {
         const previous = this.#requireCurrent()
+        // Without ensurePrograms the new snapshot keeps the stale programs.
         const snapshot = await previous.snapshot.update({
+          ensurePrograms: true,
           fileNotifications:
             changes === undefined
               ? { invalidateAll: true }
