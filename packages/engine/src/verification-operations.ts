@@ -20,6 +20,7 @@ import type {
 import { snippetTopLevelBindings } from "./snippet-bindings"
 import {
   createVirtualFileRegistry,
+  loadPackageExports,
   resolveVirtualFileDirectory,
   synthesizePackageImports,
   withVirtualFile,
@@ -64,14 +65,13 @@ const lineAndColumn = (source: { getLineAndCharacterOfPosition(position: number)
 }
 
 const snippetDiagnostics = async (project: Project, filePath: string, lineOffset = 0): Promise<readonly SnippetDiagnostic[]> => {
-  const diagnostics = (
-    await Promise.all([
-      project.program.getSyntacticDiagnostics(filePath),
-      project.program.getBindDiagnostics(filePath),
-      project.program.getSemanticDiagnostics(filePath),
-    ])
-  ).flat()
-  const sourceFile = await project.program.getSourceFile(filePath)
+  const [syntactic, bind, semantic, sourceFile] = await Promise.all([
+    project.program.getSyntacticDiagnostics(filePath),
+    project.program.getBindDiagnostics(filePath),
+    project.program.getSemanticDiagnostics(filePath),
+    project.program.getSourceFile(filePath),
+  ])
+  const diagnostics = [syntactic, bind, semantic].flat()
   const seen = new Set<string>()
   const result: SnippetDiagnostic[] = []
   for (const diagnostic of diagnostics) {
@@ -167,7 +167,17 @@ export const createVerificationOperations = (
         typeof context.withProject !== "function"
           ? { content: "", lineOffset: 0 }
           : await context.withProject(
-              (project) => synthesizePackageImports(project, pkg.path, lease.path, snippetTopLevelBindings(code)),
+              (project, _pkg, revision) =>
+                // The package's public exports only change with the revision, so repeat snippets skip the round trips.
+                synthesizePackageImports(
+                  project,
+                  pkg.path,
+                  lease.path,
+                  snippetTopLevelBindings(code),
+                  context.cacheForRevision(`package-exports:${pkg.tsconfigPath}`, revision, () =>
+                    loadPackageExports(project, pkg.path),
+                  ),
+                ),
               packageName,
             )
       return workspace.withVirtualFile(pkg.tsconfigPath, lease.path, `${imports.content}${lease.content}`, async (project, filePath) => {
