@@ -50,7 +50,6 @@
       },
       "optionalDependencies": {
         "@skastr0/quartz-darwin-arm64": "0.2.3",
-        "@skastr0/quartz-darwin-x64": "0.2.3",
         "@skastr0/quartz-linux-arm64": "0.2.3",
         "@skastr0/quartz-linux-x64": "0.2.3",
       },
@@ -60,13 +59,6 @@
       "version": "0.2.3",
       "dependencies": {
         "@tsrs/darwin-arm64": "0.18.0-ts7.1.0-dev.20260929",
-      },
-    },
-    "packages/npm/quartz-darwin-x64": {
-      "name": "@skastr0/quartz-darwin-x64",
-      "version": "0.2.3",
-      "dependencies": {
-        "@typescript/typescript-darwin-x64": "7.1.0-dev.20260905.1",
       },
     },
     "packages/npm/quartz-linux-arm64": {
@@ -155,8 +147,6 @@
 
     "@skastr0/quartz-darwin-arm64": ["@skastr0/quartz-darwin-arm64@workspace:packages/npm/quartz-darwin-arm64"],
 
-    "@skastr0/quartz-darwin-x64": ["@skastr0/quartz-darwin-x64@workspace:packages/npm/quartz-darwin-x64"],
-
     "@skastr0/quartz-engine": ["@skastr0/quartz-engine@workspace:packages/engine"],
 
     "@skastr0/quartz-linux-arm64": ["@skastr0/quartz-linux-arm64@workspace:packages/npm/quartz-linux-arm64"],
@@ -188,8 +178,6 @@
     "@types/estree": ["@types/estree@1.0.8", "", {}, "sha512-dWHzHa2WqEXI/O1E9OjrocMTKJl2mSrEolh1Iomrv6U+JuNwaHXsXx9bLu5gG7BUWFIN0skIQJQ/L1rIex4X6w=="],
 
     "@types/node": ["@types/node@25.6.0", "", { "dependencies": { "undici-types": "~7.19.0" } }, "sha512-+qIYRKdNYJwY3vRCZMdJbPLJAtGjQBudzZzdzwQYkEPQd+PJGixUL5QfvCLDaULoLv+RhT3LDkwEfKaAkgSmNQ=="],
-
-    "@typescript/typescript-darwin-x64": ["@typescript/typescript-darwin-x64@7.1.0-dev.20260905.1", "", { "os": "darwin", "cpu": "x64" }, "sha512-Cs3RRpCeq5wjgflC3ujuUV6obcXup9KeaK7d39X7EgTHjFkcsQswGYeRTU9J3LbZ0KLoE3x67IrdHns3XmlHsQ=="],
 
     "@vitest/expect": ["@vitest/expect@4.1.11", "", { "dependencies": { "@standard-schema/spec": "^1.1.0", "@types/chai": "^5.2.2", "@vitest/spy": "4.1.11", "@vitest/utils": "4.1.11", "chai": "^6.2.2", "tinyrainbow": "^3.1.0" } }, "sha512-VX2x5vNJXET47KAFzwERI+KRMtTTCSWTfSMKsW7JsUsXV4psq++e3DvZpuTDOpHcxytiDs6p2nhVb2tVDiiUYw=="],
 
