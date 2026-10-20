@@ -4,6 +4,7 @@ import { SyntaxKind } from "tsrs/unstable/ast"
 import { isIdentifier, isTypeReferenceNode } from "tsrs/unstable/ast/is"
 import { SymbolFlags, type NodeHandle, type Project, type Symbol, type Type } from "tsrs/unstable/async"
 import type { AnalyzerContext } from "./context"
+import { predictRenameErrors } from "./rename-verification"
 import type {
   GraphEdge,
   GraphResult,
@@ -158,6 +159,14 @@ export const createReferenceOperations = (context: AnalyzerContext) => ({
         locations.push({ file, line, column: position.character + 1, before, after })
       }
 
+      const safetyNotes: string[] = []
+      try {
+        const declarationName = declarationNameNode(target.declaration) ?? target.declaration
+        predictedErrors.push(...(await predictRenameErrors(context, pkg, project, declarationName, sites, options.symbol, options.to)))
+      } catch (cause) {
+        safetyNotes.push(`Could not check the rename against the compiler: ${cause instanceof Error ? cause.message : String(cause)}`)
+      }
+
       const stringLiteralLocations: StringLiteralRef[] = []
       const commentLocations: StringLiteralRef[] = []
       for (const fileName of affectedFiles) {
@@ -167,7 +176,6 @@ export const createReferenceOperations = (context: AnalyzerContext) => ({
         collectCommentLocations(sourceFile, context.root, options.symbol, commentLocations)
       }
 
-      const safetyNotes: string[] = []
       if (stringLiteralLocations.length > 0) {
         safetyNotes.push(`${stringLiteralLocations.length} string literal(s) contain "${options.symbol}" and won't be renamed automatically`)
       }
