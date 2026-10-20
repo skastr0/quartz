@@ -121,13 +121,14 @@ npx -y @skastr0/quartz capabilities
 
 - OpenCode plugin: `@skastr0/quartz-opencode-plugin/server`
 - Library: `bun add @skastr0/quartz-engine`
-- macOS arm64 and Linux (x64, arm64). I ran macOS arm64 only; Linux unverified. No Intel macOS, no Windows.
+- macOS arm64 and Linux (x64, arm64). macOS arm64 runs natively; both Linux archives and npm packages ran in Debian containers (aarch64 native, x64 emulated). No Intel macOS, no Windows.
 - Point readers to npm. The 0.2.x GitHub Releases are drafts; publishing them is the operator's call.
 
 ## Proof
 
 - **On npm:** `@skastr0/quartz` 0.1.0 (2026-06-03), 0.2.0 (2026-08-17), 0.2.1 (2026-09-07), 0.2.2 (2026-09-24), 0.2.3 (2026-09-24) (`npm view @skastr0/quartz time`).
-- **Tests:** `bun run verify` → `Tests 92 passed (92)` in 11 files, run 2026-09-24.
+- **Tests:** `bun run verify` → `Tests 102 passed (102)` in 12 files on branch `feat/tsrs-backend` (`3d4b6dd`), run 2026-10-20.
+- **Linux runs:** `quartz-0.2.3-linux-arm64.tar.gz` in `debian:bookworm-slim` on aarch64 and `quartz-0.2.3-linux-x64.tar.gz` in the same image on emulated amd64: `doctor` returned `ok: true` with `package_count: 1`, `check-snippet` returned real compiler errors (including the multi-file `file` label), and `diagnostics` was clean. Installing the packed `@skastr0/quartz` plus `@skastr0/quartz-linux-<arch>` tarballs on both platforms pulled `@tsrs/linux-<arch>-gnu` transitively and ran through `node_modules/.bin/quartz`.
 - **Used by Pulsar:** "Scored TypeScript through Quartz 0.2.1 … instead of ts-morph" (`pulsar/CHANGELOG.md:38`).
 - **Used by agents after edits:** "Now quartz diagnostics on the edited/new `.ts` files" (Quasar `claude:66cd9633…`, 2026-07-24).
 - **Warm speed, one workload:** `refactor-preview` p50 went from 3,422 ms to 12 ms (3 samples, macOS arm64; `docs/bench/baseline-20260723.1-monorepo-hotpaths.json` → `docs/bench/post-hotpath-monorepo.json`). Which repo was benchmarked is not recorded.
