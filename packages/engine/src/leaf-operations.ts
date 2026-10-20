@@ -54,6 +54,8 @@ import {
   withVirtualFile,
   type VirtualFileRegistry,
 } from "./virtual-files"
+import { displaySymbolName } from "./symbol-names"
+
 const TYPE_FLAGS =
   NodeBuilderFlags.NoTruncation |
   NodeBuilderFlags.UseStructuralFallback |
@@ -118,6 +120,28 @@ const sourceFilesFor = (
     )
     return files.filter((source): source is SourceFile => source !== undefined)
   })
+
+/**
+ * Resolve a caller-supplied path to a source file of the package program. Symbols
+ * re-exported from a dependency package report that package's files, so an exact
+ * path that lies outside the package directory still resolves when the program
+ * contains it as workspace source.
+ */
+const findSourceFile = async (
+  context: AnalyzerContext,
+  project: Project,
+  packageFiles: readonly SourceFile[],
+  file: string,
+): Promise<SourceFile | undefined> => {
+  const target = isAbsolute(file) ? resolve(file) : resolve(context.root, file)
+  const inPackage = packageFiles.find((candidate) => resolve(candidate.fileName) === target || candidate.fileName.endsWith(file))
+  if (inPackage !== undefined) return inPackage
+  const base = resolve(context.root)
+  // isSourceFileFromExternalLibrary is true for workspace dependencies resolved through
+  // node_modules symlinks, so judge by path: workspace source, not installed code.
+  if (!target.startsWith(`${base}/`) || target.includes("/node_modules/")) return undefined
+  return project.program.getSourceFile(target)
+}
 
 const relativePath = (root: string, file: string): string => {
   const absolute = resolve(file)
@@ -335,7 +359,7 @@ const propertiesFor = async (
     included.map(async ({ property, declaration }): Promise<TypePropertyInfo> => {
       const propertyType = typeByProperty.get(property)!
       const result: TypePropertyInfo = {
-        name: property.name,
+        name: displaySymbolName(property.name),
         type: await project.checker.typeToString(propertyType, declaration ?? location, flags),
         ...(hasOptional(property) ? { optional: true } : {}),
       }
@@ -563,8 +587,7 @@ export const createLeafOperations = (context: AnalyzerContext): LeafOperations =
 
   const getFileDeclarations = (file: string, options: { readonly symbol?: string; readonly includePrivate?: boolean; readonly packageName?: string } = {}): Promise<FileInspectionResult | null> => context.withProject(async (project, pkg, revision) => {
     const sourceFiles = await sourceFilesFor(context, project, pkg, revision)
-    const target = isAbsolute(file) ? resolve(file) : resolve(context.root, file)
-    const source = sourceFiles.find((candidate) => resolve(candidate.fileName) === target || candidate.fileName.endsWith(file))
+    const source = await findSourceFile(context, project, sourceFiles, file)
     if (source === undefined) return null
     const filter = options.symbol === undefined ? undefined : new RegExp(options.symbol, "i")
     const metadata = await metadataFor(project, source)
@@ -626,9 +649,9 @@ export const createLeafOperations = (context: AnalyzerContext): LeafOperations =
       for (let index = 0; index < missingRequired.length; index += 1) {
         const property = missingRequired[index]!
         const expected = expectedTexts[index]!
-        const message = `Property '${property.name}' is missing in type '${fromText}' but required in type '${toText}' (expected: ${expected})`
+        const message = `Property '${displaySymbolName(property.name)}' is missing in type '${fromText}' but required in type '${toText}' (expected: ${expected})`
         reasons.push(message)
-        issues.push({ kind: "missing_property", property: property.name, expectedType: expected, message })
+        issues.push({ kind: "missing_property", property: displaySymbolName(property.name), expectedType: expected, message })
       }
     }
     for (const property of fromProperties) {
@@ -643,9 +666,9 @@ export const createLeafOperations = (context: AnalyzerContext): LeafOperations =
         project.checker.typeToString(actualType, fromMatch.node),
         project.checker.typeToString(expectedType, toMatch.node),
       ])
-      const message = `Property '${property.name}' has incompatible types: '${actual}' is not assignable to '${expected}'`
+      const message = `Property '${displaySymbolName(property.name)}' has incompatible types: '${actual}' is not assignable to '${expected}'`
       reasons.push(message)
-      issues.push({ kind: "type_mismatch", property: property.name, actualType: actual, expectedType: expected, message })
+      issues.push({ kind: "type_mismatch", property: displaySymbolName(property.name), actualType: actual, expectedType: expected, message })
     }
     if (reasons.length === 0) {
       const message = `Type '${fromText}' is not assignable to type '${toText}'`
@@ -672,8 +695,7 @@ export const createLeafOperations = (context: AnalyzerContext): LeafOperations =
 
   const getTypeAtPosition = (filePath: string, line: number, column: number, packageName?: string): Promise<TypeAtPositionResult | null> => context.withProject(async (project, pkg, revision) => {
     const sourceFiles = await sourceFilesFor(context, project, pkg, revision)
-    const targetPath = isAbsolute(filePath) ? resolve(filePath) : resolve(context.root, filePath)
-    const source = sourceFiles.find((candidate) => resolve(candidate.fileName) === targetPath || candidate.fileName.endsWith(filePath))
+    const source = await findSourceFile(context, project, sourceFiles, filePath)
     if (source === undefined || line < 1 || column < 1) return null
     let position: number
     try { position = source.getPositionOfLineAndCharacter(line - 1, column - 1) } catch { return null }

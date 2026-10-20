@@ -4,6 +4,8 @@ import { SyntaxKind } from "tsrs/unstable/ast"
 import { isIdentifier, isTypeReferenceNode } from "tsrs/unstable/ast/is"
 import { SymbolFlags, type NodeHandle, type Project, type Symbol, type Type } from "tsrs/unstable/async"
 import type { AnalyzerContext } from "./context"
+import { predictRenameErrors } from "./rename-verification"
+import { displaySymbolName } from "./symbol-names"
 import type {
   GraphEdge,
   GraphResult,
@@ -106,7 +108,7 @@ export const createReferenceOperations = (context: AnalyzerContext) => ({
           const child = await targets.lookup(reference.symbol)
           if (child === null) continue
           const childId = await symbolIdentity(project, child.symbol)
-          const childName = child.symbol.name
+          const childName = displaySymbolName(child.symbol.name)
           if (!nodeIds.has(childId)) {
             nodeIds.add(childId)
             nodes.push(childName)
@@ -158,6 +160,14 @@ export const createReferenceOperations = (context: AnalyzerContext) => ({
         locations.push({ file, line, column: position.character + 1, before, after })
       }
 
+      const safetyNotes: string[] = []
+      try {
+        const declarationName = declarationNameNode(target.declaration) ?? target.declaration
+        predictedErrors.push(...(await predictRenameErrors(context, pkg, project, declarationName, sites, options.symbol, options.to)))
+      } catch (cause) {
+        safetyNotes.push(`Could not check the rename against the compiler: ${cause instanceof Error ? cause.message : String(cause)}`)
+      }
+
       const stringLiteralLocations: StringLiteralRef[] = []
       const commentLocations: StringLiteralRef[] = []
       for (const fileName of affectedFiles) {
@@ -167,7 +177,6 @@ export const createReferenceOperations = (context: AnalyzerContext) => ({
         collectCommentLocations(sourceFile, context.root, options.symbol, commentLocations)
       }
 
-      const safetyNotes: string[] = []
       if (stringLiteralLocations.length > 0) {
         safetyNotes.push(`${stringLiteralLocations.length} string literal(s) contain "${options.symbol}" and won't be renamed automatically`)
       }
@@ -455,7 +464,7 @@ const findOutgoingReferences = async (project: Project, target: Target): Promise
     const key = `${await symbolIdentity(project, resolved)}:${context}`
     if (seen.has(key)) return
     seen.add(key)
-    references.push({ symbol: resolved.name, context })
+    references.push({ symbol: displaySymbolName(resolved.name), context })
   }
 
   const type = await project.checker.getTypeAtLocation(target.declaration)
@@ -467,7 +476,7 @@ const findOutgoingReferences = async (project: Project, target: Target): Promise
     const declaration = await declarationHandle.resolve(project)
     if (declaration === undefined) continue
     const propertyType = await project.checker.getTypeOfSymbolAtLocation(property, declaration)
-    await add((await propertyType.getSymbol()) ?? (await propertyType.getAliasSymbol()), `property "${property.name}"`)
+    await add((await propertyType.getSymbol()) ?? (await propertyType.getAliasSymbol()), `property "${displaySymbolName(property.name)}"`)
   }
   if (type.isClassOrInterface()) {
     const baseTypes = await project.checker.getBaseTypes(type)
