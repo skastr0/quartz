@@ -400,7 +400,7 @@ describe("native engine transform search", () => {
         ...Array.from({ length: 5 }, (_, index) => `export const valid${index} = (value: Source): Target => value`),
       ].join("\n"))
       const temporaryContext = await AnalyzerContext.open(root)
-      const virtualFiles = vi.spyOn(temporaryContext.workspace, "withVirtualFile")
+      const virtualFiles = vi.spyOn(temporaryContext.workspace, "withVirtualFiles")
       try {
         const response = await createTransformSearchOperation(temporaryContext)({
           from: "Source",
@@ -415,6 +415,7 @@ describe("native engine transform search", () => {
           verification: { verified: 1 },
         })
         expect(virtualFiles).toHaveBeenCalledTimes(1)
+        expect(virtualFiles.mock.calls[0]?.[1]).toHaveLength(1)
       } finally {
         virtualFiles.mockRestore()
         await temporaryContext.close()

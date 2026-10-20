@@ -539,21 +539,25 @@ const declaringModuleImports = (
   return { content: `${lines.join("\n")}\n`, names }
 }
 
-const verifySyntheticMatch = async (
-  context: AnalyzerContext,
+interface SyntheticSource {
+  readonly filePath: string
+  readonly syntheticCode: string
+}
+
+interface SyntheticOutcome {
+  readonly diagnostics: readonly Diagnostic[]
+  readonly selectedSignatureKey: string | null
+}
+
+const syntheticSourceFor = async (
   project: Project,
   packageInfo: { readonly path: string; readonly tsconfigPath: string },
   sourceFiles: readonly SourceFile[],
   match: Match,
   options: TransformSearchOptions,
-): Promise<SyntheticVerification> => {
+): Promise<SyntheticSource | null> => {
   const call = syntheticCall(match)
-  if (call === null || options.from === undefined || options.to === undefined) {
-    return {
-      verification: { status: "unverifiable", method: null, reason: "not_importable" },
-      selectedSignatureKey: null,
-    }
-  }
+  if (call === null || options.from === undefined || options.to === undefined) return null
   const virtualFilePath = join(
     resolveVirtualFileDirectory(packageInfo.path),
     `__quartz_transform_verify_${(syntheticSequence++).toString(36)}.ts`,
@@ -563,47 +567,113 @@ const verifySyntheticMatch = async (
   const assignment = match.to?.unwrapped && (match.to.wrapper === "Promise" || match.to.wrapper === "PromiseLike")
     ? `async function __quartzVerify() {\n  const __output: __QueryTo = await ${call}\n}`
     : `const __output: __QueryTo = ${call}`
-  const syntheticCode = `${declaring.content}${imports.content}type __QueryFrom = ${options.from}\ntype __QueryTo = ${options.to}\ndeclare const __input: __QueryFrom\n${assignment}\n`
-  const syntheticResult = await context.workspace.withVirtualFile(
-    packageInfo.tsconfigPath,
-    virtualFilePath,
-    syntheticCode,
-    async (syntheticProject, filePath) => {
-      const diagnostics = (
-        await Promise.all([
-        syntheticProject.program.getSyntacticDiagnostics(filePath),
-        syntheticProject.program.getBindDiagnostics(filePath),
-        syntheticProject.program.getSemanticDiagnostics(filePath),
-      ])
-      ).flat()
-      if (diagnostics.length > 0) return { diagnostics, selectedSignatureKey: null }
-      const sourceFile = await syntheticProject.program.getSourceFile(filePath)
-      const callNode = sourceFile === undefined ? null : findSyntheticCall(sourceFile)
-      if (callNode === null) return { diagnostics, selectedSignatureKey: null }
-      const signature = await syntheticProject.checker.getResolvedSignature(callNode)
-      if (await syntheticProject.checker.isUnknownSignature(signature)) {
-        return { diagnostics, selectedSignatureKey: null }
-      }
-      const declaration = await signature.declaration?.resolve(syntheticProject)
-      return {
-        diagnostics,
-        selectedSignatureKey: declaration === undefined ? null : signatureKeyForNode(declaration),
-      }
-    },
-  )
-  const failed = syntheticResult.diagnostics.length > 0 || syntheticResult.selectedSignatureKey === null
+  return {
+    filePath: virtualFilePath,
+    syntheticCode: `${declaring.content}${imports.content}type __QueryFrom = ${options.from}\ntype __QueryTo = ${options.to}\ndeclare const __input: __QueryFrom\n${assignment}\n`,
+  }
+}
+
+/** Diagnostics and the resolved call's declaration key for one synthetic file. */
+const syntheticOutcomeFor = async (syntheticProject: Project, filePath: string): Promise<SyntheticOutcome> => {
+  const [syntactic, bind, semantic, sourceFile] = await Promise.all([
+    syntheticProject.program.getSyntacticDiagnostics(filePath),
+    syntheticProject.program.getBindDiagnostics(filePath),
+    syntheticProject.program.getSemanticDiagnostics(filePath),
+    syntheticProject.program.getSourceFile(filePath),
+  ])
+  const diagnostics = [...syntactic, ...bind, ...semantic]
+  if (diagnostics.length > 0) return { diagnostics, selectedSignatureKey: null }
+  const callNode = sourceFile === undefined ? null : findSyntheticCall(sourceFile)
+  if (callNode === null) return { diagnostics, selectedSignatureKey: null }
+  const signature = await syntheticProject.checker.getResolvedSignature(callNode)
+  if (await syntheticProject.checker.isUnknownSignature(signature)) {
+    return { diagnostics, selectedSignatureKey: null }
+  }
+  const declaration = await signature.declaration?.resolve(syntheticProject)
+  return {
+    diagnostics,
+    selectedSignatureKey: declaration === undefined ? null : signatureKeyForNode(declaration),
+  }
+}
+
+const syntheticVerification = (match: Match, options: TransformSearchOptions, source: SyntheticSource | null, outcome: SyntheticOutcome): SyntheticVerification => {
+  if (source === null) {
+    return {
+      verification: { status: "unverifiable", method: null, reason: "not_importable" },
+      selectedSignatureKey: null,
+    }
+  }
+  const failed = outcome.diagnostics.length > 0 || outcome.selectedSignatureKey === null
   return {
     verification: {
       status: failed ? "unverified" : "verified",
       method: "synthetic",
       reason: failed ? "synthetic_check_failed" : "synthetic_check_passed",
-      ...(syntheticResult.diagnostics.length > 0 && options.includeDiagnostics === true
-        ? { diagnostics: syntheticResult.diagnostics.map((diagnostic) => ({ code: diagnostic.code, message: diagnosticText(diagnostic) })) }
+      ...(outcome.diagnostics.length > 0 && options.includeDiagnostics === true
+        ? { diagnostics: outcome.diagnostics.map((diagnostic) => ({ code: diagnostic.code, message: diagnosticText(diagnostic) })) }
         : {}),
-      ...(options.includeSyntheticCode === true ? { syntheticCode } : {}),
+      ...(options.includeSyntheticCode === true ? { syntheticCode: source.syntheticCode } : {}),
     },
-    selectedSignatureKey: syntheticResult.selectedSignatureKey,
+    selectedSignatureKey: outcome.selectedSignatureKey,
   }
+}
+
+interface BatchWorkspace {
+  withVirtualFiles?<T>(
+    tsconfigPath: string,
+    files: readonly { readonly path: string; readonly content: string }[],
+    operation: (project: Project, paths: readonly string[]) => Promise<T>,
+  ): Promise<T>
+}
+
+/**
+ * Verify several candidates in one snapshot: every synthetic file joins one
+ * layered program instead of paying a program build per candidate.
+ */
+const verifySyntheticMatches = async (
+  context: AnalyzerContext,
+  project: Project,
+  packageInfo: { readonly path: string; readonly tsconfigPath: string },
+  sourceFiles: readonly SourceFile[],
+  matches: readonly Match[],
+  options: TransformSearchOptions,
+): Promise<SyntheticVerification[]> => {
+  const sources = await mapWithConcurrency(
+    matches,
+    ASSIGNABILITY_BATCH_SIZE,
+    (match) => syntheticSourceFor(project, packageInfo, sourceFiles, match, options),
+  )
+  const pending = sources.flatMap((source, index) => source === null ? [] : [{ index, source }])
+  const outcomes = new Array<SyntheticOutcome | undefined>(matches.length)
+  if (pending.length > 0) {
+    const workspace = context.workspace as BatchWorkspace
+    if (typeof workspace.withVirtualFiles === "function") {
+      const batched = await workspace.withVirtualFiles(
+        packageInfo.tsconfigPath,
+        pending.map(({ source }) => ({ path: source.filePath, content: source.syntheticCode })),
+        async (syntheticProject, paths) => Promise.all(paths.map((filePath) => syntheticOutcomeFor(syntheticProject, filePath))),
+      )
+      pending.forEach(({ index }, position) => {
+        outcomes[index] = batched[position]
+      })
+    } else {
+      const sequential = await mapWithConcurrency(
+        pending,
+        SYNTHETIC_VERIFICATION_BATCH_SIZE,
+        ({ source }) => context.workspace.withVirtualFile(
+          packageInfo.tsconfigPath,
+          source.filePath,
+          source.syntheticCode,
+          (syntheticProject, filePath) => syntheticOutcomeFor(syntheticProject, filePath),
+        ),
+      )
+      pending.forEach(({ index }, position) => {
+        outcomes[index] = sequential[position]
+      })
+    }
+  }
+  return matches.map((match, index) =>
+    syntheticVerification(match, options, sources[index]!, outcomes[index] ?? { diagnostics: [], selectedSignatureKey: null }))
 }
 
 export type TransformSearchOperation = (
@@ -650,22 +720,22 @@ interface ToSelection extends FromSelection {
   readonly to: ToMatchDetails | null
 }
 
-type VerifyMatchGroup = (group: readonly Match[]) => Promise<Match>
+type VerifyMatchGroups = (groups: readonly (readonly Match[])[]) => Promise<readonly Match[]>
 
 const verifyUnfilteredGroups = async (
   groups: readonly (readonly Match[])[],
   limit: number,
-  verify: VerifyMatchGroup,
+  verify: VerifyMatchGroups,
 ): Promise<Match[]> => {
   const prefixLength = Math.min(groups.length, limit + SYNTHETIC_OVERSCAN)
-  const verifiedPrefix = await Promise.all(groups.slice(0, prefixLength).map(verify))
+  const verifiedPrefix = await verify(groups.slice(0, prefixLength))
   return [...verifiedPrefix, ...groups.slice(prefixLength).map((group) => group[0]!)].sort(compareMatches)
 }
 
 const verifyTrustedGroups = async (
   groups: readonly (readonly Match[])[],
   limit: number,
-  verify: VerifyMatchGroup,
+  verify: VerifyMatchGroups,
 ): Promise<Match[]> => {
   if (limit === 0) return []
   const matches: Match[] = []
@@ -688,7 +758,7 @@ const verifyTrustedGroups = async (
     const batchSize = verifiedCount < limit
       ? Math.min(SYNTHETIC_VERIFICATION_BATCH_SIZE, limit - verifiedCount)
       : 1
-    const batch = await Promise.all(groups.slice(start, start + batchSize).map(verify))
+    const batch = await verify(groups.slice(start, start + batchSize))
     matches.push(...batch)
     verifiedCount += batch.filter((match) => match.verification.status === "verified").length
     start += batchSize
@@ -933,23 +1003,38 @@ export const createTransformSearchOperation = (context: AnalyzerContext) => asyn
             }),
       }
     }
-    const verifyPending = async (group: readonly Match[]): Promise<Match> => {
-      const provisional = group[0]!
-      if (provisional.verification.reason !== "assignability_pending_synthetic") {
-        return finalizeVerification(provisional, provisional.verification)
-      }
-      const synthetic = await verifySyntheticMatch(context, project, pkg, sourceFiles, provisional, options)
-      const selected = synthetic.selectedSignatureKey === null
-        ? undefined
-        : group.find((match) => match.candidate.signatureKey === synthetic.selectedSignatureKey)
-      if (synthetic.verification.status === "verified" && selected === undefined) {
-        return finalizeVerification(provisional, {
-          ...synthetic.verification,
-          status: "unverified",
-          reason: "synthetic_check_failed",
+    const verifyPending = async (groups: readonly (readonly Match[])[]): Promise<readonly Match[]> => {
+      const provisional = groups.map((group) => group[0]!)
+      const decided = provisional.map((match) =>
+        match.verification.reason === "assignability_pending_synthetic"
+          ? null
+          : finalizeVerification(match, match.verification))
+      const pending = provisional.flatMap((match, index) => decided[index] === null ? [index] : [])
+      if (pending.length > 0) {
+        const synthetic = await verifySyntheticMatches(
+          context,
+          project,
+          pkg,
+          sourceFiles,
+          pending.map((index) => provisional[index]!),
+          options,
+        )
+        pending.forEach((index, position) => {
+          const group = groups[index]!
+          const verification = synthetic[position]!
+          const selected = verification.selectedSignatureKey === null
+            ? undefined
+            : group.find((match) => match.candidate.signatureKey === verification.selectedSignatureKey)
+          decided[index] = verification.verification.status === "verified" && selected === undefined
+            ? finalizeVerification(provisional[index]!, {
+                ...verification.verification,
+                status: "unverified",
+                reason: "synthetic_check_failed",
+              })
+            : finalizeVerification(selected ?? provisional[index]!, verification.verification)
         })
       }
-      return finalizeVerification(selected ?? provisional, synthetic.verification)
+      return decided as readonly Match[]
     }
     const rankedMatches = trustFiltered
       ? await verifyTrustedGroups(matchGroups, limit, verifyPending)
