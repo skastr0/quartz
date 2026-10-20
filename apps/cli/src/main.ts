@@ -3,6 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises"
 import { isAbsolute, join, relative, resolve } from "node:path"
 import { Context, Effect, Layer, Result, Schema, SchemaIssue } from "effect"
 import {
+  analysisTsrsVersion,
   analysisTypeScriptVersion,
   createTypeAnalyzer,
   QuartzEngineError,
@@ -16,6 +17,7 @@ import type {
 import { defaultArtifactDirectory, quartzHome, QUARTZ_HOME_ENV } from "./runtime-storage"
 
 const VERSION = "0.2.3"
+const ENGINE_BACKEND = "tsrs"
 const DEFAULT_CONCURRENCY = 5
 const AUTO_ARTIFACT_THRESHOLD_BYTES = 8_000
 
@@ -251,12 +253,16 @@ interface ProtocolError {
 interface SuccessEnvelope<T> {
   readonly ok: true
   readonly command: string
+  readonly backend: string
+  readonly tsrs_version: string
   readonly data: T
 }
 
 interface FailureEnvelope {
   readonly ok: false
   readonly command?: string
+  readonly backend: string
+  readonly tsrs_version: string
   readonly error: ProtocolError
 }
 
@@ -841,6 +847,8 @@ const commandSpecs = {
         Effect.map(({ metadata, packages, timing }) => ({
           version: VERSION,
           engine: "native",
+          backend: ENGINE_BACKEND,
+          tsrs_version: analysisTsrsVersion,
           analysis_typescript_version: metadata.analysisTypescriptVersion,
           root: rootOf(payload),
           ok: true,
@@ -1362,6 +1370,8 @@ const capabilities = () => ({
   name: "quartz",
   version: VERSION,
   engine: "native",
+  backend: ENGINE_BACKEND,
+  tsrs_version: analysisTsrsVersion,
   analysis_typescript_version: analysisTypeScriptVersion,
   protocol: "agentic-cli/v1",
   input_modes: ["inline JSON", "@file", "stdin (-)"],
@@ -1378,8 +1388,14 @@ const capabilities = () => ({
     artifact_dir: defaultArtifactDirectory(),
   },
   envelopes: {
-    success: { ok: true, command: "<name>", data: {} },
-    failure: { ok: false, command: "<name>", error: { type: "CommandInputError", message: "...", details: {} } },
+    success: { ok: true, command: "<name>", backend: ENGINE_BACKEND, tsrs_version: analysisTsrsVersion, data: {} },
+    failure: {
+      ok: false,
+      command: "<name>",
+      backend: ENGINE_BACKEND,
+      tsrs_version: analysisTsrsVersion,
+      error: { type: "CommandInputError", message: "...", details: {} },
+    },
     batch: {
       outcome: ["succeeded", "partial_failure", "failed"],
       exit_code: "1 when error_count > 0",
@@ -1490,6 +1506,8 @@ const emitSuccess = (
   const envelope: SuccessEnvelope<unknown> = {
     ok: true,
     command,
+    backend: ENGINE_BACKEND,
+    tsrs_version: analysisTsrsVersion,
     data: result.data,
   }
   return writeEnvelope(Bun.stdout, envelope, format).pipe(Effect.as(result.exitCode))
@@ -1502,7 +1520,9 @@ const emitFailure = (
 ): Effect.Effect<number, never> => {
   const protocol = toProtocolError(error)
   const envelope: FailureEnvelope =
-    command === undefined ? { ok: false, error: protocol } : { ok: false, command, error: protocol }
+    command === undefined
+      ? { ok: false, backend: ENGINE_BACKEND, tsrs_version: analysisTsrsVersion, error: protocol }
+      : { ok: false, command, backend: ENGINE_BACKEND, tsrs_version: analysisTsrsVersion, error: protocol }
   return writeEnvelope(Bun.stderr, envelope, format).pipe(Effect.as(1))
 }
 
