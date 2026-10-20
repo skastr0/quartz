@@ -195,23 +195,37 @@ export class QuartzWorkspace {
     const lease: RevisionLease = { state: base, active: true }
     base.readers += 1
     try {
-      let result!: T
-      await this.#revisionLease.run(lease, async () => {
-        await this.#api.runWithTemporaryFileUpdate(base.snapshot, resolvedFile, content, async (temporarySnapshot) => {
+      return await this.#revisionLease.run(lease, async () => {
+        const baseProject = base.snapshot.getConfiguredProject(resolvedConfig)
+        if (baseProject === undefined) {
+          throw new QuartzEngineError("WORKSPACE_OPEN_FAILED", `Project is not open at ${resolvedConfig}`)
+        }
+        const { fileNames, options } = baseProject.parsedCommandLine
+        // A layered file outside the tsconfig's include globs joins no configured
+        // program, so check it in a synthetic program with the package's options.
+        const included = fileNames.some((fileName) => resolve(fileName) === resolvedFile)
+        const temporarySnapshot = await base.snapshot.update({
+          fileSystem: { kind: "layer", files: { [resolvedFile]: content } },
+          ensurePrograms: true,
+          ...(included ? {} : { createPrograms: [{ rootFiles: [...fileNames, resolvedFile], compilerOptions: options }] }),
+        })
+        try {
           this.#assertAcceptingWork()
-          const project =
-            (await temporarySnapshot.getDefaultProjectForFile(resolvedFile)) ??
-            temporarySnapshot.getConfiguredProject(resolvedConfig)
+          const syntheticProgram = temporarySnapshot.operation.createdPrograms?.[0]
+          const project = included || syntheticProgram === undefined
+            ? temporarySnapshot.getConfiguredProject(resolvedConfig)
+            : temporarySnapshot.getProject(syntheticProgram.id)
           if (project === undefined) {
             throw new QuartzEngineError(
               "WORKSPACE_REFRESH_FAILED",
               `TypeScript did not load a project for temporary file ${resolvedFile}`,
             )
           }
-          result = await operation(project, resolvedFile)
-        })
+          return await operation(project, resolvedFile)
+        } finally {
+          await temporarySnapshot.dispose()
+        }
       })
-      return result
     } catch (cause) {
       if (cause instanceof QuartzEngineError) throw cause
       throw new QuartzEngineError(
