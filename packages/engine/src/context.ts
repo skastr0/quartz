@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs"
 import { resolve } from "node:path"
 import type { Project } from "tsrs/unstable/async"
 import type { PackageInfo } from "./contracts"
@@ -28,7 +29,7 @@ export class AnalyzerContext {
   }
 
   static async open(root: string, options: WorkspaceOptions = {}): Promise<AnalyzerContext> {
-    const resolvedRoot = resolve(root)
+    const resolvedRoot = realRoot(root)
     const selectedTsconfigPaths =
       options.tsconfigPath !== undefined
         ? [options.tsconfigPath, ...(options.tsconfigPaths ?? [])]
@@ -140,6 +141,18 @@ export class AnalyzerContext {
 
   close(): Promise<void> {
     return this.workspace.close()
+  }
+}
+
+// TypeScript reports realpaths for workspace dependencies, so a root reached through a
+// symlink (macOS /tmp and /var) must be compared by its real path. A missing root keeps
+// its lexical path so discovery reports the usual error.
+const realRoot = (root: string): string => {
+  const resolved = resolve(root)
+  try {
+    return realpathSync(resolved)
+  } catch {
+    return resolved
   }
 }
 

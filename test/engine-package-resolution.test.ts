@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join, relative, resolve } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
@@ -31,7 +31,8 @@ const writeProject = (root: string, configPath: string, sourcePath: string, symb
 }
 
 const createRoot = (): string => {
-  const root = mkdtempSync(join(tmpdir(), "quartz-package-resolution-"))
+  // Package paths are reported under the real path of the root; engine-cross-package-files covers symlinked roots.
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "quartz-package-resolution-")))
   roots.push(root)
   return root
 }

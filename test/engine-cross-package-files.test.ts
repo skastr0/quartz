@@ -33,6 +33,52 @@ const createMonorepo = (): string => {
   return root
 }
 
+// Opening the workspace through a symlink (macOS /tmp and /var are symlinks) must behave
+// like opening it by its real path: TypeScript reports the realpath of workspace dependencies.
+const symlinkTo = (target: string): string => {
+  const parent = realpathSync(mkdtempSync(join(tmpdir(), "quartz-symlinked-root-")))
+  roots.push(parent)
+  const link = join(parent, "workspace-link")
+  symlinkSync(target, link, "dir")
+  return link
+}
+
+describe("symlinked workspace root", () => {
+  it("lists re-exported symbols with root-relative paths", async () => {
+    const analyzer = await createTypeAnalyzer(symlinkTo(createMonorepo()))
+    try {
+      const listed = await analyzer.listSymbols({ packageName: "packages/app", pattern: "^Actor$" })
+      expect(listed.symbols.map((symbol) => symbol.file)).toEqual(["packages/lib/src/actor.ts"])
+    } finally {
+      await analyzer.dispose()
+    }
+  })
+
+  it("opens files and positions in dependency packages", async () => {
+    const analyzer = await createTypeAnalyzer(symlinkTo(createMonorepo()))
+    try {
+      const declarations = await analyzer.getFileDeclarations("packages/lib/src/actor.ts", { packageName: "packages/app" })
+      expect(declarations?.file).toBe("packages/lib/src/actor.ts")
+      expect(declarations?.declarations.map((declaration) => declaration.name)).toContain("Actor")
+      const position = await analyzer.getTypeAtPosition("packages/lib/src/actor.ts", 1, 18, "packages/app")
+      expect(position?.nodeText).toBe("Actor")
+      expect(position?.location.file).toBe("packages/lib/src/actor.ts")
+    } finally {
+      await analyzer.dispose()
+    }
+  })
+
+  it("keeps in-package paths root-relative", async () => {
+    const analyzer = await createTypeAnalyzer(symlinkTo(createMonorepo()))
+    try {
+      const declarations = await analyzer.getFileDeclarations("packages/app/src/index.ts", { packageName: "packages/app" })
+      expect(declarations?.file).toBe("packages/app/src/index.ts")
+    } finally {
+      await analyzer.dispose()
+    }
+  })
+})
+
 describe("cross-package declaration files", () => {
   it("opens the declaration file from the package that owns it", async () => {
     const analyzer = await createTypeAnalyzer(createMonorepo())
