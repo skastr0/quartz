@@ -22,6 +22,7 @@ import type {
   TypePropertyInfo,
 } from "./contracts"
 import { FAN_OUT, mapBounded } from "./concurrency"
+import { diskIndexFor } from "./disk-index"
 import { AnalyzerContext } from "./context"
 import {
   DiagnosticCategory,
@@ -102,26 +103,57 @@ const kindToString = (kind: SyntaxKind): string => {
   }
 }
 
+const packageSourceNames = async (project: Project, packageInfo: PackageInfo): Promise<string[]> => {
+  const root = resolve(packageInfo.path)
+  // Only files under the package root are kept, so skip fetching the rest (default libs, other packages).
+  return (await project.program.getSourceFileNames()).filter((name) => {
+    const file = resolve(name)
+    return file === root || file.startsWith(`${root}/`)
+  })
+}
+
+const loadPackageSources = async (
+  project: Project,
+  packageInfo: PackageInfo,
+  names: readonly string[],
+): Promise<readonly SourceFile[]> => {
+  const root = resolve(packageInfo.path)
+  const files = await mapBounded(names, FAN_OUT, async (name) => {
+    const source = await project.program.getSourceFile(name)
+    if (source === undefined || await project.program.isSourceFileFromExternalLibrary(source)) return undefined
+    const file = resolve(source.fileName)
+    return file === root || file.startsWith(`${root}/`) ? source : undefined
+  })
+  return files.filter((source): source is SourceFile => source !== undefined)
+}
+
 const sourceFilesFor = (
   context: AnalyzerContext,
   project: Project,
   packageInfo: PackageInfo,
   revision: number,
 ): Promise<readonly SourceFile[]> =>
-  context.cacheForRevision(`source-files:${packageInfo.tsconfigPath}`, revision, async () => {
-    const root = resolve(packageInfo.path)
-    // Only files under the package root are kept, so skip fetching the rest (default libs, other packages).
-    const names = (await project.program.getSourceFileNames()).filter((name) => {
-      const file = resolve(name)
-      return file === root || file.startsWith(`${root}/`)
-    })
-    const files = await mapBounded(names, FAN_OUT, async (name) => {
-      const source = await project.program.getSourceFile(name)
-      if (source === undefined || await project.program.isSourceFileFromExternalLibrary(source)) return undefined
-      const file = resolve(source.fileName)
-      return file === root || file.startsWith(`${root}/`) ? source : undefined
-    })
-    return files.filter((source): source is SourceFile => source !== undefined)
+  context.cacheForRevision(`source-files:${packageInfo.tsconfigPath}`, revision, async () =>
+    loadPackageSources(project, packageInfo, await packageSourceNames(project, packageInfo)),
+  )
+
+/**
+ * The package sources that can export `name`: files whose disk text provably matches the snapshot
+ * are kept only if they spell the name or contain `export *`; every other file is kept. Same order
+ * as sourceFilesFor, and every module that could contribute an export called `name`, or declared
+ * with it, is in the list.
+ */
+const sourceFilesMentioning = (
+  context: AnalyzerContext,
+  project: Project,
+  packageInfo: PackageInfo,
+  revision: number,
+  name: string,
+): Promise<readonly SourceFile[]> =>
+  context.cacheForRevision(`source-files-mentioning:${packageInfo.tsconfigPath}:${name}`, revision, async () => {
+    const names = await packageSourceNames(project, packageInfo)
+    const index = await diskIndexFor(project, names)
+    return loadPackageSources(project, packageInfo, index === null ? names : index.candidates(name, names, { starExports: true }))
   })
 
 /**
@@ -517,6 +549,29 @@ export interface LeafOperations {
   readonly explainType: (expression: string, packageName?: string) => Promise<TypeExplanationResult>
 }
 
+/** The export called `symbolName`, from the modules that can provide it instead of every module of the package. */
+const matchFor = async (
+  context: AnalyzerContext,
+  project: Project,
+  pkg: PackageInfo,
+  revision: number,
+  symbolName: string,
+): Promise<SymbolMatch | null> => {
+  if (parseFileReference(symbolName) !== null) {
+    const sourceFiles = await sourceFilesFor(context, project, pkg, revision)
+    const matches = await exportedMatchesFor(context, project, pkg, revision, sourceFiles)
+    return findMatch(project, sourceFiles, context.root, symbolName, matches)
+  }
+  const rootName = symbolName.split(".")[0]!
+  const sourceFiles = await sourceFilesMentioning(context, project, pkg, revision, rootName)
+  const matches = await context.cacheForRevision(
+    `exported-matches-mentioning:${pkg.tsconfigPath}:${rootName}`,
+    revision,
+    () => exportedMatches(project, sourceFiles),
+  )
+  return findMatch(project, sourceFiles, context.root, symbolName, matches)
+}
+
 export const createLeafOperations = (context: AnalyzerContext): LeafOperations => {
   const virtualFiles = createVirtualFileRegistry(resolveVirtualFileDirectory(context.root), "__quartz_type_eval_")
   const getPackages = async (): Promise<readonly PackageInfo[]> => context.packages
@@ -544,16 +599,12 @@ export const createLeafOperations = (context: AnalyzerContext): LeafOperations =
   }, options.packageName)
 
   const getTypeInfo = (symbolName: string, packageName?: string): Promise<TypeInfo | null> => context.withProject(async (project, pkg, revision) => {
-    const sourceFiles = await sourceFilesFor(context, project, pkg, revision)
-    const matches = await exportedMatchesFor(context, project, pkg, revision, sourceFiles)
-    const match = await findMatch(project, sourceFiles, context.root, symbolName, matches)
+    const match = await matchFor(context, project, pkg, revision, symbolName)
     return match === null ? null : makeTypeInfo(match, project, pkg, context.root)
   }, packageName)
 
   const expandType = (symbolName: string, packageName?: string): Promise<ExpandedType | null> => context.withProject(async (project, pkg, revision) => {
-    const sourceFiles = await sourceFilesFor(context, project, pkg, revision)
-    const matches = await exportedMatchesFor(context, project, pkg, revision, sourceFiles)
-    const match = await findMatch(project, sourceFiles, context.root, symbolName, matches)
+    const match = await matchFor(context, project, pkg, revision, symbolName)
     if (match === null) return null
     const type = await typeForNode(match.node, match.symbol, project)
     // original/expanded previously issued identical EXPAND_FLAGS typeToString calls — share one render.
@@ -620,10 +671,10 @@ export const createLeafOperations = (context: AnalyzerContext): LeafOperations =
   }, options.packageName)
 
   const checkCompatibility = (from: string, to: string, packageName?: string): Promise<CompatibilityResult> => context.withProject(async (project, pkg, revision) => {
-    const sourceFiles = await sourceFilesFor(context, project, pkg, revision)
-    const matches = await exportedMatchesFor(context, project, pkg, revision, sourceFiles)
-    const fromMatch = await findMatch(project, sourceFiles, context.root, from, matches)
-    const toMatch = await findMatch(project, sourceFiles, context.root, to, matches)
+    const [fromMatch, toMatch] = await Promise.all([
+      matchFor(context, project, pkg, revision, from),
+      matchFor(context, project, pkg, revision, to),
+    ])
     if (fromMatch === null || toMatch === null) {
       const missing = fromMatch === null ? from : to
       const message = `Symbol "${missing}" not found`

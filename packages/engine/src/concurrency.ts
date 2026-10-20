@@ -21,4 +21,4 @@ export const mapBounded = async <T, R>(
 }
 
 /** Default fan-out for per-file and per-node checker work. */
-export const FAN_OUT = 64
+export const FAN_OUT = 256

@@ -5,6 +5,7 @@ import { isIdentifier, isTypeReferenceNode } from "tsrs/unstable/ast/is"
 import { SymbolFlags, type NodeHandle, type Project, type Symbol, type Type } from "tsrs/unstable/async"
 import type { AnalyzerContext } from "./context"
 import { FAN_OUT, mapBounded } from "./concurrency"
+import { diskIndexFor } from "./disk-index"
 import { predictRenameErrors } from "./rename-verification"
 import { displaySymbolName } from "./symbol-names"
 import type {
@@ -285,7 +286,7 @@ const collectNameOccurrences = async (
   name: string,
 ): Promise<NameOccurrence[]> => {
   const occurrences: NameOccurrence[] = []
-  for (const sourceFile of await projectSourceFiles(project, packagePath)) {
+  for (const sourceFile of await projectSourceFilesMentioning(project, packagePath, name)) {
     // The source text is already on the client: skip walking trees that cannot contain the name.
     if (!sourceFile.text.includes(name)) continue
     for (const nameNode of declaredNamesOf(sourceFile).get(name) ?? []) occurrences.push({ sourceFile, nameNode })
@@ -348,10 +349,9 @@ const findTargetByScan = async (
   rootPath: string,
   requestedName: string,
 ): Promise<Target | null> => {
-  const sourceFiles = await projectSourceFiles(project, packagePath)
   let canonical: Symbol | undefined
 
-  for (const sourceFile of sourceFiles) {
+  for (const sourceFile of await projectSourceFilesMentioning(project, packagePath, requestedName)) {
     if (!sourceFile.text.includes(requestedName)) continue
     const identifiers: Node[] = []
     visit(sourceFile, (node) => {
@@ -374,8 +374,13 @@ const findTargetByScan = async (
   }
 
   if (canonical !== undefined) {
-    for (const sourceFile of sourceFiles) {
-      const declaration = await findDeclarationForSymbol(sourceFile, project, canonical)
+    // The first file, in project order, that holds one of the symbol's declarations.
+    const declarations: Node[] = []
+    for (const resolved of await mapBounded(canonical.declarations, FAN_OUT, (handle) => handle.resolve(project))) {
+      if (resolved !== undefined) declarations.push(resolved)
+    }
+    for (const fileName of await projectSourceNames(project, packagePath)) {
+      const declaration = declarations.find((candidate) => candidate.getSourceFile().fileName === fileName)
       if (declaration !== undefined) return { symbol: canonical, declaration, packagePath, rootPath }
     }
     const first = canonical.declarations[0]
@@ -383,7 +388,10 @@ const findTargetByScan = async (
     if (declaration !== undefined) return { symbol: canonical, declaration, packagePath, rootPath }
   }
 
-  if (requestedName === "default") return (await findDefaultExportTarget(project, sourceFiles, packagePath, rootPath)) ?? null
+  if (requestedName === "default") {
+    const sourceFiles = await projectSourceFiles(project, packagePath)
+    return (await findDefaultExportTarget(project, sourceFiles, packagePath, rootPath)) ?? null
+  }
 
   return null
 }
@@ -633,26 +641,59 @@ const resolveIdentifierHandle = async (
   return node !== undefined && isIdentifier(node) ? node : undefined
 }
 
-const sourceFilesByProject = new WeakMap<Project, Map<string, Promise<SourceFile[]>>>()
+const sourceFileCache = new WeakMap<Project, Map<string, Promise<SourceFile | undefined>>>()
+const sourceNamesCache = new WeakMap<Project, Map<string, Promise<string[]>>>()
 
-const projectSourceFiles = (project: Project, packagePath: string): Promise<SourceFile[]> => {
-  let byPackage = sourceFilesByProject.get(project)
-  if (byPackage === undefined) {
-    byPackage = new Map()
-    sourceFilesByProject.set(project, byPackage)
+const cachedPerProject = <V>(
+  cache: WeakMap<Project, Map<string, Promise<V>>>,
+  project: Project,
+  key: string,
+  load: () => Promise<V>,
+): Promise<V> => {
+  let byKey = cache.get(project)
+  if (byKey === undefined) {
+    byKey = new Map()
+    cache.set(project, byKey)
   }
-  const cached = byPackage.get(packagePath)
+  const cached = byKey.get(key)
   if (cached !== undefined) return cached
-  const loading = (async (): Promise<SourceFile[]> => {
-    const names = (await project.program.getSourceFileNames()).filter((name) => isProjectSourceFile(name, packagePath))
-    const loaded = await mapBounded(names, FAN_OUT, (name) => project.program.getSourceFile(name))
-    return loaded.filter((sourceFile): sourceFile is SourceFile => sourceFile !== undefined)
-  })()
-  byPackage.set(packagePath, loading)
+  const loading = load()
+  byKey.set(key, loading)
+  // A failed load must not stay cached.
   loading.catch(() => {
-    if (byPackage.get(packagePath) === loading) byPackage.delete(packagePath)
+    if (byKey.get(key) === loading) byKey.delete(key)
   })
   return loading
+}
+
+const loadSourceFile = (project: Project, fileName: string): Promise<SourceFile | undefined> =>
+  cachedPerProject(sourceFileCache, project, fileName, () => project.program.getSourceFile(fileName))
+
+const projectSourceNames = (project: Project, packagePath: string): Promise<string[]> =>
+  cachedPerProject(sourceNamesCache, project, packagePath, async () =>
+    (await project.program.getSourceFileNames()).filter((name) => isProjectSourceFile(name, packagePath)),
+  )
+
+const loadSourceFiles = async (project: Project, names: readonly string[]): Promise<SourceFile[]> =>
+  (await mapBounded(names, FAN_OUT, (name) => loadSourceFile(project, name))).filter(
+    (sourceFile): sourceFile is SourceFile => sourceFile !== undefined,
+  )
+
+const projectSourceFiles = async (project: Project, packagePath: string): Promise<SourceFile[]> =>
+  loadSourceFiles(project, await projectSourceNames(project, packagePath))
+
+/**
+ * Source files that may spell `name`, in project order. Files whose disk text provably matches the
+ * snapshot are filtered by that text without fetching their trees; every other file is fetched.
+ */
+const projectSourceFilesMentioning = async (
+  project: Project,
+  packagePath: string,
+  name: string,
+): Promise<SourceFile[]> => {
+  const names = await projectSourceNames(project, packagePath)
+  const index = await diskIndexFor(project, names)
+  return loadSourceFiles(project, index === null ? names : index.candidates(name, names))
 }
 
 const isProjectSourceFile = (fileName: string, packagePath: string): boolean => {

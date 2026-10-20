@@ -70,8 +70,32 @@ Quartz talks to the `tsrs --api` server over JSON-RPC. What a command costs is m
 - Measured on Bun with `isTypeAssignableTo` on the fixtures: a serial round trip costs 160-520 µs; the same call inside a batch of 200 costs 16-26 µs. Issue independent checker calls together (`Promise.all`, or `mapBounded` in `packages/engine/src/concurrency.ts`) and keep awaits for dependent stages.
 - `tsrs/unstable/sync` (MessagePack) does not construct under Bun (`stdout._handle.fd` is undefined), so it is not an option for the CLI or the plugin. Under Node it measures 44-138 µs per serial call, still slower than batching.
 - `tsrs --api` accepts no `--checkers`, `--singleThreaded` or `--maxMemory`; the `TSRS_MAX_MEMORY` environment variable changed neither time nor peak RSS in API mode. On junto (2.7k files) the first semantic diagnostics take about 3 s of server CPU on one thread, where `tsrs -p` spends 5 s of CPU across threads in 2.7 s wall. Per-file diagnostics requests do not parallelize either.
-- Cold first calls scan the package: every project file is fetched as an AST. Keep per-file work out of the scan, fetch through a bounded fan-out, and skip walking trees whose text cannot contain the name.
+- Cold first calls used to scan the package: every project file fetched as an AST. A name is now looked up in the files that can spell it. Files whose disk text provably matches the snapshot (mtime at or before the revision's trust time minus 2 s, not named by a partial refresh, plain UTF-8, no `\u` escapes) are searched on disk (`disk-index.ts`) and only the matching trees are fetched; every other file is fetched as before. Fan-out is bounded at 256 (`concurrency.ts`): 64 cost 15% on cold `info` because each 64 files was another round trip.
+- A temporary file inside the tsconfig include globs joins the configured program through a layer update; only files outside the globs need a synthetic program. Directories that missed the globs are remembered per revision.
 
 ## Measuring on a loaded machine
 
 Wall time moves far more with host load than most changes do. Compare **round trips and requests per call** (deterministic), client CPU (`process.cpuUsage()`), and back-to-back A/B runs; treat `loadAvg1m` in the report as the noise level. Do not compare reports taken at different load.
+
+## Upstream issue draft: checker threads in `tsrs --api`
+
+Not filed. For the operator to approve.
+
+> **`--api` sessions cannot use checker threads (no `--checkers`; diagnostics run on one thread)**
+>
+> We drive `tsrs --api --async` from a long-lived process (`createSnapshot`, then `program.getSemanticDiagnostics()` and checker queries). Cold whole-project diagnostics are single-threaded in this mode and the server takes no thread or memory flags.
+>
+> Measured on tsrs 0.18.0-ts7.1.0-dev.20260929, macOS arm64 (10 cores), a 2.7k-file TypeScript project (strict, bundler resolution):
+>
+> | | wall | CPU (user+sys) | peak RSS |
+> |---|---|---|---|
+> | `tsrs -p . --noEmit` (default threads) | 2.7-3.0 s | 5.1-5.3 s | 1.0 GB |
+> | `tsrs -p . --noEmit --singleThreaded` | 8.0 s | 3.3 s | 0.56 GB |
+> | API `getSemanticDiagnostics()` | wall ~ CPU, 3.0-3.1 s CPU | 3.0 s | 0.77 GB |
+> | API per-file `getSemanticDiagnostics(file)` for all 3.8k files in one batch | same CPU, 3.0 s | 3.0 s | |
+>
+> (API wall times were taken on a loaded host; the CPU figure is the stable one.) `tsrs --api` accepts only `-async -callbacks -cwd -pipe -runExternalCode -timing -useCaseSensitiveFileNames`; `--checkers`, `--singleThreaded` and `--maxMemory` are rejected, and `TSRS_MAX_MEMORY` changes neither time nor RSS in API mode.
+>
+> Request: a checker thread count for API sessions (a `--checkers N` on `--api`, or a `createSnapshot` option), used by `getSemanticDiagnostics()` the way `tsrs -p` uses it, with the same caps and memory behavior. A way to ask the server for whole-program diagnostics in one request that it parallelizes would also do.
+>
+> Separately: `tsrs/unstable/sync` throws under Bun (`TypeError: undefined is not an object (evaluating 'stdout._handle.fd')` in `SyncRpcChannel`), which rules the MessagePack client out for Bun hosts.
