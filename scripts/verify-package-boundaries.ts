@@ -28,6 +28,8 @@ const run = async (label: string, args: readonly string[], cwd = root): Promise<
   return { stdout, stderr }
 }
 
+const isExactVersion = (value: string): boolean => /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(value)
+
 const assertContains = (label: string, output: string, expected: readonly string[]): void => {
   const missing = expected.filter((item) => !output.includes(item))
   if (missing.length > 0) {
@@ -59,11 +61,12 @@ const main = async (): Promise<void> => {
         "bun",
         "-e",
         [
-          'import { createTypeAnalyzer, analysisTypeScriptVersion } from "@skastr0/quartz-engine";',
+          'import { createTypeAnalyzer, analysisTsrsVersion, analysisTypeScriptVersion } from "@skastr0/quartz-engine";',
           'import type { GraphResult, RefactorPreviewResult } from "@skastr0/quartz-engine";',
           "const _graph: GraphResult | null = null;",
           "const _refactor: RefactorPreviewResult | null = null;",
-          "console.log(typeof createTypeAnalyzer, analysisTypeScriptVersion, _graph, _refactor);",
+          "if (typeof analysisTsrsVersion !== \"string\" || typeof analysisTypeScriptVersion !== \"string\") throw new Error(\"missing backend versions\");",
+          "console.log(typeof createTypeAnalyzer, analysisTsrsVersion, analysisTypeScriptVersion, _graph, _refactor);",
         ].join(" "),
       ],
       join(root, "packages/engine"),
@@ -99,41 +102,36 @@ const main = async (): Promise<void> => {
     const rootManifest = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as {
       readonly devDependencies?: Readonly<Record<string, string>>
     }
-    const pinnedTypescript = rootManifest.devDependencies?.typescript
-    if (pinnedTypescript === undefined || pinnedTypescript === "next" || pinnedTypescript.includes("@")) {
-      throw new Error("Root package.json must pin an exact typescript nightly (never @next / range)")
+    const pinnedTsrs = rootManifest.devDependencies?.tsrs
+    if (pinnedTsrs === undefined || !isExactVersion(pinnedTsrs)) {
+      throw new Error("Root package.json must pin an exact tsrs release (never latest / range)")
     }
     const engineManifest = JSON.parse(await readFile(join(root, "packages/engine/package.json"), "utf8")) as {
       readonly dependencies?: Readonly<Record<string, string>>
     }
-    if (engineManifest.dependencies?.typescript !== pinnedTypescript) {
+    if (engineManifest.dependencies?.tsrs !== pinnedTsrs) {
       throw new Error(
-        `packages/engine must pin typescript@${pinnedTypescript} (found ${engineManifest.dependencies?.typescript ?? "missing"})`,
+        `packages/engine must pin tsrs@${pinnedTsrs} (found ${engineManifest.dependencies?.tsrs ?? "missing"})`,
       )
     }
 
+    // tsrs ships no Intel macOS binary, so there is no darwin-x64 platform package.
     const platformDependencies = {
-      "quartz-darwin-arm64": "@typescript/typescript-darwin-arm64",
-      "quartz-darwin-x64": "@typescript/typescript-darwin-x64",
-      "quartz-linux-arm64": "@typescript/typescript-linux-arm64",
-      "quartz-linux-x64": "@typescript/typescript-linux-x64",
+      "quartz-darwin-arm64": "@tsrs/darwin-arm64",
+      "quartz-linux-arm64": "@tsrs/linux-arm64-gnu",
+      "quartz-linux-x64": "@tsrs/linux-x64-gnu",
     } as const
     for (const [packageDirectory, dependency] of Object.entries(platformDependencies)) {
       const manifest = JSON.parse(
         await readFile(join(root, "packages/npm", packageDirectory, "package.json"), "utf8"),
       ) as { readonly dependencies?: Readonly<Record<string, string>> }
-      if (manifest.dependencies?.[dependency] !== pinnedTypescript) {
-        throw new Error(`${packageDirectory} must depend on ${dependency}@${pinnedTypescript}`)
+      if (manifest.dependencies?.[dependency] !== pinnedTsrs) {
+        throw new Error(`${packageDirectory} must depend on ${dependency}@${pinnedTsrs}`)
       }
     }
 
     await run("npm CLI package build", ["bun", "run", "build:npm-cli"])
     await verifyPack("@skastr0/quartz-darwin-arm64", join(root, "packages/npm/quartz-darwin-arm64"), destination, [
-      "bin/quartz",
-      "README.md",
-      "LICENSE",
-    ])
-    await verifyPack("@skastr0/quartz-darwin-x64", join(root, "packages/npm/quartz-darwin-x64"), destination, [
       "bin/quartz",
       "README.md",
       "LICENSE",

@@ -45,7 +45,6 @@ jobs:
             packages/engine \
             apps/opencode-plugin \
             packages/npm/quartz-darwin-arm64 \
-            packages/npm/quartz-darwin-x64 \
             packages/npm/quartz-linux-arm64 \
             packages/npm/quartz-linux-x64 \
             packages/npm/quartz
@@ -62,7 +61,6 @@ jobs:
             packages/engine \
             apps/opencode-plugin \
             packages/npm/quartz-darwin-arm64 \
-            packages/npm/quartz-darwin-x64 \
             packages/npm/quartz-linux-arm64 \
             packages/npm/quartz-linux-x64 \
             packages/npm/quartz

@@ -7,11 +7,23 @@ import { join, resolve } from "node:path"
 const REPO_ROOT = resolve(import.meta.dir, "..")
 const DIST_DIR = join(REPO_ROOT, "dist")
 const hostTarget = `${process.platform}-${process.arch}`
-const supportedTargets = new Set(["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64"])
+const supportedTargets = new Set(["darwin-arm64", "linux-arm64", "linux-x64"])
+
+// tsrs publishes one package per platform, GNU-suffixed on Linux, and no Intel macOS build.
+const nativePackageNameFor = (target: string): string => {
+  const [os, cpu] = target.split("-") as [string, string]
+  return `@tsrs/${os}-${cpu}${os === "linux" ? "-gnu" : ""}`
+}
 
 interface RootManifest {
   readonly version?: string
   readonly devDependencies?: Record<string, string>
+}
+
+interface TsrsManifest {
+  readonly name?: string
+  readonly version?: string
+  readonly tsrs?: { readonly typescriptVersion?: string }
 }
 
 interface CliRun {
@@ -22,6 +34,8 @@ interface CliRun {
 
 interface DoctorData {
   readonly version?: string
+  readonly backend?: string
+  readonly tsrs_version?: string
   readonly analysis_typescript_version?: string
   readonly ok?: boolean
   readonly package_count?: number
@@ -80,7 +94,7 @@ const verifyArchiveShape = async (
     `${bundleName}/bin/quartz`,
     `${bundleName}/LICENSE`,
     `${bundleName}/${nativePackageRelative}/package.json`,
-    `${bundleName}/${nativePackageRelative}/lib/tsc`,
+    `${bundleName}/${nativePackageRelative}/tsrs`,
   ]) {
     if (!entries.includes(required)) throw new Error(`Release archive is missing ${required}`)
   }
@@ -89,16 +103,16 @@ const verifyArchiveShape = async (
 const verifyNativePackage = async (
   nativePackageRoot: string,
   nativePackageName: string,
-  typescriptVersion: string,
+  tsrsVersion: string,
 ): Promise<void> => {
   const nativeManifest = JSON.parse(
     await readFile(join(nativePackageRoot, "package.json"), "utf8"),
   ) as { readonly name?: string; readonly version?: string }
   if (
-    nativeManifest.name !== `@typescript/${nativePackageName}`
-    || nativeManifest.version !== typescriptVersion
+    nativeManifest.name !== nativePackageName
+    || nativeManifest.version !== tsrsVersion
   ) {
-    throw new Error(`Release archive contains the wrong native TypeScript payload for ${hostTarget}`)
+    throw new Error(`Release archive contains the wrong native tsrs payload for ${hostTarget}`)
   }
 }
 
@@ -107,6 +121,7 @@ const verifyDoctor = async (
   payload: string,
   work: string,
   quartzVersion: string,
+  tsrsVersion: string,
   typescriptVersion: string,
 ): Promise<void> => {
   const result = await runCapture([binary, "doctor", payload, "--format", "json"], work)
@@ -116,7 +131,11 @@ const verifyDoctor = async (
     result.status !== 0
     || envelope.ok !== true
     || envelope.command !== "doctor"
+    || envelope.backend !== "tsrs"
+    || envelope.tsrs_version !== tsrsVersion
     || data?.version !== quartzVersion
+    || data.backend !== "tsrs"
+    || data.tsrs_version !== tsrsVersion
     || data.analysis_typescript_version !== typescriptVersion
     || data.ok !== true
     || data.package_count !== 1
@@ -151,14 +170,21 @@ const main = async (): Promise<void> => {
   if (!supportedTargets.has(hostTarget)) throw new Error(`Unsupported release host: ${hostTarget}`)
   const manifest = JSON.parse(await readFile(join(REPO_ROOT, "package.json"), "utf8")) as RootManifest
   const quartzVersion = manifest.version
-  const typescriptVersion = manifest.devDependencies?.typescript
+  const tsrsVersion = manifest.devDependencies?.tsrs
   if (quartzVersion === undefined) throw new Error("Root package version is missing")
-  if (typescriptVersion === undefined) throw new Error("Root TypeScript pin is missing")
+  if (tsrsVersion === undefined) throw new Error("Root tsrs pin is missing")
+  const installedTsrs = JSON.parse(
+    await readFile(join(REPO_ROOT, "node_modules", "tsrs", "package.json"), "utf8"),
+  ) as TsrsManifest
+  const typescriptVersion = installedTsrs.tsrs?.typescriptVersion
+  if (installedTsrs.version !== tsrsVersion || typescriptVersion === undefined) {
+    throw new Error(`node_modules/tsrs is ${installedTsrs.version ?? "missing"}; run bun install for tsrs@${tsrsVersion}`)
+  }
 
   const bundleName = `quartz-${quartzVersion}-${hostTarget}`
   const archive = join(DIST_DIR, `${bundleName}.tar.gz`)
-  const nativePackageName = `typescript-${hostTarget}`
-  const nativePackageRelative = join("node_modules", "@typescript", nativePackageName)
+  const nativePackageName = nativePackageNameFor(hostTarget)
+  const nativePackageRelative = join("node_modules", ...nativePackageName.split("/"))
   const work = await mkdtemp(join(tmpdir(), "quartz-release-smoke-"))
 
   try {
@@ -169,12 +195,12 @@ const main = async (): Promise<void> => {
     const bundleRoot = join(work, bundleName)
     const binary = join(bundleRoot, "bin", "quartz")
     const nativePackageRoot = join(bundleRoot, nativePackageRelative)
-    await verifyNativePackage(nativePackageRoot, nativePackageName, typescriptVersion)
+    await verifyNativePackage(nativePackageRoot, nativePackageName, tsrsVersion)
 
     const fixture = join(work, "fixture")
     await cp(join(REPO_ROOT, "test", "fixtures"), fixture, { recursive: true })
     const payload = JSON.stringify({ root: fixture })
-    await verifyDoctor(binary, payload, work, quartzVersion, typescriptVersion)
+    await verifyDoctor(binary, payload, work, quartzVersion, tsrsVersion, typescriptVersion)
     await verifyMissingPayloadFailure(binary, payload, nativePackageRoot, work)
 
     process.stdout.write(
@@ -183,6 +209,7 @@ const main = async (): Promise<void> => {
           ok: true,
           archive,
           target: hostTarget,
+          tsrsVersion,
           typescriptVersion,
           positive: "doctor_passed",
           negative: "WORKSPACE_OPEN_FAILED",

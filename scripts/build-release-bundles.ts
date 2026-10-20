@@ -8,8 +8,21 @@ const REPO_ROOT = resolve(import.meta.dir, "..")
 const DIST_DIR = join(REPO_ROOT, "dist")
 const LICENSE_PATH = join(REPO_ROOT, "LICENSE")
 
-const targets = ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64"] as const
+const targets = ["darwin-arm64", "linux-arm64", "linux-x64"] as const
 type Target = (typeof targets)[number]
+
+interface NativePackageSpec {
+  readonly name: string
+  readonly os: string
+  readonly cpu: string
+}
+
+// tsrs publishes one package per platform, GNU-suffixed on Linux, and no Intel macOS build.
+const nativePackageFor = (target: Target): NativePackageSpec => {
+  const [os, cpu] = target.split("-") as [string, string]
+  const suffix = os === "linux" ? "-gnu" : ""
+  return { name: `@tsrs/${os}-${cpu}${suffix}`, os, cpu }
+}
 
 interface RootManifest {
   readonly version?: string
@@ -75,46 +88,43 @@ const rejectSymlinks = async (root: string): Promise<void> => {
 
 const validateNativePackage = async (
   packageRoot: string,
-  target: Target,
+  nativePackage: NativePackageSpec,
   version: string,
 ): Promise<void> => {
-  const [platform, arch] = target.split("-") as [string, string]
-  const expectedName = `@typescript/typescript-${target}`
   const manifest = JSON.parse(
     await readFile(join(packageRoot, "package.json"), "utf8"),
   ) as NativePackageManifest
 
   if (
-    manifest.name !== expectedName
+    manifest.name !== nativePackage.name
     || manifest.version !== version
-    || !manifest.os?.includes(platform)
-    || !manifest.cpu?.includes(arch)
+    || !manifest.os?.includes(nativePackage.os)
+    || !manifest.cpu?.includes(nativePackage.cpu)
   ) {
     throw new Error(
-      `Packed native payload mismatch for ${target}: expected ${expectedName}@${version} (${platform}/${arch})`,
+      `Packed native payload mismatch for ${nativePackage.name}: expected ${nativePackage.name}@${version} (${nativePackage.os}/${nativePackage.cpu})`,
     )
   }
 
   await rejectSymlinks(packageRoot)
-  const executable = join(packageRoot, "lib", platform === "win32" ? "tsc.exe" : "tsc")
-  await chmod(executable, 0o755)
+  await chmod(join(packageRoot, "tsrs"), 0o755)
 }
 
 const main = async (): Promise<void> => {
   const selectedTargets = parseTargets(Bun.argv.slice(2))
   const rootManifest = JSON.parse(await readFile(join(REPO_ROOT, "package.json"), "utf8")) as RootManifest
   const quartzVersion = rootManifest.version
-  const typescriptVersion = rootManifest.devDependencies?.typescript
+  const tsrsVersion = rootManifest.devDependencies?.tsrs
   if (quartzVersion === undefined) throw new Error("Root package version is missing")
-  if (typescriptVersion === undefined) throw new Error("Root TypeScript pin is missing")
+  if (tsrsVersion === undefined) throw new Error("Root tsrs pin is missing")
 
   const work = await mkdtemp(join(tmpdir(), "quartz-release-bundles-"))
   try {
     for (const target of selectedTargets) {
       const bundleName = `quartz-${quartzVersion}-${target}`
       const bundleRoot = join(work, bundleName)
-      const nativePackageName = `typescript-${target}`
-      const nativePackageRoot = join(bundleRoot, "node_modules", "@typescript", nativePackageName)
+      const nativePackage = nativePackageFor(target)
+      const nativePackageRoot = join(bundleRoot, "node_modules", ...nativePackage.name.split("/"))
       const binarySource = join(DIST_DIR, `quartz-${target}`)
       const binaryDestination = join(bundleRoot, "bin", "quartz")
       const packDirectory = join(work, `pack-${target}`)
@@ -126,7 +136,7 @@ const main = async (): Promise<void> => {
       await chmod(binaryDestination, 0o755)
       await copyFile(LICENSE_PATH, join(bundleRoot, "LICENSE"))
 
-      const packageSpec = `@typescript/${nativePackageName}@${typescriptVersion}`
+      const packageSpec = `${nativePackage.name}@${tsrsVersion}`
       const packOutput = await run(
         `Packing ${packageSpec}`,
         ["npm", "pack", packageSpec, "--json", "--ignore-scripts", "--pack-destination", packDirectory],
@@ -143,7 +153,7 @@ const main = async (): Promise<void> => {
         ["tar", "-xzf", join(packDirectory, tarball), "--strip-components=1", "-C", nativePackageRoot],
         REPO_ROOT,
       )
-      await validateNativePackage(nativePackageRoot, target, typescriptVersion)
+      await validateNativePackage(nativePackageRoot, nativePackage, tsrsVersion)
 
       const archive = join(DIST_DIR, `${bundleName}.tar.gz`)
       await run(

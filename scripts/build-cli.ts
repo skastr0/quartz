@@ -13,7 +13,6 @@ const packageJson = JSON.parse(readFileSync(join(REPO_ROOT, "package.json"), "ut
 const version = packageJson.version ?? "0.0.0"
 
 const binaryTargets = [
-  { platform: "darwin", arch: "x64" },
   { platform: "darwin", arch: "arm64" },
   { platform: "linux", arch: "x64" },
   { platform: "linux", arch: "arm64" },

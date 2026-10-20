@@ -9,14 +9,12 @@ const LICENSE_PATH = join(REPO_ROOT, "LICENSE")
 const npmPackageDirs = [
   "packages/npm/quartz",
   "packages/npm/quartz-darwin-arm64",
-  "packages/npm/quartz-darwin-x64",
   "packages/npm/quartz-linux-arm64",
   "packages/npm/quartz-linux-x64",
 ] as const
 
 const platformPackages = [
   { target: "darwin-arm64", packageDir: "packages/npm/quartz-darwin-arm64" },
-  { target: "darwin-x64", packageDir: "packages/npm/quartz-darwin-x64" },
   { target: "linux-arm64", packageDir: "packages/npm/quartz-linux-arm64" },
   { target: "linux-x64", packageDir: "packages/npm/quartz-linux-x64" },
 ] as const
