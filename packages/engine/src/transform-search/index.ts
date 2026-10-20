@@ -49,6 +49,7 @@ import type {
   VerificationMeta,
   VerificationStatus,
 } from "../contracts"
+import { mapBounded } from "../concurrency"
 import { QuartzEngineError } from "../errors"
 import { modulePathFor, resolveVirtualFileDirectory, synthesizePackageImports } from "../virtual-files"
 
@@ -339,7 +340,7 @@ const compilerCandidates = async (
 ): Promise<Candidate[]> => {
   const groups = groupCandidateSeeds(seeds, await symbolsForSeeds(project, seeds))
   const valueTypes = await valueTypesForGroups(project, groups)
-  const expanded = await mapWithConcurrency(
+  const expanded = await mapBounded(
     [...groups.entries()],
     ASSIGNABILITY_BATCH_SIZE,
     ([callableId, group]) => expandCandidateGroup(project, callableId, group, valueTypes),
@@ -638,7 +639,7 @@ const verifySyntheticMatches = async (
   matches: readonly Match[],
   options: TransformSearchOptions,
 ): Promise<SyntheticVerification[]> => {
-  const sources = await mapWithConcurrency(
+  const sources = await mapBounded(
     matches,
     ASSIGNABILITY_BATCH_SIZE,
     (match) => syntheticSourceFor(project, packageInfo, sourceFiles, match, options),
@@ -657,7 +658,7 @@ const verifySyntheticMatches = async (
         outcomes[index] = batched[position]
       })
     } else {
-      const sequential = await mapWithConcurrency(
+      const sequential = await mapBounded(
         pending,
         SYNTHETIC_VERIFICATION_BATCH_SIZE,
         ({ source }) => context.workspace.withVirtualFile(
@@ -688,24 +689,6 @@ const SYNTHETIC_VERIFICATION_BATCH_SIZE = 8
 const SOURCE_FILE_BATCH_SIZE = 32
 /** Bound candidate assignability fan-out; each candidate costs compiler round trips. */
 const ASSIGNABILITY_BATCH_SIZE = 32
-
-/** Run `run` over every item with at most `limit` in flight, preserving input order. */
-const mapWithConcurrency = async <Item, Result>(
-  items: readonly Item[],
-  limit: number,
-  run: (item: Item) => Promise<Result>,
-): Promise<Result[]> => {
-  const results = new Array<Result>(items.length)
-  let next = 0
-  const worker = async (): Promise<void> => {
-    while (next < items.length) {
-      const index = next++
-      results[index] = await run(items[index]!)
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
-  return results
-}
 
 interface FromSelection {
   readonly candidate: Candidate
@@ -822,7 +805,7 @@ const loadTransformIndex = async (project: Project): Promise<TransformIndex> => 
   const inferredReturnTexts = new Map<Candidate, string>()
   // Each candidate without a return type annotation costs up to three compiler
   // round trips; issue them across candidates instead of serializing per candidate.
-  const inferred = await mapWithConcurrency(allCandidates, ASSIGNABILITY_BATCH_SIZE, async (candidate) => {
+  const inferred = await mapBounded(allCandidates, ASSIGNABILITY_BATCH_SIZE, async (candidate) => {
     let returnType = candidate.returnNode === null ? null : byNode.get(candidate.returnNode) ?? null
     let returnText: string | null = null
     if (candidate.returnNode === null) {
@@ -885,7 +868,7 @@ export const createTransformSearchOperation = (context: AnalyzerContext) => asyn
     // Each candidate costs one compiler round trip per query. Issue the from-side
     // checks together so the API transport batches them instead of paying a
     // round trip per candidate in sequence.
-    const fromSelections = await mapWithConcurrency(
+    const fromSelections = await mapBounded(
       candidates,
       ASSIGNABILITY_BATCH_SIZE,
       async (candidate): Promise<FromSelection | null> => {
@@ -913,7 +896,7 @@ export const createTransformSearchOperation = (context: AnalyzerContext) => asyn
 
     // The to-side check reads the inferred return type, so it runs after the from
     // side narrowed the set — again with every survivor's round trips in flight.
-    const toSelections = await mapWithConcurrency(
+    const toSelections = await mapBounded(
       fromSurvivors,
       ASSIGNABILITY_BATCH_SIZE,
       async (selection): Promise<ToSelection | null> => {

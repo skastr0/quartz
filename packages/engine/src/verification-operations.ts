@@ -1,4 +1,5 @@
-import { DiagnosticCategory, type Project } from "tsrs/unstable/async"
+import { resolve } from "node:path"
+import { DiagnosticCategory, ModifierFlags, ModuleResolutionKind, type CompilerOptions, type Project } from "tsrs/unstable/async"
 import type { AnalyzerContext } from "./context"
 import type {
   CompatibilityResult,
@@ -9,6 +10,7 @@ import type {
   ExplainedDiagnosticsResult,
   SnippetCheckResult,
   SnippetDiagnostic,
+  SnippetImportSuggestion,
   TransformSearchResponse,
   TypeAnalyzer,
   VerifyContractCheck,
@@ -18,9 +20,11 @@ import type {
   VerifyContractResult,
 } from "./contracts"
 import { snippetTopLevelBindings } from "./snippet-bindings"
+import { mapBounded } from "./concurrency"
 import {
   createVirtualFileRegistry,
   loadPackageExports,
+  modulePathFor,
   resolveVirtualFileDirectory,
   synthesizePackageImports,
   withVirtualFile,
@@ -64,7 +68,13 @@ const lineAndColumn = (source: { getLineAndCharacterOfPosition(position: number)
   return { line: location.line + 1, column: location.character + 1 }
 }
 
-const snippetDiagnostics = async (project: Project, filePath: string, lineOffset = 0): Promise<readonly SnippetDiagnostic[]> => {
+const missingNamePattern = /^Cannot find name '([^']+)'/
+
+const snippetDiagnostics = async (
+  project: Project,
+  filePath: string,
+  lineOffset = 0,
+): Promise<{ readonly errors: readonly SnippetDiagnostic[]; readonly missingNames: readonly string[] }> => {
   const [syntactic, bind, semantic, sourceFile] = await Promise.all([
     project.program.getSyntacticDiagnostics(filePath),
     project.program.getBindDiagnostics(filePath),
@@ -73,20 +83,126 @@ const snippetDiagnostics = async (project: Project, filePath: string, lineOffset
   ])
   const diagnostics = [syntactic, bind, semantic].flat()
   const seen = new Set<string>()
-  const result: SnippetDiagnostic[] = []
+  const errors: SnippetDiagnostic[] = []
+  const missingNames = new Set<string>()
   for (const diagnostic of diagnostics) {
     const key = `${diagnostic.code}\u0000${diagnostic.pos}\u0000${diagnostic.end}\u0000${diagnostic.text}`
     if (seen.has(key)) continue
     seen.add(key)
     const location = sourceFile === undefined ? { line: 1, column: 1 } : lineAndColumn(sourceFile, diagnostic.pos)
-    result.push({
+    errors.push({
       message: diagnostic.text,
       line: Math.max(1, location.line - lineOffset),
       column: location.column,
       severity: diagnostic.category === DiagnosticCategory.Error ? "error" : "warning",
+      code: diagnostic.code,
     })
+    const missing = missingNamePattern.exec(diagnostic.text)
+    if (missing?.[1] !== undefined && /^[A-Za-z_$][\w$]*$/.test(missing[1])) missingNames.add(missing[1])
   }
-  return result.sort((left, right) => left.line - right.line || left.column - right.column || left.message.localeCompare(right.message))
+  return {
+    errors: errors.sort((left, right) => left.line - right.line || left.column - right.column || left.message.localeCompare(right.message)),
+    missingNames: [...missingNames],
+  }
+}
+
+const EXPORT_INDEX_BATCH_SIZE = 32
+
+const hasExportModifier = (node: object): boolean =>
+  (((node as { readonly modifierFlags?: ModifierFlags }).modifierFlags ?? ModifierFlags.None) & ModifierFlags.Export) !== ModifierFlags.None
+
+interface NamedNode {
+  readonly name?: { getText(source: unknown): string }
+}
+
+/** Names an exported statement introduces: one declaration name, or every variable name. */
+const exportedNamesOf = (statement: object, source: unknown): readonly string[] => {
+  if (!hasExportModifier(statement)) return []
+  const named = statement as NamedNode & { readonly declarationList?: { readonly declarations?: readonly NamedNode[] } }
+  const names = named.name === undefined ? [] : [named.name.getText(source)]
+  for (const declaration of named.declarationList?.declarations ?? []) {
+    if (declaration.name !== undefined) names.push(declaration.name.getText(source))
+  }
+  return names.filter((name) => /^[A-Za-z_$][\w$]*$/.test(name))
+}
+
+/** Exported declaration names of the package's own non-declaration sources. */
+const exportedFilesByName = async (
+  project: Project,
+  packageRoot: string,
+  virtualFilePath: string,
+): Promise<ReadonlyMap<string, string>> => {
+  const root = resolve(packageRoot)
+  const fileNames = (await project.program.getSourceFileNames()).filter((fileName) =>
+    fileName !== virtualFilePath
+    && (fileName === root || fileName.startsWith(`${root}/`))
+    && !fileName.endsWith(".d.ts")
+    && /\.[cm]?[jt]sx?$/.test(fileName))
+  const sources = await mapBounded(
+    fileNames,
+    EXPORT_INDEX_BATCH_SIZE,
+    (fileName) => project.program.getSourceFile(fileName),
+  )
+  const index = new Map<string, string>()
+  for (const source of sources) {
+    if (source === undefined) continue
+    for (const statement of source.statements) {
+      for (const name of exportedNamesOf(statement, source)) {
+        if (!index.has(name)) index.set(name, source.fileName)
+      }
+    }
+  }
+  return index
+}
+
+/**
+ * Module specifier for an import the caller will paste. The compiler decides
+ * which module exports the name; this only renders the path, which the import
+ * adder cannot do inside a synthetic program (it returns no edits there).
+ */
+const importSpecifierFor = (fromFilePath: string, targetFileName: string, options: CompilerOptions): string => {
+  const base = modulePathFor(fromFilePath, targetFileName)
+  const resolution = options.moduleResolution
+  if (resolution !== ModuleResolutionKind.Node16 && resolution !== ModuleResolutionKind.NodeNext) return base
+  if (targetFileName.endsWith(".mts")) return `${base}.mjs`
+  if (targetFileName.endsWith(".cts")) return `${base}.cjs`
+  return `${base}.js`
+}
+
+/**
+ * The import line the compiler would add for each unresolved name the package
+ * actually exports. Only runs when a snippet already failed, so the successful
+ * path pays nothing.
+ */
+const importSuggestionsFor = async (
+  context: AnalyzerContext,
+  project: Project,
+  packageRoot: string,
+  packageConfig: string,
+  filePath: string,
+  missingNames: readonly string[],
+): Promise<readonly SnippetImportSuggestion[]> => {
+  if (missingNames.length === 0) return []
+  const revision = context.workspace.metadata.revision
+  const index = await context.cacheForRevision(
+    `snippet-export-index:${packageConfig}`,
+    revision,
+    () => exportedFilesByName(project, packageRoot, filePath),
+  )
+  const compilerOptions = project.parsedCommandLine.options
+  const suggestions = await Promise.all(missingNames.map(async (name): Promise<SnippetImportSuggestion | null> => {
+    const fileName = index.get(name)
+    if (fileName === undefined) return null
+    const sourceFile = await project.program.getSourceFile(fileName)
+    if (sourceFile === undefined) return null
+    const moduleSymbol = await project.checker.getSymbolAtLocation(sourceFile)
+    if (moduleSymbol === undefined) return null
+    const exported = await project.checker.getMemberInModuleExports(moduleSymbol, name)
+    if (exported === undefined) return null
+    const specifier = importSpecifierFor(filePath, sourceFile.fileName, compilerOptions)
+    return { name, importText: `import { ${name} } from ${JSON.stringify(specifier)};` }
+  }))
+  return suggestions.filter((suggestion): suggestion is SnippetImportSuggestion => suggestion !== null)
 }
 
 const typePatterns = [
@@ -181,8 +297,10 @@ export const createVerificationOperations = (
               packageName,
             )
       return workspace.withVirtualFile(pkg.tsconfigPath, lease.path, `${imports.content}${lease.content}`, async (project, filePath) => {
-        const errors = await snippetDiagnostics(project, filePath, imports.lineOffset)
-        return errors.length === 0 ? { valid: true } : { valid: false, errors }
+        const { errors, missingNames } = await snippetDiagnostics(project, filePath, imports.lineOffset)
+        if (errors.length === 0) return { valid: true }
+        const importSuggestions = await importSuggestionsFor(context, project, pkg.path, pkg.tsconfigPath, filePath, missingNames)
+        return { valid: false, errors, ...(importSuggestions.length === 0 ? {} : { importSuggestions }) }
       })
     })
   }
