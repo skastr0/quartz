@@ -2,7 +2,7 @@ import { relative, resolve } from "node:path"
 import type { Identifier, Node, SourceFile } from "tsrs/unstable/ast"
 import { SyntaxKind } from "tsrs/unstable/ast"
 import { isIdentifier, isTypeReferenceNode } from "tsrs/unstable/ast/is"
-import { SymbolFlags, type NodeHandle, type Project, type Symbol, type Type } from "tsrs/unstable/async"
+import { SymbolFlags, type NodeHandle, type Project, type ReferencedSymbolEntry, type Symbol, type Type } from "tsrs/unstable/async"
 import type { AnalyzerContext } from "./context"
 import { FAN_OUT, mapBounded } from "./concurrency"
 import { diskIndexFor } from "./disk-index"
@@ -145,7 +145,9 @@ export const createReferenceOperations = (context: AnalyzerContext) => ({
         throw new Error(`Symbol "${options.symbol}" not found`)
       }
 
-      const sites = await findRenameSites(project, target)
+      const sites = (await findRenameSites(project, target)).sort(
+        (left, right) => left.sourceFile.fileName.localeCompare(right.sourceFile.fileName) || left.node.pos - right.node.pos,
+      )
       const locations: RefactorLocation[] = []
       const predictedErrors: RefactorError[] = []
       const affectedFiles = new Set<string>()
@@ -450,10 +452,8 @@ const findIncomingReferences = async (project: Project, target: Target): Promise
 
   // Prefer compiler-native reference collection: scales with references, not
   // every identifier / type-reference node in the project.
-  const declarationName = declarationNameNode(target.declaration) ?? target.declaration
-  const declarationPosition = declarationName.getStart(declarationName.getSourceFile())
   try {
-    const referenced = await project.languageService.getReferencedSymbolsForNode(declarationName, declarationPosition)
+    const referenced = await referencedGroupsFor(project, target)
     const entries = referenced.flatMap((entry) =>
       [entry.definition, ...entry.references].map((handle) => ({ handle, symbol: entry.symbol ?? target.symbol })),
     )
@@ -531,16 +531,37 @@ const findOutgoingReferences = async (project: Project, target: Target): Promise
   return references
 }
 
+/**
+ * The compiler's reference search splits a merged symbol by meaning: starting from
+ * `export const X` returns value-position references only, starting from
+ * `export type X` the type-position ones. Search from one declaration per syntax kind
+ * (overloads and merged interfaces share results, so they cost one search).
+ */
+const referencedGroupsFor = async (project: Project, target: Target): Promise<ReferencedSymbolEntry[]> => {
+  const anchors: Node[] = [target.declaration]
+  const kinds = new Set<SyntaxKind>([target.declaration.kind])
+  for (const handle of target.symbol.declarations) {
+    const declaration = await handle.resolve(project)
+    if (declaration === undefined || kinds.has(declaration.kind)) continue
+    kinds.add(declaration.kind)
+    anchors.push(declaration)
+  }
+  const groups: ReferencedSymbolEntry[] = []
+  for (const anchor of anchors) {
+    const name = declarationNameNode(anchor) ?? anchor
+    groups.push(...(await project.languageService.getReferencedSymbolsForNode(name, name.getStart(name.getSourceFile()))))
+  }
+  return groups
+}
+
 const findRenameSites = async (project: Project, target: Target): Promise<RenameSite[]> => {
   const sites: RenameSite[] = []
   const seen = new Set<string>()
 
   // Prefer compiler-native reference collection: scales with references, not
   // every identifier in the project.
-  const declarationName = declarationNameNode(target.declaration) ?? target.declaration
-  const position = declarationName.getStart(declarationName.getSourceFile())
   try {
-    const referenced = await project.languageService.getReferencedSymbolsForNode(declarationName, position)
+    const referenced = await referencedGroupsFor(project, target)
     for (const entry of referenced) {
       const handles = [entry.definition, ...entry.references]
       for (const handle of handles) {
