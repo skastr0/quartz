@@ -121,6 +121,28 @@ const sourceFilesFor = (
     return files.filter((source): source is SourceFile => source !== undefined)
   })
 
+/**
+ * Resolve a caller-supplied path to a source file of the package program. Symbols
+ * re-exported from a dependency package report that package's files, so an exact
+ * path that lies outside the package directory still resolves when the program
+ * contains it as workspace source.
+ */
+const findSourceFile = async (
+  context: AnalyzerContext,
+  project: Project,
+  packageFiles: readonly SourceFile[],
+  file: string,
+): Promise<SourceFile | undefined> => {
+  const target = isAbsolute(file) ? resolve(file) : resolve(context.root, file)
+  const inPackage = packageFiles.find((candidate) => resolve(candidate.fileName) === target || candidate.fileName.endsWith(file))
+  if (inPackage !== undefined) return inPackage
+  const base = resolve(context.root)
+  // isSourceFileFromExternalLibrary is true for workspace dependencies resolved through
+  // node_modules symlinks, so judge by path: workspace source, not installed code.
+  if (!target.startsWith(`${base}/`) || target.includes("/node_modules/")) return undefined
+  return project.program.getSourceFile(target)
+}
+
 const relativePath = (root: string, file: string): string => {
   const absolute = resolve(file)
   const base = resolve(root)
@@ -565,8 +587,7 @@ export const createLeafOperations = (context: AnalyzerContext): LeafOperations =
 
   const getFileDeclarations = (file: string, options: { readonly symbol?: string; readonly includePrivate?: boolean; readonly packageName?: string } = {}): Promise<FileInspectionResult | null> => context.withProject(async (project, pkg, revision) => {
     const sourceFiles = await sourceFilesFor(context, project, pkg, revision)
-    const target = isAbsolute(file) ? resolve(file) : resolve(context.root, file)
-    const source = sourceFiles.find((candidate) => resolve(candidate.fileName) === target || candidate.fileName.endsWith(file))
+    const source = await findSourceFile(context, project, sourceFiles, file)
     if (source === undefined) return null
     const filter = options.symbol === undefined ? undefined : new RegExp(options.symbol, "i")
     const metadata = await metadataFor(project, source)
@@ -674,8 +695,7 @@ export const createLeafOperations = (context: AnalyzerContext): LeafOperations =
 
   const getTypeAtPosition = (filePath: string, line: number, column: number, packageName?: string): Promise<TypeAtPositionResult | null> => context.withProject(async (project, pkg, revision) => {
     const sourceFiles = await sourceFilesFor(context, project, pkg, revision)
-    const targetPath = isAbsolute(filePath) ? resolve(filePath) : resolve(context.root, filePath)
-    const source = sourceFiles.find((candidate) => resolve(candidate.fileName) === targetPath || candidate.fileName.endsWith(filePath))
+    const source = await findSourceFile(context, project, sourceFiles, filePath)
     if (source === undefined || line < 1 || column < 1) return null
     let position: number
     try { position = source.getPositionOfLineAndCharacter(line - 1, column - 1) } catch { return null }
