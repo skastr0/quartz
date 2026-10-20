@@ -100,7 +100,14 @@ export class AnalyzerContext {
     const cached = this.#revisionCache.get(key)
     if (cached?.revision === revision) return cached.value as T
     const value = load()
-    this.#revisionCache.set(key, { revision, value })
+    const entry = { revision, value }
+    this.#revisionCache.set(key, entry)
+    // A failed load must not stay cached for the whole revision.
+    if (value instanceof Promise) {
+      value.catch(() => {
+        if (this.#revisionCache.get(key) === entry) this.#revisionCache.delete(key)
+      })
+    }
     return value
   }
 
