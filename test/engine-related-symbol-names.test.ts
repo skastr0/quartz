@@ -25,12 +25,18 @@ const createProject = (source: string): string => {
   return root
 }
 
-// related reports well-known-symbol members under the checker's escaped name, for example
-// `__@iterator@100`. The numeric suffix is a per-program symbol id: it differs between
-// compiler backends (tsrs vs TS-Go: @93 vs @137 for the same query) and between programs.
-describe("related symbol names", () => {
+// The checker stores symbol-keyed members under escaped names such as `__@iterator@100`.
+// The numeric suffix is a per-program id (tsrs @93 vs TS-Go @137 for the same query), so
+// output must render the member the way source writes it: `[Symbol.iterator]`.
+const source = [
+  "export const tuple = [1, 'a', true] as const",
+  "declare const brand: unique symbol",
+  "export interface Branded { readonly [brand]: true; value: string }",
+].join("\n")
+
+describe("symbol-keyed member names", () => {
   it("lists ordinary members by their source name", async () => {
-    const analyzer = await createTypeAnalyzer(createProject("export const tuple = [1, 'a', true] as const"))
+    const analyzer = await createTypeAnalyzer(createProject(source))
     try {
       const related = await analyzer.findRelated("tuple")
       expect(related?.references.map((reference) => reference.symbol)).toContain("toString")
@@ -39,13 +45,28 @@ describe("related symbol names", () => {
     }
   })
 
-  // Known defect: flip to a plain `it` once well-known symbols render as `[Symbol.iterator]`.
-  it.fails("does not expose checker-internal escaped symbol names", async () => {
-    const analyzer = await createTypeAnalyzer(createProject("export const tuple = [1, 'a', true] as const"))
+  it("renders well-known symbols in related as [Symbol.name]", async () => {
+    const analyzer = await createTypeAnalyzer(createProject(source))
     try {
       const related = await analyzer.findRelated("tuple")
-      const internal = related?.references.filter((reference) => /^__@/.test(reference.symbol))
-      expect(internal).toEqual([])
+      const symbols = related?.references.map((reference) => reference.symbol) ?? []
+      expect(symbols.filter((symbol) => symbol.includes("__@"))).toEqual([])
+      expect(symbols).toContain("[Symbol.iterator]")
+      const contexts = related?.references.map((reference) => reference.context) ?? []
+      expect(contexts).toContain('property "[Symbol.iterator]"')
+    } finally {
+      await analyzer.dispose()
+    }
+  })
+
+  it("renders well-known symbols and unique-symbol keys in info properties", async () => {
+    const analyzer = await createTypeAnalyzer(createProject(source))
+    try {
+      const names = (await analyzer.getTypeInfo("tuple"))?.properties?.map((property) => property.name) ?? []
+      expect(names.filter((name) => name.includes("__@"))).toEqual([])
+      expect(names).toContain("[Symbol.iterator]")
+      const branded = (await analyzer.getTypeInfo("Branded"))?.properties?.map((property) => property.name) ?? []
+      expect(branded).toContain("[brand]")
     } finally {
       await analyzer.dispose()
     }

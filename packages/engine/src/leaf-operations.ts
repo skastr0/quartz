@@ -54,6 +54,8 @@ import {
   withVirtualFile,
   type VirtualFileRegistry,
 } from "./virtual-files"
+import { displaySymbolName } from "./symbol-names"
+
 const TYPE_FLAGS =
   NodeBuilderFlags.NoTruncation |
   NodeBuilderFlags.UseStructuralFallback |
@@ -335,7 +337,7 @@ const propertiesFor = async (
     included.map(async ({ property, declaration }): Promise<TypePropertyInfo> => {
       const propertyType = typeByProperty.get(property)!
       const result: TypePropertyInfo = {
-        name: property.name,
+        name: displaySymbolName(property.name),
         type: await project.checker.typeToString(propertyType, declaration ?? location, flags),
         ...(hasOptional(property) ? { optional: true } : {}),
       }
@@ -626,9 +628,9 @@ export const createLeafOperations = (context: AnalyzerContext): LeafOperations =
       for (let index = 0; index < missingRequired.length; index += 1) {
         const property = missingRequired[index]!
         const expected = expectedTexts[index]!
-        const message = `Property '${property.name}' is missing in type '${fromText}' but required in type '${toText}' (expected: ${expected})`
+        const message = `Property '${displaySymbolName(property.name)}' is missing in type '${fromText}' but required in type '${toText}' (expected: ${expected})`
         reasons.push(message)
-        issues.push({ kind: "missing_property", property: property.name, expectedType: expected, message })
+        issues.push({ kind: "missing_property", property: displaySymbolName(property.name), expectedType: expected, message })
       }
     }
     for (const property of fromProperties) {
@@ -643,9 +645,9 @@ export const createLeafOperations = (context: AnalyzerContext): LeafOperations =
         project.checker.typeToString(actualType, fromMatch.node),
         project.checker.typeToString(expectedType, toMatch.node),
       ])
-      const message = `Property '${property.name}' has incompatible types: '${actual}' is not assignable to '${expected}'`
+      const message = `Property '${displaySymbolName(property.name)}' has incompatible types: '${actual}' is not assignable to '${expected}'`
       reasons.push(message)
-      issues.push({ kind: "type_mismatch", property: property.name, actualType: actual, expectedType: expected, message })
+      issues.push({ kind: "type_mismatch", property: displaySymbolName(property.name), actualType: actual, expectedType: expected, message })
     }
     if (reasons.length === 0) {
       const message = `Type '${fromText}' is not assignable to type '${toText}'`
