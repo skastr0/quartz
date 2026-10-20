@@ -70,8 +70,11 @@ const DEFAULT_QUERIES: Queries = { symbol: "User", from: "ExtendedUser", to: "Us
 
 const commandsFor = (root: string, q: Queries = DEFAULT_QUERIES): readonly CommandSpec[] => {
   const pkg = q.package
+  // CLI payloads select a package with `package`; analyzer option bags use `packageName`.
   const withPkg = <T extends object>(payload: T): T & { readonly package?: string } =>
     pkg === undefined ? payload : { ...payload, package: pkg }
+  const withPackageName = <T extends object>(options: T): T & { readonly packageName?: string } =>
+    pkg === undefined ? options : { ...options, packageName: pkg }
   return [
     {
       name: "doctor",
@@ -113,7 +116,7 @@ const commandsFor = (root: string, q: Queries = DEFAULT_QUERIES): readonly Comma
       batchable: true,
       cliArgs: (r) => ["verify-contract", JSON.stringify(withPkg({ root: r, from: q.symbol, to: q.symbol }))],
       batchPayloads: (r, n) => Array.from({ length: n }, () => withPkg({ root: r, from: q.symbol, to: q.symbol })),
-      run: (a) => a.verifyContract(withPkg({ from: q.symbol, to: q.symbol })),
+      run: (a) => a.verifyContract(withPackageName({ from: q.symbol, to: q.symbol })),
     },
     {
       name: "related",
@@ -127,21 +130,21 @@ const commandsFor = (root: string, q: Queries = DEFAULT_QUERIES): readonly Comma
       batchable: true,
       cliArgs: (r) => ["graph", JSON.stringify(withPkg({ root: r, symbol: q.symbol, depth: 1, format: "mermaid" }))],
       batchPayloads: (r, n) => Array.from({ length: n }, () => withPkg({ root: r, symbol: q.symbol, depth: 1, format: "mermaid" })),
-      run: (a) => a.generateGraph(q.symbol, withPkg({ depth: 1, format: "mermaid" as const })),
+      run: (a) => a.generateGraph(q.symbol, withPackageName({ depth: 1, format: "mermaid" as const })),
     },
     {
       name: "transform-search",
       batchable: true,
       cliArgs: (r) => ["transform-search", JSON.stringify(withPkg({ root: r, from: q.symbol, limit: 5 }))],
       batchPayloads: (r, n) => Array.from({ length: n }, () => withPkg({ root: r, from: q.symbol, limit: 5 })),
-      run: (a) => a.transformSearch(withPkg({ from: q.symbol, limit: 5 })),
+      run: (a) => a.transformSearch(withPackageName({ from: q.symbol, limit: 5 })),
     },
     {
       name: "refactor-preview",
       batchable: true,
       cliArgs: (r) => ["refactor-preview", JSON.stringify(withPkg({ root: r, symbol: q.symbol, to: q.rename }))],
       batchPayloads: (r, n) => Array.from({ length: n }, () => withPkg({ root: r, symbol: q.symbol, to: q.rename })),
-      run: (a) => a.previewRefactor(withPkg({ action: "rename" as const, symbol: q.symbol, to: q.rename })),
+      run: (a) => a.previewRefactor(withPackageName({ action: "rename" as const, symbol: q.symbol, to: q.rename })),
     },
     {
       name: "check-snippet",
