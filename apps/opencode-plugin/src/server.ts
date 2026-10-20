@@ -15,11 +15,10 @@ const FILE_MODIFYING_TOOLS = new Set(["apply_patch", "edit", "morph-mcp_edit_fil
 const packageOption = (packageName: string | undefined): { readonly packageName?: string } =>
   packageName === undefined ? {} : { packageName }
 
-const optionalOption = <K extends string, V>(
-  key: K,
-  value: V | undefined,
-): V extends undefined ? Record<never, never> : { readonly [P in K]?: V } =>
-  (value === undefined ? {} : { [key]: value }) as V extends undefined ? Record<never, never> : { readonly [P in K]?: V }
+type OptionalOption<K extends string, V> = V extends undefined ? Record<never, never> : { readonly [P in K]?: V }
+
+const optionalOption = <K extends string, V>(key: K, value: V | undefined): OptionalOption<K, V> =>
+  (value === undefined ? {} : { [key]: value }) as OptionalOption<K, V>
 
 const createDiscoveryTools = (analyzer: QuartzAnalyzer) => ({
   type_packages: tool({
