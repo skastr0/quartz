@@ -48,8 +48,8 @@ The in-process stress also matched TS-Go, which covers the `ensurePrograms` refr
 11. **`leaf-operations.ts:186` calls `getAliasedSymbol(exportedSymbol)` without the alias-flag check** the other call sites now have.
     It sits behind an `isExportSpecifier` branch, so it is low risk, but it is the one remaining path to the panic below.
 12. **A symlinked workspace root yields absolute paths.** When the root is reached through a symlink (macOS `/tmp` and `/var`),
-    TypeScript reports the realpath of workspace dependencies, which is not under `context.root`, so `symbols` returns absolute
-    file paths and the cross-package fallback in `findSourceFile` does not apply. Resolve the root with `realpath` to fix. No test.
+    TypeScript reports the realpath of workspace dependencies, which was not under `context.root`. **Fixed**: `AnalyzerContext.open`
+    resolves the root with `realpath`. Tests: `engine-cross-package-files.test.ts` (symlinked workspace root).
 13. **`compatible` accepts symbol names only.** `from: "{a: string}"` returns `Symbol "{a: string}" not found`.
 
 ## Findings: tsrs
