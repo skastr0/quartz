@@ -51,7 +51,7 @@ import type {
 } from "../contracts"
 import { mapBounded } from "../concurrency"
 import { QuartzEngineError } from "../errors"
-import { modulePathFor, resolveVirtualFileDirectory, synthesizePackageImports } from "../virtual-files"
+import { loadPackageExports, modulePathFor, renderPackageImports, resolveVirtualFileDirectory, type PackageModuleExports } from "../virtual-files"
 
 type AsyncCallable = FunctionLikeBase & Node
 
@@ -551,7 +551,7 @@ interface SyntheticOutcome {
 }
 
 const syntheticSourceFor = async (
-  project: Project,
+  packageExports: readonly PackageModuleExports[],
   packageInfo: { readonly path: string; readonly tsconfigPath: string },
   sourceFiles: readonly SourceFile[],
   match: Match,
@@ -564,13 +564,17 @@ const syntheticSourceFor = async (
     `__quartz_transform_verify_${(syntheticSequence++).toString(36)}.ts`,
   )
   const declaring = declaringModuleImports(match, options, sourceFiles, virtualFilePath)
-  const imports = await synthesizePackageImports(project, packageInfo.path, virtualFilePath, declaring.names)
   const assignment = match.to?.unwrapped && (match.to.wrapper === "Promise" || match.to.wrapper === "PromiseLike")
     ? `async function __quartzVerify() {\n  const __output: __QueryTo = await ${call}\n}`
     : `const __output: __QueryTo = ${call}`
+  const body = `type __QueryFrom = ${options.from}\ntype __QueryTo = ${options.to}\ndeclare const __input: __QueryFrom\n${assignment}\n`
+  // Import only the package exports this snippet can name. Importing every
+  // export made each synthetic program type-check the whole package graph.
+  const references = new Set(`${declaring.content}${body}`.match(/[A-Za-z_$][\w$]*/g) ?? [])
+  const imports = renderPackageImports(packageExports, virtualFilePath, declaring.names, references)
   return {
     filePath: virtualFilePath,
-    syntheticCode: `${declaring.content}${imports.content}type __QueryFrom = ${options.from}\ntype __QueryTo = ${options.to}\ndeclare const __input: __QueryFrom\n${assignment}\n`,
+    syntheticCode: `${declaring.content}${imports.content}${body}`,
   }
 }
 
@@ -639,10 +643,16 @@ const verifySyntheticMatches = async (
   matches: readonly Match[],
   options: TransformSearchOptions,
 ): Promise<SyntheticVerification[]> => {
+  // The package's export list is a property of the revision, not the candidate.
+  const packageExports = await context.cacheForRevision(
+    `transform-synthetic-exports:${packageInfo.tsconfigPath}`,
+    context.workspace.metadata.revision,
+    () => loadPackageExports(project, packageInfo.path),
+  )
   const sources = await mapBounded(
     matches,
     ASSIGNABILITY_BATCH_SIZE,
-    (match) => syntheticSourceFor(project, packageInfo, sourceFiles, match, options),
+    (match) => syntheticSourceFor(packageExports, packageInfo, sourceFiles, match, options),
   )
   const pending = sources.flatMap((source, index) => source === null ? [] : [{ index, source }])
   const outcomes = new Array<SyntheticOutcome | undefined>(matches.length)
