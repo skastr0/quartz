@@ -7,10 +7,18 @@ import { projectDiskView, type DiskView } from "./workspace"
 const MAX_FILE_BYTES = 4 * 1024 * 1024
 const MAX_RETAINED_BYTES = 256 * 1024 * 1024
 const READ_FAN_OUT = 64
+const STAR_EXPORT = /\bexport\s*\*/
 
 export interface DiskIndex {
-  /** The files that may mention `needle`, in the order given; files the disk cannot vouch for are always kept. */
-  readonly candidates: (needle: string, fileNames: readonly string[]) => readonly string[]
+  /**
+   * The files that may mention `needle`, in the order given; files the disk cannot vouch for are always kept.
+   * With `starExports`, files that contain `export *` are kept too: they re-export names without spelling them.
+   */
+  readonly candidates: (
+    needle: string,
+    fileNames: readonly string[],
+    options?: { readonly starExports?: boolean },
+  ) => readonly string[]
 }
 
 /** Text that is safe to search with a UTF-8 needle: not UTF-16, not binary, no `\u` identifier escapes. */
@@ -35,19 +43,21 @@ const readIfUnchanged = async (fileName: string, view: DiskView): Promise<Buffer
 
 const build = async (fileNames: readonly string[], view: DiskView): Promise<DiskIndex> => {
   const texts = new Map<string, Buffer>()
+  const starExporters = new Set<string>()
   let retained = 0
   await mapBounded(fileNames, READ_FAN_OUT, async (fileName) => {
     const buffer = await readIfUnchanged(fileName, view)
     if (buffer === undefined || retained + buffer.length > MAX_RETAINED_BYTES) return
     retained += buffer.length
     texts.set(fileName, buffer)
+    if (STAR_EXPORT.test(buffer.toString("utf8"))) starExporters.add(fileName)
   })
   return {
-    candidates: (needle, names) => {
+    candidates: (needle, names, options) => {
       if (needle.length === 0) return names
       return names.filter((name) => {
         const buffer = texts.get(name)
-        return buffer === undefined || buffer.includes(needle)
+        return buffer === undefined || buffer.includes(needle) || (options?.starExports === true && starExporters.has(name))
       })
     },
   }
