@@ -1,4 +1,4 @@
-import { DiagnosticCategory, type Diagnostic, type Project } from "typescript/unstable/async"
+import { DiagnosticCategory, type Diagnostic, type Project } from "tsrs/unstable/async"
 import type { DiagnosticSeverity, EngineDiagnostic } from "./types"
 
 const severityFor = (category: DiagnosticCategory): DiagnosticSeverity => {

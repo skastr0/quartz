@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest"
-import type { Project } from "typescript/unstable/async"
+import type { Project } from "tsrs/unstable/async"
 import type { AnalyzerContext } from "../packages/engine/src/context"
 import type { DiagnosticInfo, TransformSearchResponse } from "../packages/engine/src/contracts"
 import { createVerificationOperations } from "../packages/engine/src/verification-operations"

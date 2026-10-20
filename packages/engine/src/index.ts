@@ -1,4 +1,4 @@
-export { version as analysisTypeScriptVersion } from "typescript"
+export { typescriptVersion as analysisTypeScriptVersion, version as analysisTsrsVersion } from "tsrs"
 export type * from "./contracts"
 export { createTypeAnalyzer, QuartzAnalyzer } from "./analyzer"
 export { QuartzEngineError } from "./errors"

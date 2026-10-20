@@ -270,7 +270,7 @@ describe("QuartzWorkspace", () => {
   })
 })
 
-const collectSemanticCodes = async (project: import("typescript/unstable/async").Project, filePath: string) => {
+const collectSemanticCodes = async (project: import("tsrs/unstable/async").Project, filePath: string) => {
   const diagnostics = await project.program.getSemanticDiagnostics(filePath)
   return diagnostics.map((diagnostic) => diagnostic.code)
 }

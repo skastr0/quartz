@@ -10,14 +10,14 @@ import {
   type Symbol as CompilerSymbol,
   type Type,
   type TypeReference,
-} from "typescript/unstable/async"
+} from "tsrs/unstable/async"
 import {
   SyntaxKind,
   type FunctionLikeBase,
   type Node,
   type SourceFile,
   type TypeNode,
-} from "typescript/unstable/ast"
+} from "tsrs/unstable/ast"
 import {
   isArrowFunction,
   isCallExpression,
@@ -36,7 +36,7 @@ import {
   isTypeAliasDeclaration,
   isVariableDeclaration,
   isVariableStatement,
-} from "typescript/unstable/ast/is"
+} from "tsrs/unstable/ast/is"
 import type { AnalyzerContext } from "../context"
 import type {
   CallableKind,

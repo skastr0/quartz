@@ -22,7 +22,7 @@
     "cli:build": "bun run --filter @skastr0/quartz-cli build",
     "cli:install-local": "bun run --filter @skastr0/quartz-cli install:local",
     "build": "bun run engine:build && bun run --filter './apps/*' build",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsrs --noEmit",
     "test": "vitest run",
     "verify": "bun run typecheck && bun run build && bun run test && bun run verify:package-boundaries",
     "verify:native-engine": "bunx vitest run test/engine-*.test.ts",
@@ -42,7 +42,7 @@
   "devDependencies": {
     "@opencode-ai/plugin": "^1.14.46",
     "@types/bun": "^1.3.11",
-    "typescript": "7.1.0-dev.20260905.1",
+    "tsrs": "0.18.0-ts7.1.0-dev.20260929",
     "vitest": "^4.1.2"
   },
   "peerDependencies": {

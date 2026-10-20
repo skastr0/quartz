@@ -28,6 +28,6 @@
     "LICENSE"
   ],
   "dependencies": {
-    "@typescript/typescript-linux-x64": "7.1.0-dev.20260905.1"
+    "@tsrs/linux-x64-gnu": "0.18.0-ts7.1.0-dev.20260929"
   }
 }

@@ -1,5 +1,5 @@
 import { resolve } from "node:path"
-import type { Project } from "typescript/unstable/async"
+import type { Project } from "tsrs/unstable/async"
 import type { PackageInfo } from "./contracts"
 import { discoverPackages } from "./discovery"
 import { QuartzEngineError } from "./errors"

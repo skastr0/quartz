@@ -1,8 +1,8 @@
 import { relative, resolve } from "node:path"
-import type { Identifier, Node, SourceFile } from "typescript/unstable/ast"
-import { SyntaxKind } from "typescript/unstable/ast"
-import { isIdentifier, isTypeReferenceNode } from "typescript/unstable/ast/is"
-import type { NodeHandle, Project, Symbol, Type } from "typescript/unstable/async"
+import type { Identifier, Node, SourceFile } from "tsrs/unstable/ast"
+import { SyntaxKind } from "tsrs/unstable/ast"
+import { isIdentifier, isTypeReferenceNode } from "tsrs/unstable/ast/is"
+import type { NodeHandle, Project, Symbol, Type } from "tsrs/unstable/async"
 import type { AnalyzerContext } from "./context"
 import type {
   GraphEdge,

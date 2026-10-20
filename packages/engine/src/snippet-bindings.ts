@@ -1,5 +1,5 @@
-import { SyntaxKind } from "typescript/unstable/ast"
-import { createScanner } from "typescript/unstable/ast/scanner"
+import { SyntaxKind } from "tsrs/unstable/ast"
+import { createScanner } from "tsrs/unstable/ast/scanner"
 
 interface Token {
   readonly kind: SyntaxKind

@@ -28,6 +28,6 @@
     "LICENSE"
   ],
   "dependencies": {
-    "@typescript/typescript-darwin-arm64": "7.1.0-dev.20260905.1"
+    "@tsrs/darwin-arm64": "0.18.0-ts7.1.0-dev.20260929"
   }
 }

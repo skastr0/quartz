@@ -1,4 +1,4 @@
-import { DiagnosticCategory, type Project } from "typescript/unstable/async"
+import { DiagnosticCategory, type Project } from "tsrs/unstable/async"
 import type { AnalyzerContext } from "./context"
 import type {
   CompatibilityResult,

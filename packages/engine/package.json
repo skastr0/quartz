@@ -16,11 +16,11 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "bun ../../scripts/clean-build-output.ts engine && bun build ./src/index.ts --outdir ./dist --target bun --format esm --external typescript && tsc -p tsconfig.build.json",
+    "build": "bun ../../scripts/clean-build-output.ts engine && bun build ./src/index.ts --outdir ./dist --target bun --format esm --external tsrs && tsrs -p tsconfig.build.json",
     "prepack": "bun run build"
   },
   "dependencies": {
-    "typescript": "7.1.0-dev.20260905.1"
+    "tsrs": "0.18.0-ts7.1.0-dev.20260929"
   },
   "license": "MIT",
   "description": "Persistent TypeScript 7 native workspace engine for Quartz.",

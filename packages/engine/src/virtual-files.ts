@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs"
 import { dirname, extname, join, relative, resolve } from "node:path"
-import { SymbolFlags, type Project } from "typescript/unstable/async"
-import type { SourceFile } from "typescript/unstable/ast"
+import { SymbolFlags, type Project } from "tsrs/unstable/async"
+import type { SourceFile } from "tsrs/unstable/ast"
 
 /**
  * Prefer a source directory that is typically covered by tsconfig include

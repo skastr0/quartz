@@ -3,25 +3,31 @@ import { AsyncLocalStorage } from "node:async_hooks"
 import { createRequire } from "node:module"
 import { dirname, join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
-import { version } from "typescript"
-import { API, type Project, type Snapshot } from "typescript/unstable/async"
+import { typescriptVersion } from "tsrs"
+import { API, type Project, type Snapshot } from "tsrs/unstable/async"
 import { QuartzEngineError } from "./errors"
 import { collectDiagnostics } from "./diagnostics"
 import type { EngineDiagnostic, WorkspaceFileChanges, WorkspaceMetadata, WorkspaceOptions } from "./types"
 
-const resolveTypeScriptExecutable = (): string => {
-  const platformPackage = `@typescript/typescript-${process.platform}-${process.arch}`
-  const executableName = process.platform === "win32" ? "tsc.exe" : "tsc"
+// tsrs ships its native binary in a per-platform package, GNU-suffixed on Linux.
+const tsrsPlatformPackage = (): string =>
+  `@tsrs/${process.platform}-${process.arch}${process.platform === "linux" ? "-gnu" : ""}`
+
+const resolveTsrsExecutable = (): string => {
+  const override = process.env.TSRS_BINARY
+  if (override !== undefined && override.length > 0) return override
+  const platformPackage = tsrsPlatformPackage()
+  const executableName = process.platform === "win32" ? "tsrs.exe" : "tsrs"
   const executableBase = pathToFileURL(join(dirname(process.execPath), "__quartz_resolver.cjs")).href
   const resolvers = [createRequire(import.meta.url), createRequire(executableBase)]
 
   for (const resolver of resolvers) {
     const packageJsonCandidates: string[] = []
     try {
-      const typescriptPackageJson = resolver.resolve("typescript/package.json")
-      packageJsonCandidates.push(createRequire(pathToFileURL(typescriptPackageJson)).resolve(`${platformPackage}/package.json`))
+      const tsrsPackageJson = resolver.resolve("tsrs/package.json")
+      packageJsonCandidates.push(createRequire(pathToFileURL(tsrsPackageJson)).resolve(`${platformPackage}/package.json`))
     } catch {
-      // A compiled Quartz binary does not expose the bundled TypeScript package.
+      // A compiled Quartz binary does not expose the bundled tsrs package.
     }
     try {
       packageJsonCandidates.push(resolver.resolve(`${platformPackage}/package.json`))
@@ -30,7 +36,7 @@ const resolveTypeScriptExecutable = (): string => {
     }
 
     for (const packageJson of packageJsonCandidates) {
-      const executable = join(dirname(packageJson), "lib", executableName)
+      const executable = join(dirname(packageJson), executableName)
       if (existsSync(executable)) return executable
     }
   }
@@ -101,17 +107,17 @@ export class QuartzWorkspace {
       primaryConfig,
       ...(options.tsconfigPaths ?? []).map((configFile) => resolve(resolvedRoot, configFile)),
     ].filter((configFile, index, all) => all.indexOf(configFile) === index)
-    // Native TS-Go filesystem only — temporary analysis uses runWithTemporaryFileUpdate,
+    // Native tsrs filesystem only — temporary analysis uses runWithTemporaryFileUpdate,
     // so a JS hybrid FS is not on the normal project-read path.
     const api = new API({
       cwd: resolvedRoot,
-      tsserverPath: options.tsserverPath ?? resolveTypeScriptExecutable(),
+      tsserverPath: options.tsserverPath ?? resolveTsrsExecutable(),
       ...(options.collectTiming === undefined ? {} : { collectTiming: options.collectTiming }),
     })
 
     try {
-      const snapshot = await api.updateSnapshot({ openProjects: configFiles })
-      const missingConfig = configFiles.find((configFile) => snapshot.getProject(configFile) === undefined)
+      const snapshot = await api.createSnapshot({ openProjects: configFiles })
+      const missingConfig = configFiles.find((configFile) => snapshot.getConfiguredProject(configFile) === undefined)
       if (missingConfig !== undefined) {
         await snapshot.dispose()
         throw new QuartzEngineError(
@@ -133,7 +139,7 @@ export class QuartzWorkspace {
       configFile: this.configFile,
       configFiles: this.configFiles,
       revision: this.#current?.revision ?? 0,
-      analysisTypescriptVersion: version,
+      analysisTypescriptVersion: typescriptVersion,
       closed: this.#closed,
     }
   }
@@ -142,7 +148,7 @@ export class QuartzWorkspace {
     return this.withProject((project) => collectDiagnostics(project), configFile)
   }
 
-  /** TS-Go client/server timing snapshot when collectTiming was enabled at open. */
+  /** tsrs client/server timing snapshot when collectTiming was enabled at open. */
   getTimingInfo(): Promise<unknown> {
     this.#assertAcceptingWork()
     return this.#api.getTimingInfo()
@@ -159,7 +165,7 @@ export class QuartzWorkspace {
   ): Promise<T> {
     const resolvedConfig = resolve(configFile)
     return this.#withProject((state) => {
-      const project = state.snapshot.getProject(resolvedConfig)
+      const project = state.snapshot.getConfiguredProject(resolvedConfig)
       if (project === undefined) {
         throw new QuartzEngineError("WORKSPACE_OPEN_FAILED", `Project is not open at ${resolvedConfig}`)
       }
@@ -195,7 +201,7 @@ export class QuartzWorkspace {
           this.#assertAcceptingWork()
           const project =
             (await temporarySnapshot.getDefaultProjectForFile(resolvedFile)) ??
-            temporarySnapshot.getProject(resolvedConfig)
+            temporarySnapshot.getConfiguredProject(resolvedConfig)
           if (project === undefined) {
             throw new QuartzEngineError(
               "WORKSPACE_REFRESH_FAILED",
@@ -225,8 +231,8 @@ export class QuartzWorkspace {
     return this.#enqueueMutation(async () => {
       try {
         const previous = this.#requireCurrent()
-        const snapshot = await this.#api.updateSnapshot({
-          fileChanges:
+        const snapshot = await previous.snapshot.update({
+          fileNotifications:
             changes === undefined
               ? { invalidateAll: true }
               : {
@@ -235,7 +241,7 @@ export class QuartzWorkspace {
                   ...(changes.deleted === undefined ? {} : { deleted: changes.deleted.map((path) => resolve(path)) }),
                 },
         })
-        const missingConfig = this.configFiles.find((configFile) => snapshot.getProject(configFile) === undefined)
+        const missingConfig = this.configFiles.find((configFile) => snapshot.getConfiguredProject(configFile) === undefined)
         if (missingConfig !== undefined) {
           await snapshot.dispose()
           throw new QuartzEngineError(

@@ -32,8 +32,8 @@ import {
   type Project,
   type Symbol,
   type Type,
-} from "typescript/unstable/async"
-import { SyntaxKind, type Node, type SourceFile } from "typescript/unstable/ast"
+} from "tsrs/unstable/async"
+import { SyntaxKind, type Node, type SourceFile } from "tsrs/unstable/ast"
 import {
   isClassDeclaration,
   isEnumDeclaration,
@@ -46,7 +46,7 @@ import {
   isTypeReferenceNode,
   isVariableDeclaration,
   isVariableStatement,
-} from "typescript/unstable/ast/is"
+} from "tsrs/unstable/ast/is"
 import {
   createVirtualFileRegistry,
   resolveVirtualFileDirectory,

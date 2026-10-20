@@ -3,19 +3,20 @@
  * Fails loudly when a nightly removes or renames a required surface.
  */
 import { describe, expect, it } from "vitest"
-import { version } from "typescript"
-import { API, Checker, LanguageService, Program } from "typescript/unstable/async"
-import type { NodeHandle, Project, Snapshot } from "typescript/unstable/async"
-import type { Declaration } from "typescript/unstable/ast"
+import { typescriptVersion, version } from "tsrs"
+import { API, Checker, LanguageService, Program } from "tsrs/unstable/async"
+import type { NodeHandle, Project, Snapshot } from "tsrs/unstable/async"
+import type { Declaration } from "tsrs/unstable/ast"
 
 describe("typescript unstable API contract", () => {
-  it("pins a concrete 7.x nightly (never a moving tag)", () => {
-    expect(version).toMatch(/^7\.\d+\.\d+-dev\.\d{8}\.\d+$/)
+  it("pins a concrete tsrs release built from a 7.x nightly (never a moving tag)", () => {
+    expect(version).toMatch(/^\d+\.\d+\.\d+-ts7\.\d+\.\d+-dev\.\d{8}$/)
+    expect(typescriptVersion).toMatch(/^7\.\d+\.\d+-dev\.\d{8}$/)
   })
 
   it("exposes the workspace lifecycle methods Quartz uses", () => {
     const proto = API.prototype as API
-    expect(typeof proto.updateSnapshot).toBe("function")
+    expect(typeof proto.createSnapshot).toBe("function")
     expect(typeof proto.close).toBe("function")
     expect(typeof proto.clearSourceFileCache).toBe("function")
     expect(typeof proto.getTimingInfo).toBe("function")
