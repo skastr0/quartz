@@ -16,7 +16,7 @@ Your agent is changing TypeScript whose types it can't see.
 
 ## What Quartz does
 
-Quartz keeps the TypeScript 7 native compiler open on your project and answers questions as JSON. Your agent checks a type, a snippet, or whether a converter already exists before it writes code, not after `tsc` fails.
+Quartz keeps a TypeScript 7 compiler open on your project — tsrs, the Rust port of the TypeScript 7 native compiler — and answers questions as JSON. Your agent checks a type, a snippet, or whether a converter already exists before it writes code, not after `tsc` fails.
 
 | your agent wants to know | command | it gets back |
 |---|---|---|
@@ -31,7 +31,7 @@ Quartz keeps the TypeScript 7 native compiler open on your project and answers q
 | answers from the TypeScript compiler | a guess from text search |
 | evidence that a type or change checks out | proof that the code is correct at runtime |
 
-Version 0.2.3, on npm for macOS and Linux (arm64, x64). There is no Windows build. Quartz needs a `tsconfig.json` in the project.
+Version 0.2.3, on npm for macOS arm64 and Linux (x64, arm64). There is no Intel macOS build and no Windows build. Quartz needs a `tsconfig.json` in the project.
 
 ## Quick start
 
@@ -65,7 +65,7 @@ Step 4 catches the missing field without touching a file:
  {"message":"Property 'email' is missing in type '{ id: string; name: string; }' but required in type 'User'.","line":1,"column":7}]}}
 ```
 
-Project types are in scope in a snippet without an import. A snippet can import packages by name; tsconfig path aliases (`paths`) don't resolve there.
+Project types are in scope in a snippet without an import. A snippet can import packages by name or through the project's tsconfig `paths` aliases.
 
 Or run it without installing: `npx -y @skastr0/quartz@latest packages`, or `bunx @skastr0/quartz packages`.
 
@@ -94,7 +94,7 @@ The direct assignment fails, but a verified converter exists, so the answer is y
 
 Both outputs are trimmed from the JSON envelope. Every command takes a JSON payload inline, from a file (`@payload.json`), or from stdin (`-`). Agents can discover every command and payload with `quartz capabilities` and `quartz schema show <command>`.
 
-Each one-shot command starts a fresh compiler (0.7 to 2.8 s on Quartz's own repo). For repeated calls, send a batch payload (a JSON array) or use the OpenCode plugin; both keep one compiler warm.
+Each one-shot command starts a fresh compiler. For repeated calls, send a batch payload (a JSON array) or use the OpenCode plugin; both keep one compiler warm. Current timings are in [docs/performance.md](docs/performance.md).
 
 All commands:
 
@@ -111,7 +111,7 @@ Payload fields, batch calls, artifacts, and error envelopes are in [docs/referen
 
 ## How it works
 
-`@skastr0/quartz-engine` opens one TypeScript 7 native compiler per project through its async API. Snippets and transform checks compile as temporary virtual files, so your files are never changed. The CLI reuses one compiler across a batch of payloads. The OpenCode plugin keeps it warm for the whole session and refreshes it when files change.
+`@skastr0/quartz-engine` opens one tsrs compiler per project through its async API. tsrs is a Rust port of the TypeScript 7 native compiler, pinned to a release that carries TypeScript 7's unstable API. Snippets and transform checks compile as temporary virtual files, so your files are never changed. The CLI reuses one compiler across a batch of payloads. The OpenCode plugin keeps it warm for the whole session and refreshes it when files change.
 
 ## OpenCode plugin
 

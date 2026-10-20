@@ -1,8 +1,8 @@
 # Quartz — brief
 
-updated: 2026-09-24 · version: 0.2.3 · maturity: usable-with-gaps
+updated: 2026-10-20 · version: 0.2.3 · maturity: usable-with-gaps
 
-Why usable-with-gaps: 0.2.3 is on npm and Pulsar runs on it, but it runs on a nightly compiler API, one-shot commands start cold, and snippet path aliases don't resolve (see Gaps).
+Why usable-with-gaps: 0.2.3 is on npm and Pulsar runs on it, but the compiler backend is tsrs, a Rust port pinned to a release that carries TypeScript 7's unstable API, and one-shot commands start cold (see Gaps).
 
 ## One line
 
@@ -81,7 +81,7 @@ transform      passed: true   "A compiler-verified transform satisfies the reque
 
 ## How it works
 
-Quartz keeps one TypeScript 7 native compiler (TS-Go) open per project, through its async API (`typescript/unstable/async`, `packages/engine/src/workspace.ts:106`). Snippets and transform checks compile as temporary virtual files, so your files are never touched (`runWithTemporaryFileUpdate`, `workspace.ts:194`). The CLI reuses one compiler across a batch of payloads. The OpenCode plugin keeps it warm for the whole session and refreshes it on file edits (`apps/opencode-plugin/src/server.ts:403`).
+Quartz keeps one tsrs compiler open per project, through its async API (`tsrs/unstable/async`, `packages/engine/src/workspace.ts:112`). tsrs 0.18.0 is a Rust port of the TypeScript 7 native compiler, built from TypeScript `7.1.0-dev.20260929`. Snippets and transform checks compile as temporary virtual files, so your files are never touched (`withVirtualFile` → `runWithTemporaryFileUpdate`, `workspace.ts:181`). The CLI reuses one compiler across a batch of payloads. The OpenCode plugin keeps it warm for the whole session and refreshes it on file edits (`apps/opencode-plugin/src/server.ts:405`).
 
 Diagram spec:
 
@@ -95,7 +95,7 @@ pulsar ts-pack ──library import───────────────
                                       │                 │
                          project reads│                 │snippet / transform checks
                                       ▼                 ▼
-                            TS-Go native compiler ◀── virtual files
+                            tsrs compiler (Rust port of TS 7) ◀── virtual files
                                       │
                                       ▼
                          tsconfig.json + sources
@@ -121,7 +121,7 @@ npx -y @skastr0/quartz capabilities
 
 - OpenCode plugin: `@skastr0/quartz-opencode-plugin/server`
 - Library: `bun add @skastr0/quartz-engine`
-- macOS and Linux, arm64 and x64. I ran macOS arm64 only; Linux unverified. No Windows.
+- macOS arm64 and Linux (x64, arm64). I ran macOS arm64 only; Linux unverified. No Intel macOS, no Windows.
 - Point readers to npm. The 0.2.x GitHub Releases are drafts; publishing them is the operator's call.
 
 ## Proof
@@ -137,9 +137,8 @@ npx -y @skastr0/quartz capabilities
 
 Fixed in 0.2.2: check-snippet `Duplicate identifier` on snippets with their own imports (`a539c34`), duplicate `symbols` entries from barrel re-exports (`66b788b`), and transform-search missing helpers the package entry doesn't export (`e1585ca`).
 
-- **check-snippet doesn't resolve tsconfig path aliases** in a snippet's own imports: `import { createTypeAnalyzer } from "@skastr0/quartz-engine"` in the Quartz repo returns `Cannot find module` (run 2026-09-24 from source). Package imports resolve (`typescript/unstable/ast` checked valid). `docs/effect-v4-migration.md:41` hit the same wall.
-- **Cold start:** one-shot commands took 0.7 s (`diagnostics`) to 2.8 s (`info`) on the Quartz repo. Use batch mode or the plugin for warm speed.
-- **Nightly compiler:** pinned to TypeScript `7.1.0-dev.20260905.1` on an API Microsoft marks unstable (`package.json:45`).
+- **Cold start:** one-shot commands start a fresh compiler per process. Use batch mode or the plugin for warm speed.
+- **Pinned compiler API:** tsrs `0.18.0-ts7.1.0-dev.20260929`, carrying TypeScript `7.1.0-dev.20260929` on an API Microsoft marks unstable (`package.json:45`). `bun run canary:tsrs` probes new tsrs releases in isolation.
 
 ## Demo moments
 
@@ -152,4 +151,4 @@ Fixed in 0.2.2: check-snippet `Duplicate identifier` on snippets with their own 
 - tagline: TypeScript answers for agents, from the compiler.
 - short description: Compiler-backed TypeScript answers for coding agents: types, snippet checks, existing transforms, as JSON. CLI and OpenCode plugin.
 - page lede: Your agent asks what a type contains, whether a snippet compiles, or whether a converter already exists, before it writes code instead of after `tsc` fails. The answers come from the TypeScript compiler, as JSON.
-- X post: An agent that greps for a TypeScript type still has to guess what it resolves to. Quartz asks the compiler instead: `info`, `check-snippet`, `transform-search`, all JSON, on the TypeScript 7 native compiler. bunx @skastr0/quartz capabilities
+- X post: An agent that greps for a TypeScript type still has to guess what it resolves to. Quartz asks the compiler instead: `info`, `check-snippet`, `transform-search`, all JSON, on a TypeScript 7 compiler backend (tsrs, the Rust port). bunx @skastr0/quartz capabilities

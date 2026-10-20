@@ -6,11 +6,11 @@ The full CLI contract, the OpenCode plugin, and the published packages. For a fi
 
 | package | what it is |
 | --- | --- |
-| `@skastr0/quartz` | the `quartz` CLI, with prebuilt binaries for macOS and Linux (arm64, x64) |
+| `@skastr0/quartz` | the `quartz` CLI, with prebuilt binaries for macOS arm64 and Linux (x64, arm64) |
 | `@skastr0/quartz-engine` | the analysis library the CLI and plugin share |
 | `@skastr0/quartz-opencode-plugin` | the OpenCode plugin (`/server` export) |
 
-Every platform package carries the TypeScript native compiler it needs. There is no Windows build.
+Every platform package carries the tsrs compiler binary it needs, as `@tsrs/<platform>`. There is no Intel macOS build and no Windows build.
 
 ## CLI protocol
 
@@ -32,16 +32,16 @@ cat payloads/info.json | quartz info -
 
 If `root` is omitted, Quartz analyzes the current working directory. Multi-package workspaces can pass `package` to target a discovered package or directory.
 
-Every command returns an envelope. Success is written to stdout:
+Every command returns an envelope. Success is written to stdout, and every envelope names the compiler backend and its tsrs version:
 
 ```json
-{"ok":true,"command":"info","data":{}}
+{"ok":true,"command":"info","backend":"tsrs","tsrs_version":"0.18.0-ts7.1.0-dev.20260929","data":{}}
 ```
 
 Expected failures are written to stderr and exit with code `1`:
 
 ```json
-{"ok":false,"command":"info","error":{"type":"CommandInputError","message":"Payload failed schema validation","details":{}}}
+{"ok":false,"command":"info","backend":"tsrs","tsrs_version":"0.18.0-ts7.1.0-dev.20260929","error":{"type":"CommandInputError","message":"Payload failed schema validation","details":{}}}
 ```
 
 Most failures include `details.retryable`. Schema errors, unknown commands, missing required fields, and not-found lookups are non-retryable until the payload changes. File-read, artifact-write, and timeout failures may be retryable after fixing the environment or increasing `--timeout`.
@@ -61,7 +61,7 @@ quartz examples show info
 quartz doctor '{"root":"test/fixtures"}'
 ```
 
-`capabilities` reports supported input modes, execution flags, envelope shape, batch behavior, and command inventory. `schema show <command>` returns the JSON schema and example for one command. `examples show <command>` returns a payload plus inline, file, and stdin invocation forms.
+`capabilities` reports the compiler backend (`backend`, `tsrs_version`, `analysis_typescript_version`), supported input modes, execution flags, envelope shape, batch behavior, and command inventory. `doctor` reports the same backend versions alongside project discovery and the fitness checks. `schema show <command>` returns the JSON schema and example for one command. `examples show <command>` returns a payload plus inline, file, and stdin invocation forms.
 
 Architecture fitness checks are documented in [architecture-fitness.md](architecture-fitness.md), and `doctor` reports the same check inventory for agents that need executable obligations.
 
