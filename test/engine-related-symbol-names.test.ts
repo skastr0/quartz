@@ -33,7 +33,7 @@ describe("related symbol names", () => {
     const analyzer = await createTypeAnalyzer(createProject("export const tuple = [1, 'a', true] as const"))
     try {
       const related = await analyzer.findRelated("tuple")
-      expect(related.references.map((reference) => reference.symbol)).toContain("toString")
+      expect(related?.references.map((reference) => reference.symbol)).toContain("toString")
     } finally {
       await analyzer.dispose()
     }
@@ -44,7 +44,7 @@ describe("related symbol names", () => {
     const analyzer = await createTypeAnalyzer(createProject("export const tuple = [1, 'a', true] as const"))
     try {
       const related = await analyzer.findRelated("tuple")
-      const internal = related.references.filter((reference) => /^__@/.test(reference.symbol))
+      const internal = related?.references.filter((reference) => /^__@/.test(reference.symbol))
       expect(internal).toEqual([])
     } finally {
       await analyzer.dispose()

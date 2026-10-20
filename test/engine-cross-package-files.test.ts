@@ -32,7 +32,7 @@ describe("cross-package declaration files", () => {
     const analyzer = await createTypeAnalyzer(createMonorepo())
     try {
       const result = await analyzer.getFileDeclarations("packages/lib/src/actor.ts", { packageName: "packages/lib" })
-      expect(result.declarations.map((declaration) => declaration.name)).toEqual(["Actor"])
+      expect(result?.declarations.map((declaration) => declaration.name)).toEqual(["Actor"])
     } finally {
       await analyzer.dispose()
     }
